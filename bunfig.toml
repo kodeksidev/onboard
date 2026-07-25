@@ -1,0 +1,13 @@
+# Bun workspace configuration for Onboard.
+# Workspace membership itself is declared in package.json ("workspaces"); this file
+# only tunes install/test behavior for reproducibility (Section 4: Bun 1.2.x).
+
+[install]
+# Pin resolved dependency versions to exact semver instead of a caret/tilde range in
+# the lockfile, matching the "reproducible builds" goal in Section 4.
+exact = true
+
+[test]
+# `bun test` always reports coverage locally; CI-facing thresholds are enforced per
+# package starting at Phase 2 (engine) and Phase 1 (contract), per Section 13 #10.
+coverage = true
