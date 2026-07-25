@@ -223,3 +223,86 @@ decided; it only records choices the spec left open.
   dead weight. Design tokens live in `index.css`'s `@theme` block instead;
   `dark:` resolves to `prefers-color-scheme` by default in v4, which is A17's
   "follows OS preference" with no configuration at all.
+- **Phase 6 — `tauri-plugin-shell` / `tauri-plugin-store` are registered but
+  not called from Rust.** Section 4 lists both as stack dependencies and
+  Section 12 requires `shell:allow-execute` scoped to `onboard-engine` in
+  capabilities. The frontend never touches either plugin directly (per the
+  "expose typed commands only" boundary), so the plugins are registered in
+  `lib.rs` for capability/config completeness and left available for future
+  use, while the actual sidecar spawn (`sidecar/spawn.rs`) uses
+  `std::process::Command` and settings persistence (`commands/settings.rs`)
+  uses plain `std::fs` + `serde_json`. This keeps both hermetically
+  unit-testable against the stub binary/a temp directory without a running
+  `AppHandle`, with no loss of the capability boundary the plugin config
+  still enforces for any JS-side use.
+- **Phase 6 — "one analysis at a time" is a single global guard, not
+  per-`repoId`.** Section 9's Phase 6 goal says "one analysis at a time per
+  repo (`E_ANALYSIS_IN_PROGRESS`)", but there is exactly one sidecar process
+  and one stdio pipe (Section 7.3), so RPC calls are already serialized at
+  the transport level regardless of which repo they name; a global in-flight
+  flag in `SidecarSupervisor` satisfies "per repo" (a stricter constraint
+  trivially satisfies a looser one) without inventing per-repo bookkeeping
+  the single-process architecture can't actually parallelize anyway.
+- **Phase 6 — JSON-RPC domain-error convention: `error.data` carries a
+  serialized `AppError`.** Section 7.3 defines every RPC's success `Result`
+  but not the shape of a JSON-RPC `error` object for a domain failure (e.g.
+  the engine's own `E_REPO_TOO_LARGE` from the Section 8.1 walk). The most
+  conventional, contract-consistent choice: the engine puts a full
+  `{code,message,detail,path}` `AppError` in `error.data`;
+  `sidecar::supervisor::map_remote_error` deserializes it directly and
+  passes it through unchanged, falling back to a generic `E_ENGINE_CRASHED`
+  if `data` is absent or doesn't parse. **This needs sign-off from
+  `ts-engine`'s Phase 5 implementation** — flagged prominently since it's a
+  cross-boundary convention neither agent could freeze alone.
+- **Phase 6 — `E_ENGINE_TIMEOUT` and `E_ANALYSIS_IN_PROGRESS` have no
+  literal Section 10 copy.** Both codes appear in Section 7.4's table but
+  their Section 10 rows ("Sidecar hangs", "Second analysis started while one
+  runs") describe only the mechanism, not UI strings. Crafted concise,
+  conventional message/detail pairs in `error.rs` following the voice of the
+  rows that do have literal copy (e.g. `E_ENGINE_CRASHED`).
+- **Phase 6 — a chosen system root (`/`, `C:\`, `/home`, `/Users`) maps to
+  `E_NOT_A_DIRECTORY`.** Section 12 requires `analyze_repo` to refuse a
+  system root, but the closed `AppErrorCode` set (Section 7.4) has no
+  dedicated code for it. Reused `E_NOT_A_DIRECTORY` — the closest existing
+  fit — and broadened its generic `message` to "That folder can't be
+  analyzed" (rather than the file-specific "That isn't a folder") so the
+  same code covers both scenarios truthfully; each case's specific reason
+  goes in `detail`.
+- **Phase 6 — `read_repo_file` with an unrecognized `repoId` maps to
+  `E_PATH_ESCAPES_REPO`.** Neither Section 7.4's error list for this command
+  nor Section 10 covers "the caller named a repo that was never analyzed."
+  Deny-by-default: with no known repo root there is no confinement boundary
+  to check against, so the safest closed-set code is the same one used for
+  an actual escape.
+- **Phase 6 — `search_repo` input-validation failures (malformed `repoId`,
+  out-of-range `query`/`limit`) map to `E_NO_ANALYSIS`.** The command's
+  closed error set is only `{E_NO_ANALYSIS, E_ENGINE_CRASHED}`; a malformed
+  or unrecognized `repoId` in practice means "there is no valid completed
+  analysis under that id," so `E_NO_ANALYSIS` is the closest, truthful fit.
+- **Phase 6 — `store_ai_key`'s key-length check (Section 12: 8-512 chars)
+  reuses `E_INVALID_SETTINGS`.** The command's only listed error code is
+  `E_KEYCHAIN_UNAVAILABLE`, which doesn't fit a client-side input-validation
+  failure; `E_INVALID_SETTINGS` is the closest existing code in the closed
+  set.
+- **Phase 6 — `store_ai_key` falls back to a session-only key automatically,
+  rather than erroring first.** Section 10's "Linux without a keyring
+  daemon" row pairs `E_KEYCHAIN_UNAVAILABLE` with a UI action "Use
+  session-only key," which could mean either "error, then let the user opt
+  in" or "silently do the safe thing." Chose the latter: when the OS
+  backend itself is unavailable (A18), `AiKeyStore::store` stores the key in
+  an in-memory, never-persisted map and returns `{isStored:true,
+  isSessionOnly:true}` instead of failing the request outright.
+  `E_KEYCHAIN_UNAVAILABLE` is reserved for a harder failure than "no daemon
+  is running."
+- **Phase 6 — Windows "ACL-denied directory" permission test deferred.**
+  Section 10 calls for an integration test with a chmod-000 dir on
+  Linux/macOS and an ACL-denied dir on Windows. `analyze_repo`'s validation
+  only calls `fs::metadata` on the chosen directory itself, and `stat()`
+  succeeding on a path does not require execute/read permission on the
+  target — only on its ancestors — so a faithful Windows ACL-denial
+  reproduction would need actual directory-content traversal (the engine's
+  job, once Phase 5 lands), not a Rust-side `metadata()` call. The
+  `io::ErrorKind::PermissionDenied -> E_PERMISSION_DENIED` mapping is
+  implemented and unit-tested against a synthetic `io::Error`; a real
+  chmod-000/ACL-denied end-to-end test is left for Phase 11's integration
+  pass once real repo walking exists to trigger it.
