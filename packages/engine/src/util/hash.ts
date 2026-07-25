@@ -14,6 +14,16 @@ export function sha256Hex(input: Uint8Array | string): string {
 }
 
 /**
+ * Lowercase hex sha1 digest. Used ONLY for `symbol.id` (Section 6.1:
+ * `sha1(path + '#' + name + '#' + startLine)[:16]`) — every other hash in
+ * the engine (content, repoId, fingerprint) is sha256; this is the one
+ * literal exception the schema names explicitly.
+ */
+export function sha1Hex(input: Uint8Array | string): string {
+  return createHash('sha1').update(input).digest('hex');
+}
+
+/**
  * `repoId = sha256(canonicalAbsoluteRepoPath).slice(0, 16)` (Section 6.1).
  * The caller is responsible for canonicalizing the path (realpath) before
  * calling this — this function only hashes and truncates.

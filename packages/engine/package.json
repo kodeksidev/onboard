@@ -12,6 +12,7 @@
   "dependencies": {
     "@onboard/contract": "workspace:*",
     "ignore": "~6.0.2",
+    "web-tree-sitter": "~0.25.10",
     "zod": "~4.4.3"
   }
 }

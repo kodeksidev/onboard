@@ -306,3 +306,84 @@ decided; it only records choices the spec left open.
   implemented and unit-tested against a synthetic `io::Error`; a real
   chmod-000/ACL-denied end-to-end test is left for Phase 11's integration
   pass once real repo walking exists to trigger it.
+- **Phase 3 — vendored grammar `.wasm` provenance.** Section 4 pins
+  tree-sitter-javascript/typescript/python at `0.23.x`; the obvious
+  offline-friendly source (the `tree-sitter-wasms` npm bundle) only ships
+  WASM built from much older grammar versions (`^0.20.3`/`^0.20.5`/`^0.21.0`),
+  which would silently violate the pin. Instead, fetched the four official
+  prebuilt `.wasm` assets directly from each grammar's GitHub Release at the
+  exact pinned tag (`tree-sitter-javascript` v0.23.1, `tree-sitter-typescript`
+  v0.23.2 — both `typescript` and `tsx` — and `tree-sitter-python` v0.23.6)
+  and vendored them unmodified into `packages/engine/grammars/`. This is a
+  one-time, dev-machine-only network fetch to obtain build artifacts (like
+  downloading any other pinned binary dependency) — it is not a runtime
+  network call, and `createGrammarLoader`/`Language.load` only ever read
+  these vendored bytes from local disk (`node:fs`, never `fetch`).
+- **Phase 3 — a fourth query file, `queries/javascript.scm`, added beyond the
+  three Section 14 names.** `tree-sitter-typescript`'s grammar is built as an
+  extension of `tree-sitter-javascript`'s, but it still adds three node types
+  (`interface_declaration`, `type_alias_declaration`, `enum_declaration`)
+  that do not exist in the plain `javascript` grammar; a tree-sitter `Query`
+  fails to compile if it references a node type the target `Language`
+  doesn't define. Since `.js`/`.jsx` files parse with the `javascript`
+  grammar (not `typescript`), they need their own query source without those
+  three patterns. `ts.scm` and `tsx.scm` remain as named and are byte-for-byte
+  identical (tree-sitter-typescript's `typescript` and `tsx` grammars share
+  the same node vocabulary for every construct this engine indexes; TSX's
+  extra JSX grammar rules are never referenced by these queries).
+- **Phase 3 — component/hook/route/const-vs-variable classification are
+  naming/shape conventions, not spec algorithms.** Section 8's algorithms
+  section has no equivalent of 8.6 for SYMBOL kinds (only Section 8.6 covers
+  FILE classification), yet `SymbolKind` includes `component`, `hook`, and
+  `route`, which have no tree-sitter node type of their own — they are
+  JS/TS/Python idioms. Filled with the same spirit as Section 8.6's own
+  conventions: a callable (function declaration or arrow/function-expression
+  assigned to a top-level const) named `use[A-Z]…` is a `hook`; the same
+  callable with a PascalCase name IN A JSX-CAPABLE LANGUAGE (`javascript`,
+  `tsx` — not plain `.ts`) is a `component`; a call shaped
+  `<object>.<get|post|put|delete|patch|options|head|use>('<string path>', …)`
+  (JS/TS) or a function decorated with `@<object>.<route|get|post|...>('<string
+  path>')` (Python, covering both Flask's `@app.route` and FastAPI-style
+  verbs) is a `route` symbol named after its path. `const` vs `variable` is
+  the declaration keyword (`const` -> `const`, `let`/`var` -> `variable`) in
+  JS/TS; Python (no such keyword) uses the `SCREAMING_SNAKE_CASE` convention
+  for `const`, everything else `variable`. All implemented in
+  `ts-parser.ts`/`python-parser.ts`, not the `.scm` queries, since none of
+  this is expressible as tree-sitter node-shape matching alone.
+- **Phase 3 — Python `isExported` convention: a name not starting with `_` is
+  public.** Python has no `export` keyword; this is Python's own documented
+  convention (a single leading underscore signals "internal"), applied
+  uniformly to functions, classes, methods, and module-level assignments in
+  `python-parser.ts`.
+- **Phase 3 — `export type { X } from './y'` is `kind: 'reexport'` with
+  `isTypeOnly: true`, not `kind: 'type'`.** Section 8.2 step 9 states "`import
+  type` / `export type` -> edge with `isTypeOnly: true`, kind `type`" for the
+  no-source form, and separately "`export * from './x'` -> kind `reexport`"
+  for the re-export form, but doesn't name the hybrid (`export type {X} from
+  './y'`). Since it fundamentally re-exports a specifier (has a `source:`
+  field), `kind` stays `'reexport'`; `isTypeOnly: true` carries the extra
+  nuance — exactly the reason `ImportEdge` has both fields independently.
+- **Phase 3 — the parser pool's concurrency (`min(cpuCount-1,8)`, Section 11)
+  is an in-process pull-based async scheduler, not real `worker_threads`/
+  `Worker` instances.** `parseFiles` still honors the exact concurrency bound
+  and the pre-sized-array-by-index determinism rule (Section 8.8) the spec
+  requires, but every parse call currently runs on the main thread. Reasons:
+  (1) `web-tree-sitter`'s `Parser`/`Language`/WASM memory cannot be shared
+  across real OS threads without each thread separately calling `Parser.init()`
+  and reloading every grammar, undercutting "avoid reloading WASM grammars"
+  (schema.sql's `idx_file_cache_lang` comment) rather than serving it; (2)
+  tree-sitter's `.parse()` call is synchronous with no internal await point,
+  so within a single JS thread there is no real re-entrancy hazard the bound
+  needs to guard against yet; (3) the public API (`parseFiles(entries,
+  getParser, options)` returning `Promise<readonly ParsePoolResult[]>`) does
+  not encode "single-threaded" anywhere, so swapping the scheduler for real
+  `Worker` threads later is a purely internal change. Flagged for revisit at
+  Phase 11's performance gate if the 10,000-file / 60s cold-analysis budget
+  (Section 11) isn't met with this simplification.
+- **Phase 3 — `sha1Hex` added to `util/hash.ts` alongside `sha256Hex`.**
+  Section 6.1's `symbol` table comment is explicit: `id TEXT PRIMARY KEY --
+  sha1(path + '#' + name + '#' + startLine)[:16]`, the one place the schema
+  names `sha1` instead of `sha256`. Implemented as a second, clearly-commented
+  export rather than silently reusing `sha256Hex` for it, since the schema's
+  choice is a literal, verbatim requirement, not a typo to "fix" into
+  consistency.
