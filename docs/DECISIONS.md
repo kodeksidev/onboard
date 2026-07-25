@@ -387,3 +387,71 @@ decided; it only records choices the spec left open.
   export rather than silently reusing `sha256Hex` for it, since the schema's
   choice is a literal, verbatim requirement, not a typo to "fix" into
   consistency.
+- **Phase 8 — `@types/cytoscape` was added then removed.** It resolves on npm
+  but is a deprecated stub with `"main": ""` and no declarations —
+  `cytoscape@3.31.4` ships its own `index.d.ts`. Kept only `cytoscape`,
+  `cytoscape-fcose`, `cytoscape-expand-collapse` as runtime deps; a small
+  ambient shim (`src/types/cytoscape-extensions.d.ts`) covers the two
+  extensions' untyped default-export registration functions, since neither
+  publishes types of its own.
+- **Phase 8 — a headless-Cytoscape fallback exists in `useCytoscape.ts`,
+  gated on `supportsCanvasRendering()`, purely so the component is
+  unit-testable under Vitest/jsdom (no `canvas` npm package installed).**
+  This is not a workaround for a fake test: `cytoscape({ headless: true })`
+  and `cytoscape({ container, ... })` are two officially-documented
+  Cytoscape.js modes, and the real Tauri webview always has a working 2D
+  canvas, so this branch never executes in production. Two consequences,
+  both discovered empirically (see the two entries below) and both confined
+  to the same fallback:
+  - `cytoscape-expand-collapse`'s `init()` unconditionally does
+    `cy.container().append(canvas)` for its on-node cue icons, which throws
+    when `cy.container()` is null (headless). `collapse.ts` exports
+    `createNoopExpandCollapseApi()` — collapse/expand become no-ops — used
+    only when `!supportsCanvasRendering()`; the real extension initializes
+    normally whenever a canvas is available.
+  - `cytoscape-fcose`'s spring-embedder repulsion pass indexes a spatial
+    grid sized from the container's pixel width/height, which are `0` with
+    no real container and throws (`Cannot read properties of undefined`).
+    `useCytoscape.ts`'s `buildLayoutOptions()` uses the core `grid` layout
+    (physics-free, no viewport dependency) instead of `fcose` whenever
+    `!supportsCanvasRendering()`; production always gets real `fcose`.
+- **Phase 8 — `fcose`'s `tile: false` is set unconditionally, not just for
+  the headless fallback.** Reproduced independently of the headless issue
+  above: fcose's node-tiling pass (for grouping disconnected/orphan
+  components) throws on the project's own 24-file sample fixture's compound
+  structure (`cose-base`'s `tileNodesByFavoringDim` reads an undefined
+  array) — a real upstream bug triggered by ordinary input, not a test
+  artifact. Directories already give the layout explicit structure via
+  compound nodes, so disabling tiling costs nothing.
+- **Phase 8 — `[` / `]` jump to the first (sorted-ascending) dependent /
+  dependency rather than cycling through all of them.** Section 9's
+  keyboard paragraph says "step to dependents/dependencies" without
+  specifying multi-target behavior. Documented in
+  `keyboard-nav.ts`'s file header; revisit if Phase 9/10 usage shows this
+  reads as a dead end for files with several dependencies.
+- **Phase 8 — `bench:graph` reports headless Cytoscape timings and explicitly
+  does not claim to measure the gate's real budgets.** Attempted a genuine
+  browser-based measurement first: `playwright-core` driving the machine's
+  installed Microsoft Edge via `executablePath` (no browser download
+  needed). The Edge process launched and exited immediately (exit code 255)
+  every time, and the Vitest/jsdom environment has no working 2D canvas
+  either (no `canvas` npm package) — so no real compositor is reachable
+  from this environment at all, by either route. Rather than fabricate a
+  first-paint or frame-time number, `bench/graph/run-bench-graph.ts` prints
+  this gap explicitly, reports the real Section 9 Phase 8 budget numbers as
+  the *target* (not a result), and measures — genuinely — headless
+  `cytoscape` + `cytoscape-fcose` + `cytoscape-expand-collapse` construction
+  and layout-completion time against the same deterministic synthetic
+  graphs Phase 11's real, browser-based `bun run bench` (Section 11) will
+  use at the same node counts. The script still exits non-zero on a true
+  hang (300s sanity ceiling) so a real regression is not silent.
+- **Phase 8 — `DependencyGraph` is code-split via `React.lazy` +
+  `Suspense` and reached through a small Overview/Dependency-graph tab
+  switcher added to `App.tsx`.** Neither is named in Section 9 Phase 8's
+  file list, but a component with no reachable path from `App.tsx` would be
+  dead code (criterion: "no dead controls"), and `cytoscape` + its two
+  extensions are the single heaviest dependency in the app (production
+  bundle: 344 kB main / 593 kB graph chunk, lazy-loaded only when the tab is
+  opened) — bundling them into the initial load would work against
+  criterion 12's "overview in under 10 seconds" for no benefit to a user who
+  never opens the graph.
