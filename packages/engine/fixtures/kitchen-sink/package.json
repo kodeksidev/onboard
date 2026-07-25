@@ -1,0 +1,7 @@
+{
+  "name": "kitchen-sink-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vendored fixture (A14) planting deterministic-walk hazards: nested .gitignore negation, a symlink loop (created at test time), a CRLF file, a 2MB file, a minified file, and a path segment containing a space.",
+  "main": "src/index.ts"
+}

@@ -1,12 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { ENGINE_STUB_VERSION, describeEngineStub } from '../src/index';
+import { CLASSIFICATION_RULE_ORDER, MAX_REPO_FILES, classifyFile, walk } from '../src/index';
 
-describe('engine package scaffold', () => {
-  test('exposes a stub version marker equal to zero', () => {
-    expect(ENGINE_STUB_VERSION).toBe(0);
+describe('engine package barrel', () => {
+  test('re-exports Phase 2 constants', () => {
+    expect(MAX_REPO_FILES).toBe(25_000);
   });
 
-  test('describes itself and its no-network posture', () => {
-    expect(describeEngineStub()).toContain('network');
+  test('re-exports the classification rule order', () => {
+    expect(CLASSIFICATION_RULE_ORDER[0]).toBe('entrypoint');
+    expect(CLASSIFICATION_RULE_ORDER.at(-1)).toBe('unknown');
+  });
+
+  test('re-exports classifyFile and walk as callables', () => {
+    expect(typeof classifyFile).toBe('function');
+    expect(typeof walk).toBe('function');
   });
 });

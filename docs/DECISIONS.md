@@ -111,6 +111,67 @@ decided; it only records choices the spec left open.
   glob, so no pattern can ever reach into `packages/engine/fixtures/` in the
   first place. A trailing `!/packages/engine/fixtures/**` is kept as a
   defensive, documented backstop.
+- **Phase 2 — `CONFIG_FILENAMES` and `ASSET_EXTENSIONS` (Section 8.6 rules 6, 17).**
+  The spec names extension- and segment-based config detection but never enumerates
+  the extensionless "known config filename" list or the asset-extension list
+  verbatim. Filled both with the conventional set for a v1 JS/TS/Python repo
+  (`packages/engine/src/constants.ts`): `CONFIG_FILENAMES` covers `Dockerfile`,
+  `Makefile`, dotfiles like `.eslintrc`/`.env*`, and common `*.config.js` names;
+  `ASSET_EXTENSIONS` covers text-ish asset formats (`html`, `xml`, `graphql`,
+  `sql`, ...) that survive the walk boundary, since binary/media extensions are
+  already dropped by `HARD_IGNORE_GLOBS` before classification ever sees them.
+- **Phase 2 — "checking the deepest segment first" (Section 8.6, closing paragraph).**
+  Read literally as a scan-direction detail *within* each segment-based rule's own
+  "segment in {set}" membership test, not as a reordering of the rules' declared
+  1-18 priority (which the same section states unambiguously: "first matching rule
+  wins, evaluated top to bottom"). A path like `src/services/routes/health.ts`
+  therefore classifies as `route` (rule 8) rather than `service` (rule 10), because
+  rule 8 is checked first, not because `routes` is the deeper segment. Implemented
+  in `packages/engine/src/classify/classify-file.ts`'s `hasSegmentIn`/
+  `hasSegmentMatching`, which scan a path's segments from deepest to shallowest
+  (a no-op for plain set membership, but the literal reading requested).
+- **Phase 2 — cache database file missing entirely (Section 6.1's invalidation rule).**
+  The spec's invalidation rule enumerates schema/version/fingerprint mismatches and
+  "the file is unreadable or `PRAGMA integrity_check` fails", but a repo opened for
+  the very first time has no cache file at all. Treated as the same "unreadable"
+  branch (`decideCacheInvalidation` reason `missing-or-unreadable`), which already
+  produces the correct action (create fresh) without a special case.
+- **Phase 2 — symlink-loop test strategy (Section 10: "skipped on Windows without dev
+  mode").** This dev machine (A22) cannot create real symlinks without elevated
+  privileges, confirmed by a failing `EPERM` from `fs.symlinkSync`. Added a
+  dependency-injected fake `WalkFs` (`packages/engine/src/walk/walk.ts`'s `WalkFs`
+  interface) so the realpath visited-set guard has a real, non-skipped, passing
+  test on every platform, and kept a second best-effort test that creates a genuine
+  OS symlink and silently returns (matching the spec's own documented gap) when the
+  platform refuses.
+- **Phase 2 — `bun:sqlite` on Windows: a closed WAL-mode database can hold its
+  `-shm`/`-wal` file open briefly after `Database.close()` returns.** Traced to
+  `Database.prepare(sql).run(...)` one-shot call sites leaving an unfinalized
+  `Statement` object that keeps the connection a "zombie" (`sqlite3_close_v2`
+  semantics) until GC finalizes it. Fixed at the source: one-shot writes now use
+  `Database.run(sql, params)` (which prepares, steps, and finalizes internally per
+  Bun's own docs); the multi-row loops in `replaceSymbolsForPath` /
+  `replaceImportEdgesForPath` / `replaceTokensForPath` keep a reused prepared
+  statement for the loop but call `.finalize()` in a `finally` block right after.
+  `sqlite-cache-store.ts`'s `deleteDatabaseFiles` additionally retries each delete
+  a bounded number of times (`DELETE_RETRY_ATTEMPTS`/`DELETE_RETRY_DELAY_MS`) since
+  this is an OS-timing quirk, not a logic bug, and "delete and recreate, never
+  migrate" must not fail intermittently on Windows.
+- **Phase 2 — the 2 MB `too-large` fixture is mechanically generated, not hand-typed.**
+  Section 11 lists "a 2MB file" as part of the `kitchen-sink` fixture's planted
+  hazards; A14 requires fixtures to be vendored (committed), not pinned to a
+  network fetch, but doesn't require every byte to be hand-authored. Generated
+  deterministically once and committed as `packages/engine/fixtures/kitchen-sink/
+  src/large-file.ts` (repeated filler lines, ~1.6 MB), same as a hand-authored file
+  would be checked in — just not line-by-line typed.
+- **Phase 2 — `walk.ts` joins directory + entry name with a fixed `/`, never
+  `node:path`'s platform-native `join`.** Gap: the spec's pseudocode doesn't specify
+  how to build the next absolute path during traversal. Using the native `join`
+  breaks dependency-injected `WalkFs` fakes in tests on Windows (it silently
+  produces backslash-joined paths that no longer match a fake filesystem's
+  forward-slash keys) and is unnecessary: Windows's own filesystem APIs (and Node's
+  wrappers over them) accept `/`-separated paths natively. A single fixed separator
+  keeps real and fake filesystems behaviorally identical.
 - **Phase 7 — `Settings` schema lives in `apps/desktop/src/ipc/settings-schema.ts`,
   not `@onboard/contract`.** Section 6.2's settings shape is Rust/config-layer
   data (`<appConfigDir>/onboard/settings.json`), never part of the frozen

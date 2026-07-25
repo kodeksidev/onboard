@@ -1,0 +1,13 @@
+{
+  "name": "node-express-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vendored fixture (A14): an Express service with routes/controllers/models.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
