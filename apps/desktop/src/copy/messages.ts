@@ -1,0 +1,202 @@
+/**
+ * Every user-facing string in Onboard's UI lives here, and only here
+ * (Section 9 Phase 7). Components import from this module and never inline a
+ * literal string a user can see — that is what lets a single test file
+ * assert every empty/error state's copy against one source of truth
+ * (Section 13 criterion 19).
+ *
+ * Strings quoted in Section 10 of the build spec are transcribed
+ * character-for-character, including em dashes (—, U+2014) and curly
+ * apostrophes where the spec uses them. `ModeIndicator`'s two strings (A6)
+ * are byte-exact and use the middle dot U+00B7 (`·`), never a hyphen or a
+ * bullet (•) — a test asserts this literally.
+ */
+
+export interface TitledCopy {
+  readonly title: string;
+  readonly description: string;
+}
+
+export interface ActionableCopy extends TitledCopy {
+  readonly actionLabel: string;
+}
+
+/** A6 — frozen verbatim. Do not reformat, retranslate, or re-punctuate. */
+export const MODE_INDICATOR = {
+  static: '🔒 Static mode · no network · nothing leaves this machine',
+  ai: (provider: string, model: string): string =>
+    `☁️ AI mode · ${provider}/${model} · snippets sent to ${provider}`,
+} as const;
+
+export const EMPTY_STATE_NO_REPO: ActionableCopy = {
+  title: 'No repository open',
+  description:
+    'Choose a folder to map. Nothing is uploaded — analysis runs entirely on this machine.',
+  actionLabel: 'Choose folder',
+};
+
+export const LABELS = {
+  skippedFiles: 'Skipped files',
+  diagnostics: 'Diagnostics',
+  retry: 'Retry',
+  openLog: 'Open log',
+  useSessionOnlyKey: 'Use session-only key',
+  chooseAnotherFolder: 'Choose another folder',
+  chooseASubfolder: 'Choose a subfolder',
+  details: 'Details',
+} as const;
+
+export const ERRORS = {
+  pathNotFound: (name: string): ActionableCopy => ({
+    title: 'That folder no longer exists',
+    description: `Onboard could not find ${name}. It may have been moved, renamed, or deleted.`,
+    actionLabel: LABELS.chooseAnotherFolder,
+  }),
+  permissionDenied: (name: string): TitledCopy => ({
+    title: "Onboard can't read this folder",
+    description: `The operating system denied read access to ${name}. Grant read permission, or pick a folder you own.`,
+  }),
+  noSupportedFiles: (): TitledCopy => ({
+    title: 'No supported source files found',
+    description:
+      'Onboard v1 reads JavaScript, TypeScript, and Python. This folder has none outside ignored paths. Go and Rust support is planned.',
+  }),
+  repoTooLarge: (fileCount: number): ActionableCopy => ({
+    title: 'This repository is too large to map in one pass',
+    description: `${fileCount} source files exceed the 25,000-file limit. Pick a subdirectory such as src/ to map a slice of it.`,
+    actionLabel: LABELS.chooseASubfolder,
+  }),
+  engineCrashed: (logPath: string): TitledCopy => ({
+    title: 'Analysis stopped unexpectedly',
+    description: `The analysis engine exited before finishing. The log is at ${logPath}. Retrying usually works — the cache keeps completed files.`,
+  }),
+  /**
+   * Gap: Section 10's "Sidecar hangs" row names E_ENGINE_TIMEOUT and the
+   * 600s/30s budgets but gives no literal copy. Filled with the most
+   * conventional phrasing consistent with the other AppError strings; see
+   * docs/DECISIONS.md.
+   */
+  engineTimeout: (): TitledCopy => ({
+    title: 'Analysis is taking too long',
+    description:
+      'Onboard stopped the analysis engine because it stopped responding. Retry, or pick a smaller folder.',
+  }),
+  /**
+   * Gap: Section 10's "Second analysis started while one runs" row specifies
+   * behavior (disable the picker) but no literal copy. See docs/DECISIONS.md.
+   */
+  analysisInProgress: (): TitledCopy => ({
+    title: 'Analysis already running',
+    description: 'Onboard is still mapping this repository. Wait for it to finish before starting another.',
+  }),
+  fileTooLarge: (name: string, size: string): TitledCopy => ({
+    title: 'File too large to display',
+    description: `${name} is ${size}. Onboard displays files up to 2 MB. Open it in your editor instead.`,
+  }),
+  aiKeyInvalid: (provider: string): TitledCopy => ({
+    title: 'That key was rejected',
+    description: `${provider} returned 401. Check the key, then test again. AI stays off until a key passes.`,
+  }),
+  aiOllamaUnreachable: (model: string): TitledCopy => ({
+    title: "Ollama isn't answering on 127.0.0.1:11434",
+    description: `Start Ollama and pull ${model}, then test again. Static mode is unaffected — everything below still works.`,
+  }),
+  aiRateLimited: (provider: string, seconds: number): TitledCopy => ({
+    title: `${provider} is rate-limiting Onboard`,
+    description: `Wait ${seconds}s and try again. Nothing was sent twice.`,
+  }),
+  aiCitationRejected: (path: string): TitledCopy => ({
+    title: "Answer withheld — it cited files that aren't in this repo",
+    description: `The model referenced ${path}, which is not in the index. Onboard never shows paths it can't verify. Try a narrower question.`,
+  }),
+  /**
+   * Gap: Section 10's "A secret survives redaction" row states the effect
+   * (E_AI_PAYLOAD_UNSAFE, nothing sent) but gives no literal copy. See
+   * docs/DECISIONS.md.
+   */
+  aiPayloadUnsafe: (): TitledCopy => ({
+    title: 'Nothing was sent',
+    description:
+      'A secret-like value survived redaction, so Onboard aborted the request before anything left this machine.',
+  }),
+  keychainUnavailable: (): ActionableCopy => ({
+    title: 'No system keyring available',
+    description:
+      "Onboard won't write API keys to disk. Install gnome-keyring or KWallet, or use a session-only key that is forgotten when you quit.",
+    actionLabel: LABELS.useSessionOnlyKey,
+  }),
+} as const;
+
+export const INFO = {
+  cacheRebuilding: (repoName: string): TitledCopy => ({
+    title: 'Rebuilding the local cache',
+    description: `The cache for ${repoName} was unreadable and has been reset. Re-analysing from scratch.`,
+  }),
+} as const;
+
+export const SEARCH_COPY = {
+  droppedTerm: (term: string): string => `Ignored: '${term}' (min 3 characters)`,
+  noResults: (query: string): TitledCopy => ({
+    title: `Nothing matched '${query}'`,
+    description:
+      'Try a concept like auth, payment, or routing — Onboard expands those into related terms.',
+  }),
+} as const;
+
+export const ANALYSIS_PROGRESS_COPY = {
+  title: 'Mapping the repository',
+  phaseLabels: {
+    walk: 'Scanning files',
+    parse: 'Parsing symbols',
+    resolve: 'Resolving imports',
+    graph: 'Building the dependency graph',
+    rank: 'Ranking importance',
+    persist: 'Saving results',
+  },
+} as const;
+
+/**
+ * Every literal title in Section 10 is static — none of them interpolate a
+ * value, only the descriptions do. `AppError.message` (Section 7's error
+ * envelope) is itself the fully-interpolated description string the
+ * producer (Rust in production, the mock/store in development) already
+ * built from this same table, so the UI only needs to look up the matching
+ * static title by `code` and render `error.message` underneath it.
+ */
+export const ERROR_TITLES: Readonly<Record<string, string>> = {
+  E_PATH_NOT_FOUND: ERRORS.pathNotFound('').title,
+  E_PERMISSION_DENIED: ERRORS.permissionDenied('').title,
+  E_NO_SUPPORTED_FILES: ERRORS.noSupportedFiles().title,
+  E_REPO_TOO_LARGE: ERRORS.repoTooLarge(0).title,
+  E_ENGINE_CRASHED: ERRORS.engineCrashed('').title,
+  E_ENGINE_TIMEOUT: ERRORS.engineTimeout().title,
+  E_ANALYSIS_IN_PROGRESS: ERRORS.analysisInProgress().title,
+};
+
+const DEFAULT_ERROR_TITLE = 'Something went wrong';
+
+export interface ResolvedErrorCopy extends TitledCopy {
+  readonly actionLabel: string | null;
+}
+
+/** Section 10's per-row action label, where a row specifies one. */
+export const ERROR_ACTION_LABELS: Readonly<Record<string, string>> = {
+  E_PATH_NOT_FOUND: LABELS.chooseAnotherFolder,
+  E_REPO_TOO_LARGE: LABELS.chooseASubfolder,
+};
+
+/**
+ * Resolves an `AppError` to display copy. `error.message` IS the
+ * description (Section 12: "AppError.message is always drawn from
+ * src/copy/messages.ts"); only the static title needs a code lookup.
+ */
+export function resolveErrorCopy(error: {
+  readonly code: string;
+  readonly message: string;
+}): ResolvedErrorCopy {
+  return {
+    title: ERROR_TITLES[error.code] ?? DEFAULT_ERROR_TITLE,
+    description: error.message,
+    actionLabel: ERROR_ACTION_LABELS[error.code] ?? null,
+  };
+}

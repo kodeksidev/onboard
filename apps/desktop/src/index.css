@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+
+/*
+ * Tailwind CSS 4.1 is CSS-first: no tailwind.config.ts is loaded unless a
+ * stylesheet opts in with `@config`, so design tokens live here instead
+ * (Section 4, Section 14 — logged as a gap resolution in docs/DECISIONS.md).
+ * `dark:` resolves to `prefers-color-scheme` by default in v4, which is
+ * exactly A17's "light + dark themes following OS preference" with zero
+ * extra configuration.
+ */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+/* A17 / criterion 21: no Cytoscape animation and no CSS transition may run
+   when the user has asked the OS for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  font-family: var(--font-sans);
+}
+
+/* Visible focus is non-negotiable (criterion 20) — never suppress the ring. */
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-blue-600 dark:outline-blue-400;
+}
