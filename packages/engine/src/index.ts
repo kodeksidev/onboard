@@ -1,18 +1,25 @@
 /**
- * @onboard/engine — Phase 0 scaffold.
+ * @onboard/engine — public barrel (Phase 2: walk, classify, hash, cache).
  *
- * This package is a deliberate stub. The real engine (walk, parse, resolve,
- * graph, rank, search, rpc — Section 9, Phases 2-5) lands only once the
- * contract is frozen in Phase 1. This file exists solely so the workspace's
- * typecheck/lint/test chain has something real to run before then.
- *
- * From Phase 0 onward this package has no network capability: `fetch` and
- * node:net|http|https|tls|dgram|dns are banned by eslint.config.js
- * (Section 12), and Phase 5 additionally stubs them to throw at boot.
+ * Phases 3-5 add `parse/`, `resolve/`, `graph/`, `rank/`, `search/`, `rpc/`,
+ * and `analyze.ts` on top of this without changing anything re-exported
+ * here. The engine remains a standalone module (A1): nothing below couples
+ * to Tauri or React, and nothing here ever touches the network (Section 12).
  */
 
-export const ENGINE_STUB_VERSION = 0 as const;
+export * from './constants';
 
-export function describeEngineStub(): string {
-  return 'engine package scaffold — network access is banned by lint from Phase 0 onward';
-}
+export * from './walk/walk';
+export * from './walk/gitignore';
+export * from './walk/skip-rules';
+
+export * from './classify/classify-file';
+export * from './classify/convention-tables';
+
+export * from './cache/cache-store';
+export * from './cache/sqlite-cache-store';
+export * from './cache/invalidation';
+
+export * from './util/posix-path';
+export * from './util/hash';
+export * from './util/stable-stringify';

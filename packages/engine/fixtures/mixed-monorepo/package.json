@@ -1,0 +1,7 @@
+{
+  "name": "mixed-monorepo-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vendored fixture (A14): two workspace packages importing each other, plus one Python service.",
+  "workspaces": ["packages/*"]
+}

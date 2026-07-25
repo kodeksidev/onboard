@@ -1,0 +1,10 @@
+{
+  "name": "react-app-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vendored fixture (A14): components, hooks, a barrel re-export, and a '@/' tsconfig alias.",
+  "main": "src/index.tsx",
+  "dependencies": {
+    "react": "^19.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+[tool.poetry]
+name = "python-flask-fixture"
+version = "0.0.0"
+description = "Vendored fixture (A14): a Flask package with relative imports and a __main__ guard."
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+flask = "^3.0.0"

@@ -8,5 +8,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test"
+  },
+  "dependencies": {
+    "@onboard/contract": "workspace:*",
+    "ignore": "~6.0.2",
+    "zod": "~4.4.3"
   }
 }
