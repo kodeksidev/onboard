@@ -1,0 +1,6 @@
+# Enforces the coding-constraint from Section 2's closing paragraph:
+# "functions < 50 lines ... nesting <= 4 levels". `too-many-lines-threshold`
+# flags any function with MORE than this many lines, so 49 is the strict
+# reading of "< 50".
+too-many-lines-threshold = 49
+cognitive-complexity-threshold = 15
