@@ -1,0 +1,42 @@
+# Line-ending policy.
+#
+# Determinism depends on this file. Acceptance criterion 3 requires every
+# fixture to produce an identical `fingerprint` on Windows, macOS, and Linux,
+# and Section 6.1 hashes raw file bytes (`content_hash = sha256(raw bytes)`).
+# If Git rewrote line endings on checkout, the same commit would hash
+# differently per OS and the determinism gate would fail cross-platform for a
+# reason that has nothing to do with the engine.
+
+# Normalize everything to LF in the repository and on checkout, on every OS.
+* text=auto eol=lf
+
+# Engine fixtures are BYTE-EXACT TEST INPUT, not source. Never transform them.
+# `-text` disables all end-of-line conversion, which is what lets
+# `packages/engine/fixtures/` carry a deliberately CRLF-line-ended file
+# (Phase 2's "Done when") without Git normalizing the CRLFs away on checkout.
+packages/engine/fixtures/** -text
+
+# Contract fixtures are compared byte-for-byte by the drift check (Phase 1).
+packages/contract/fixtures/** -text
+packages/contract/dist/*.schema.json -text
+
+# Snapshots are compared byte-for-byte.
+packages/engine/test/__snapshots__/** -text
+
+# Binary assets: no conversion, no diffing.
+*.wasm  binary
+*.sqlite binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.icns  binary
+*.dmg   binary
+*.exe   binary
+*.msi   binary
+*.deb   binary
+*.AppImage binary
+
+# Windows-only scripts genuinely need CRLF to execute reliably.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
