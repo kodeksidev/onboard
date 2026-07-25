@@ -8,13 +8,32 @@
 # widen a pattern here without checking it still excludes packages/engine/fixtures/.
 # -----------------------------------------------------------------------------
 
-# Dependencies (Bun hoists to the workspace root)
+# Dependencies. Bun hoists most packages to the workspace root, but it also
+# creates per-package node_modules/ directories for workspace-local deps
+# (e.g. packages/contract/node_modules/zod), so each level is listed
+# explicitly. Still anchored rather than a bare recursive "node_modules/",
+# so a fixture repo under packages/engine/fixtures/ may contain its own
+# node_modules/ directory for the walker to exercise (A14, Section 8.1).
 /node_modules/
+/packages/*/node_modules/
+/apps/*/node_modules/
+/apps/desktop/src-tauri/node_modules/
 
-# TypeScript build output
-/packages/*/dist/
+# TypeScript build output.
+# NOTE: this matches the *contents* of dist/ rather than the directory itself
+# ("/dist/*" not "/dist/"), because Git cannot re-include a file whose ancestor
+# directory is excluded. Matching contents is what makes the negation below work.
+/packages/*/dist/*
 /apps/desktop/dist/
 *.tsbuildinfo
+
+# ...except the emitted JSON Schema, which is a COMMITTED ARTIFACT, not build
+# output. Section 14 lists it as "generated, drift-checked": `contract:check-drift`
+# compares a fresh emit against the committed bytes, so if this file were ignored
+# the Phase 1 drift gate would have nothing to compare against and would pass
+# vacuously forever.
+!/packages/contract/dist/
+!/packages/contract/dist/analysis-result.schema.json
 
 # Rust / Tauri build output
 /apps/desktop/src-tauri/target/

@@ -7,6 +7,12 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test --coverage",
+    "contract:emit": "bun run scripts/emit-schema.ts",
+    "contract:check-drift": "bun run scripts/check-schema-drift.ts",
+    "fixture:emit": "bun run scripts/build-fixture.ts"
+  },
+  "dependencies": {
+    "zod": "~4.4.3"
   }
 }

@@ -55,6 +55,18 @@ export default tseslint.config(
     },
   },
   {
+    // Test files: `describe(...)` and `test.each(...)` callbacks are suite
+    // CONTAINERS, not functions — ESLint cannot tell them apart from real
+    // functions, so max-lines-per-function measures the size of a test suite
+    // and penalizes thorough testing. Criterion 27's target is production
+    // function complexity, so the rule is relaxed here and ONLY here.
+    // `max-lines` (800) and `max-depth` (4) stay in force on tests.
+    files: ['**/*.test.ts', '**/*.test.tsx', '**/*.spec.ts', '**/*.spec.tsx'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
+  {
     // Section 12 egress chokepoint + Section 8.8 determinism: packages/engine may
     // never touch the network and may never use locale-sensitive comparison.
     files: ['packages/engine/**/*.{ts,tsx}'],
