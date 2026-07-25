@@ -1,0 +1,1601 @@
+{
+  "result": {
+    "schemaVersion": 1,
+    "fingerprint": "d8cc63a36532debcf8d8e9801fa9920b54e4d403abc7d74e1a16950650300efe",
+    "repo": {
+      "id": "9f3c1a7b2e5d4086",
+      "name": "acme-billing-api",
+      "rootPathHash": "c1f0b4a9e77d2358a4be6013c9f8d5721ab3e6c40d92f8175e3ca6b0472d19fe",
+      "detectedType": "Node.js service with React admin and Python worker",
+      "sourceRoots": [
+        "src",
+        "web/src",
+        "worker"
+      ],
+      "workspacePackages": []
+    },
+    "stats": {
+      "filesScanned": 24,
+      "filesIgnored": 118,
+      "filesParsed": 23,
+      "filesSkipped": 1,
+      "symbolCount": 32,
+      "edgeCount": 24,
+      "externalDependencyCount": 6,
+      "unresolvedImportCount": 3,
+      "cycleCount": 1,
+      "orphanCount": 2
+    },
+    "stack": {
+      "manifests": [
+        {
+          "path": "package.json",
+          "kind": "package.json",
+          "projectName": "acme-billing-api",
+          "version": "2.4.1",
+          "packageManager": "npm"
+        },
+        {
+          "path": "worker/requirements.txt",
+          "kind": "requirements.txt",
+          "projectName": null,
+          "version": null,
+          "packageManager": "pip"
+        }
+      ],
+      "languages": [
+        {
+          "language": "ts",
+          "fileCount": 16,
+          "lineCount": 950,
+          "sharePercent": 66.7
+        },
+        {
+          "language": "tsx",
+          "fileCount": 2,
+          "lineCount": 161,
+          "sharePercent": 8.3
+        },
+        {
+          "language": "json",
+          "fileCount": 2,
+          "lineCount": 53,
+          "sharePercent": 8.3
+        },
+        {
+          "language": "js",
+          "fileCount": 1,
+          "lineCount": 3,
+          "sharePercent": 4.2
+        },
+        {
+          "language": "md",
+          "fileCount": 1,
+          "lineCount": 62,
+          "sharePercent": 4.2
+        },
+        {
+          "language": "py",
+          "fileCount": 1,
+          "lineCount": 61,
+          "sharePercent": 4.2
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "express",
+          "versionSpec": "^4.19.2",
+          "ecosystem": "npm",
+          "scope": "runtime",
+          "inferredRole": "HTTP server framework",
+          "importedByCount": 4
+        },
+        {
+          "name": "pg",
+          "versionSpec": "^8.12.0",
+          "ecosystem": "npm",
+          "scope": "runtime",
+          "inferredRole": "PostgreSQL driver",
+          "importedByCount": 1
+        },
+        {
+          "name": "react",
+          "versionSpec": "^19.0.0",
+          "ecosystem": "npm",
+          "scope": "runtime",
+          "inferredRole": "UI library",
+          "importedByCount": 2
+        },
+        {
+          "name": "react-dom",
+          "versionSpec": "^19.0.0",
+          "ecosystem": "npm",
+          "scope": "runtime",
+          "inferredRole": "UI library renderer",
+          "importedByCount": 1
+        },
+        {
+          "name": "requests",
+          "versionSpec": ">=2.31",
+          "ecosystem": "pypi",
+          "scope": "runtime",
+          "inferredRole": "HTTP client",
+          "importedByCount": 1
+        },
+        {
+          "name": "typescript",
+          "versionSpec": "^5.7.3",
+          "ecosystem": "npm",
+          "scope": "dev",
+          "inferredRole": "Type checker",
+          "importedByCount": 0
+        },
+        {
+          "name": "zod",
+          "versionSpec": "^4.4.3",
+          "ecosystem": "npm",
+          "scope": "runtime",
+          "inferredRole": "Schema validation",
+          "importedByCount": 2
+        }
+      ]
+    },
+    "entryPoints": [
+      {
+        "path": "src/index.ts",
+        "rank": 1,
+        "evidence": "package.json#main",
+        "kind": "main"
+      },
+      {
+        "path": "worker/main.py",
+        "rank": 2,
+        "evidence": "python:module-guard",
+        "kind": "main"
+      },
+      {
+        "path": "src/server.ts",
+        "rank": 3,
+        "evidence": "package.json#scripts.start",
+        "kind": "server"
+      },
+      {
+        "path": "web/src/App.tsx",
+        "rank": 4,
+        "evidence": "convention:web/src/App.tsx",
+        "kind": "convention"
+      }
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "language": "md",
+        "classification": "docs",
+        "moduleId": null,
+        "sizeBytes": 2104,
+        "lineCount": 62,
+        "contentHash": "392e13d8f995ccd3b16d684df944ec9e4c30864de77cfd465931393934f8753c",
+        "symbolCount": 0,
+        "inDegree": 0,
+        "outDegree": 0,
+        "pageRank": 0.019273,
+        "importance": 0,
+        "importanceRank": 23,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "package.json",
+        "language": "json",
+        "classification": "config",
+        "moduleId": null,
+        "sizeBytes": 812,
+        "lineCount": 34,
+        "contentHash": "89edd85162e19474029432194de6ab10e26d3a0cd8c2d765430936d939514f7d",
+        "symbolCount": 0,
+        "inDegree": 0,
+        "outDegree": 0,
+        "pageRank": 0.019273,
+        "importance": 0.045,
+        "importanceRank": 20,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/config/env.ts",
+        "language": "ts",
+        "classification": "config",
+        "moduleId": null,
+        "sizeBytes": 1440,
+        "lineCount": 48,
+        "contentHash": "1826e971a3096392650db4a1a9c67f47df7e0dfa38380414df6a41db4bd2b0e6",
+        "symbolCount": 3,
+        "inDegree": 4,
+        "outDegree": 0,
+        "pageRank": 0.106991,
+        "importance": 0.895,
+        "importanceRank": 1,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/controllers/auth.controller.ts",
+        "language": "ts",
+        "classification": "controller",
+        "moduleId": "src-controllers",
+        "sizeBytes": 2610,
+        "lineCount": 96,
+        "contentHash": "ed64203e5ff51090322a65eb7a594f681e3461553703bded5f969e988f0781b9",
+        "symbolCount": 3,
+        "inDegree": 1,
+        "outDegree": 2,
+        "pageRank": 0.045429,
+        "importance": 0.359001,
+        "importanceRank": 8,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/controllers/billing.controller.ts",
+        "language": "ts",
+        "classification": "controller",
+        "moduleId": "src-controllers",
+        "sizeBytes": 2288,
+        "lineCount": 84,
+        "contentHash": "0852f4832dd3f2ba5b4876828f4d159f022a6bdc3369d11ac9c86fe2cce27c4e",
+        "symbolCount": 2,
+        "inDegree": 1,
+        "outDegree": 1,
+        "pageRank": 0.045429,
+        "importance": 0.359001,
+        "importanceRank": 9,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/db/client.ts",
+        "language": "ts",
+        "classification": "service",
+        "moduleId": null,
+        "sizeBytes": 1702,
+        "lineCount": 58,
+        "contentHash": "7e7b869b335cdbb47608ae2f7b541d8ad3574b53b49be2ac9fdca1ee3d09d6c8",
+        "symbolCount": 2,
+        "inDegree": 2,
+        "outDegree": 1,
+        "pageRank": 0.062498,
+        "importance": 0.541025,
+        "importanceRank": 4,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/index.ts",
+        "language": "ts",
+        "classification": "entrypoint",
+        "moduleId": null,
+        "sizeBytes": 604,
+        "lineCount": 22,
+        "contentHash": "6de6fb7500041fc1c89ec4342ca2d5081eaee10327dc8624865ee2ff06079ed3",
+        "symbolCount": 1,
+        "inDegree": 0,
+        "outDegree": 2,
+        "pageRank": 0.019273,
+        "importance": 0.15,
+        "importanceRank": 18,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/legacy/old-mailer.ts",
+        "language": "ts",
+        "classification": "unknown",
+        "moduleId": null,
+        "sizeBytes": 1890,
+        "lineCount": 71,
+        "contentHash": "df9db25bf2ab1b137b00a2feca31e6a9723349dd5af6ae63f0bcbb6cff61fe85",
+        "symbolCount": 1,
+        "inDegree": 0,
+        "outDegree": 0,
+        "pageRank": 0.019273,
+        "importance": 0,
+        "importanceRank": 22,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/models/user.model.ts",
+        "language": "ts",
+        "classification": "model",
+        "moduleId": null,
+        "sizeBytes": 2015,
+        "lineCount": 77,
+        "contentHash": "57880eefd0279a36ec70661b6b3d17867158d93d91e73d252fb815c8f382e20f",
+        "symbolCount": 3,
+        "inDegree": 1,
+        "outDegree": 2,
+        "pageRank": 0.043816,
+        "importance": 0.318887,
+        "importanceRank": 11,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/routes/auth.routes.ts",
+        "language": "ts",
+        "classification": "route",
+        "moduleId": "src-routes",
+        "sizeBytes": 1188,
+        "lineCount": 41,
+        "contentHash": "995b5ac62029287833ed2a568e4efaebd17cd7c9548ee336a6943f170db8ff7d",
+        "symbolCount": 1,
+        "inDegree": 1,
+        "outDegree": 1,
+        "pageRank": 0.030772,
+        "importance": 0.2671,
+        "importanceRank": 13,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/routes/billing.routes.ts",
+        "language": "ts",
+        "classification": "route",
+        "moduleId": "src-routes",
+        "sizeBytes": 1067,
+        "lineCount": 37,
+        "contentHash": "81b708cd02719e57a18348a4ea7d1002004366c998d94397cb617d4be349cdb1",
+        "symbolCount": 1,
+        "inDegree": 1,
+        "outDegree": 1,
+        "pageRank": 0.030772,
+        "importance": 0.2671,
+        "importanceRank": 14,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/routes/index.ts",
+        "language": "ts",
+        "classification": "route",
+        "moduleId": "src-routes",
+        "sizeBytes": 486,
+        "lineCount": 14,
+        "contentHash": "d3ff230c59149bac8864d822e7fb17112b21d1b4a6f39f7026bbe4be72b85c8f",
+        "symbolCount": 0,
+        "inDegree": 1,
+        "outDegree": 2,
+        "pageRank": 0.027055,
+        "importance": 0.243794,
+        "importanceRank": 16,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/server.ts",
+        "language": "ts",
+        "classification": "service",
+        "moduleId": null,
+        "sizeBytes": 1932,
+        "lineCount": 68,
+        "contentHash": "516373a50ca573d9c794b70c7683ec8f58713ee88e9e562ac2f5f9dc48dcf883",
+        "symbolCount": 1,
+        "inDegree": 1,
+        "outDegree": 3,
+        "pageRank": 0.027465,
+        "importance": 0.246365,
+        "importanceRank": 15,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/services/auth.service.ts",
+        "language": "ts",
+        "classification": "service",
+        "moduleId": "src-services",
+        "sizeBytes": 3944,
+        "lineCount": 148,
+        "contentHash": "b3392397c81c9c5c3b4a0e05a21e015f8ecb91bb430b519e4563ad6cfa0f6190",
+        "symbolCount": 3,
+        "inDegree": 2,
+        "outDegree": 3,
+        "pageRank": 0.08662,
+        "importance": 0.692272,
+        "importanceRank": 2,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/services/billing.service.ts",
+        "language": "ts",
+        "classification": "service",
+        "moduleId": "src-services",
+        "sizeBytes": 3120,
+        "lineCount": 117,
+        "contentHash": "271fec50268a190eae3eea913701f62414670b5df989ba8829f00cea61d4ed72",
+        "symbolCount": 1,
+        "inDegree": 1,
+        "outDegree": 2,
+        "pageRank": 0.057888,
+        "importance": 0.43712,
+        "importanceRank": 6,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/services/session.service.ts",
+        "language": "ts",
+        "classification": "service",
+        "moduleId": "src-services",
+        "sizeBytes": 2466,
+        "lineCount": 92,
+        "contentHash": "fd6922cab545bd348840d14121cc99fbd9e3b19fd40b582ff07f5c111859c37f",
+        "symbolCount": 2,
+        "inDegree": 1,
+        "outDegree": 1,
+        "pageRank": 0.043816,
+        "importance": 0.348887,
+        "importanceRank": 10,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/services/token.service.ts",
+        "language": "ts",
+        "classification": "service",
+        "moduleId": "src-services",
+        "sizeBytes": 2201,
+        "lineCount": 83,
+        "contentHash": "ee4275bd62b9aa3e169ff48410bf9e7b4f0ee5ab3ca621388081fb781d680c36",
+        "symbolCount": 2,
+        "inDegree": 1,
+        "outDegree": 1,
+        "pageRank": 0.056517,
+        "importance": 0.428523,
+        "importanceRank": 7,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/utils/format.ts",
+        "language": "ts",
+        "classification": "util",
+        "moduleId": "src-utils",
+        "sizeBytes": 918,
+        "lineCount": 36,
+        "contentHash": "bddd11c0eba3b899bc36a3a1b45a2d5fbbac65b846a83887f9c46a28752316e3",
+        "symbolCount": 1,
+        "inDegree": 2,
+        "outDegree": 0,
+        "pageRank": 0.068888,
+        "importance": 0.506091,
+        "importanceRank": 5,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "src/utils/logger.ts",
+        "language": "ts",
+        "classification": "util",
+        "moduleId": "src-utils",
+        "sizeBytes": 1244,
+        "lineCount": 45,
+        "contentHash": "0eea1c45d182cb153afa6b9bb0bdedf8e6a67bd66a95d6045916bf8b6029edcd",
+        "symbolCount": 1,
+        "inDegree": 3,
+        "outDegree": 0,
+        "pageRank": 0.0762,
+        "importance": 0.626938,
+        "importanceRank": 3,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "tsconfig.json",
+        "language": "json",
+        "classification": "config",
+        "moduleId": null,
+        "sizeBytes": 401,
+        "lineCount": 19,
+        "contentHash": "3ac130240f6204e82daf9c6b8ae3e97584492994ae518256292aaef2b3d33f2a",
+        "symbolCount": 0,
+        "inDegree": 0,
+        "outDegree": 0,
+        "pageRank": 0.019273,
+        "importance": 0.045,
+        "importanceRank": 21,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "web/src/App.tsx",
+        "language": "tsx",
+        "classification": "component",
+        "moduleId": "web-src",
+        "sizeBytes": 1655,
+        "lineCount": 58,
+        "contentHash": "0c3fa61d7e5a591104242984916104f3eaef932bab53e5234a14070f272b262e",
+        "symbolCount": 1,
+        "inDegree": 0,
+        "outDegree": 1,
+        "pageRank": 0.019273,
+        "importance": 0.09,
+        "importanceRank": 19,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "web/src/components/LoginForm.tsx",
+        "language": "tsx",
+        "classification": "component",
+        "moduleId": "web-src",
+        "sizeBytes": 2740,
+        "lineCount": 103,
+        "contentHash": "7734ef619cfef82b197c4a19b7bbc04ebb1070234d3f9c6b889662058d53ec1c",
+        "symbolCount": 2,
+        "inDegree": 1,
+        "outDegree": 1,
+        "pageRank": 0.035656,
+        "importance": 0.267723,
+        "importanceRank": 12,
+        "isParsed": true,
+        "skipReason": null
+      },
+      {
+        "path": "web/src/vendor.min.js",
+        "language": "js",
+        "classification": "generated",
+        "moduleId": "web-src",
+        "sizeBytes": 184320,
+        "lineCount": 3,
+        "contentHash": "4d45d6221619d9fafd6121176543cb469304ce1c50dae104c5931f93c348b946",
+        "symbolCount": 0,
+        "inDegree": 0,
+        "outDegree": 0,
+        "pageRank": 0,
+        "importance": 0,
+        "importanceRank": 24,
+        "isParsed": false,
+        "skipReason": "minified"
+      },
+      {
+        "path": "worker/main.py",
+        "language": "py",
+        "classification": "entrypoint",
+        "moduleId": null,
+        "sizeBytes": 1508,
+        "lineCount": 61,
+        "contentHash": "38edbf4e8ddcc60d0cc0a6f38c7f3e834660c1b362f72a49a7cbf93567c5d0a4",
+        "symbolCount": 1,
+        "inDegree": 0,
+        "outDegree": 0,
+        "pageRank": 0.019273,
+        "importance": 0.15,
+        "importanceRank": 17,
+        "isParsed": true,
+        "skipReason": null
+      }
+    ],
+    "directories": [
+      {
+        "path": "src",
+        "parentPath": null,
+        "fileCount": 2,
+        "descendantFileCount": 17,
+        "dominantClassification": "service"
+      },
+      {
+        "path": "src/config",
+        "parentPath": "src",
+        "fileCount": 1,
+        "descendantFileCount": 1,
+        "dominantClassification": "config"
+      },
+      {
+        "path": "src/controllers",
+        "parentPath": "src",
+        "fileCount": 2,
+        "descendantFileCount": 2,
+        "dominantClassification": "controller"
+      },
+      {
+        "path": "src/db",
+        "parentPath": "src",
+        "fileCount": 1,
+        "descendantFileCount": 1,
+        "dominantClassification": "service"
+      },
+      {
+        "path": "src/legacy",
+        "parentPath": "src",
+        "fileCount": 1,
+        "descendantFileCount": 1,
+        "dominantClassification": "unknown"
+      },
+      {
+        "path": "src/models",
+        "parentPath": "src",
+        "fileCount": 1,
+        "descendantFileCount": 1,
+        "dominantClassification": "model"
+      },
+      {
+        "path": "src/routes",
+        "parentPath": "src",
+        "fileCount": 3,
+        "descendantFileCount": 3,
+        "dominantClassification": "route"
+      },
+      {
+        "path": "src/services",
+        "parentPath": "src",
+        "fileCount": 4,
+        "descendantFileCount": 4,
+        "dominantClassification": "service"
+      },
+      {
+        "path": "src/utils",
+        "parentPath": "src",
+        "fileCount": 2,
+        "descendantFileCount": 2,
+        "dominantClassification": "util"
+      },
+      {
+        "path": "web",
+        "parentPath": null,
+        "fileCount": 0,
+        "descendantFileCount": 3,
+        "dominantClassification": "component"
+      },
+      {
+        "path": "web/src",
+        "parentPath": "web",
+        "fileCount": 2,
+        "descendantFileCount": 3,
+        "dominantClassification": "component"
+      },
+      {
+        "path": "web/src/components",
+        "parentPath": "web/src",
+        "fileCount": 1,
+        "descendantFileCount": 1,
+        "dominantClassification": "component"
+      },
+      {
+        "path": "worker",
+        "parentPath": null,
+        "fileCount": 1,
+        "descendantFileCount": 1,
+        "dominantClassification": "entrypoint"
+      }
+    ],
+    "edges": [
+      {
+        "fromPath": "src/controllers/auth.controller.ts",
+        "toPath": "src/services/auth.service.ts",
+        "specifier": "../services/auth.service",
+        "line": 3,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/controllers/auth.controller.ts",
+        "toPath": "src/utils/format.ts",
+        "specifier": "@/utils/format",
+        "line": 4,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/controllers/billing.controller.ts",
+        "toPath": "src/services/billing.service.ts",
+        "specifier": "../services/billing.service",
+        "line": 3,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/db/client.ts",
+        "toPath": "src/config/env.ts",
+        "specifier": "../config/env",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/index.ts",
+        "toPath": "src/server.ts",
+        "specifier": "./server",
+        "line": 1,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/index.ts",
+        "toPath": "src/config/env.ts",
+        "specifier": "./config/env",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/models/user.model.ts",
+        "toPath": "src/db/client.ts",
+        "specifier": "../db/client",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/models/user.model.ts",
+        "toPath": "src/config/env.ts",
+        "specifier": "../config/env",
+        "line": 3,
+        "kind": "type",
+        "isTypeOnly": true
+      },
+      {
+        "fromPath": "src/routes/auth.routes.ts",
+        "toPath": "src/controllers/auth.controller.ts",
+        "specifier": "../controllers/auth.controller",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/routes/billing.routes.ts",
+        "toPath": "src/controllers/billing.controller.ts",
+        "specifier": "../controllers/billing.controller",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/routes/index.ts",
+        "toPath": "src/routes/auth.routes.ts",
+        "specifier": "./auth.routes",
+        "line": 1,
+        "kind": "reexport",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/routes/index.ts",
+        "toPath": "src/routes/billing.routes.ts",
+        "specifier": "./billing.routes",
+        "line": 2,
+        "kind": "reexport",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/server.ts",
+        "toPath": "src/routes/index.ts",
+        "specifier": "./routes",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/server.ts",
+        "toPath": "src/utils/logger.ts",
+        "specifier": "@/utils/logger",
+        "line": 3,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/server.ts",
+        "toPath": "src/config/env.ts",
+        "specifier": "./config/env",
+        "line": 4,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/auth.service.ts",
+        "toPath": "src/services/session.service.ts",
+        "specifier": "./session.service",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/auth.service.ts",
+        "toPath": "src/models/user.model.ts",
+        "specifier": "../models/user.model",
+        "line": 4,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/auth.service.ts",
+        "toPath": "src/utils/logger.ts",
+        "specifier": "@/utils/logger",
+        "line": 5,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/billing.service.ts",
+        "toPath": "src/db/client.ts",
+        "specifier": "../db/client",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/billing.service.ts",
+        "toPath": "src/utils/logger.ts",
+        "specifier": "@/utils/logger",
+        "line": 3,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/session.service.ts",
+        "toPath": "src/services/token.service.ts",
+        "specifier": "./token.service",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "src/services/token.service.ts",
+        "toPath": "src/services/auth.service.ts",
+        "specifier": "./auth.service",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "web/src/App.tsx",
+        "toPath": "web/src/components/LoginForm.tsx",
+        "specifier": "./components/LoginForm",
+        "line": 2,
+        "kind": "static",
+        "isTypeOnly": false
+      },
+      {
+        "fromPath": "web/src/components/LoginForm.tsx",
+        "toPath": "src/utils/format.ts",
+        "specifier": "@/utils/format",
+        "line": 3,
+        "kind": "static",
+        "isTypeOnly": false
+      }
+    ],
+    "externalDependencies": [
+      {
+        "packageName": "express",
+        "ecosystem": "npm",
+        "importedByPaths": [
+          "src/routes/auth.routes.ts",
+          "src/routes/billing.routes.ts",
+          "src/routes/index.ts",
+          "src/server.ts"
+        ]
+      },
+      {
+        "packageName": "pg",
+        "ecosystem": "npm",
+        "importedByPaths": [
+          "src/db/client.ts"
+        ]
+      },
+      {
+        "packageName": "react",
+        "ecosystem": "npm",
+        "importedByPaths": [
+          "web/src/App.tsx",
+          "web/src/components/LoginForm.tsx"
+        ]
+      },
+      {
+        "packageName": "requests",
+        "ecosystem": "pypi",
+        "importedByPaths": [
+          "worker/main.py"
+        ]
+      },
+      {
+        "packageName": "sys",
+        "ecosystem": "stdlib",
+        "importedByPaths": [
+          "worker/main.py"
+        ]
+      },
+      {
+        "packageName": "zod",
+        "ecosystem": "npm",
+        "importedByPaths": [
+          "src/config/env.ts",
+          "src/models/user.model.ts"
+        ]
+      }
+    ],
+    "unresolvedImports": [
+      {
+        "fromPath": "src/legacy/old-mailer.ts",
+        "specifier": "../config/smtp",
+        "line": 3,
+        "reason": "no-match-on-disk"
+      },
+      {
+        "fromPath": "src/services/billing.service.ts",
+        "specifier": "./providers/${providerName}",
+        "line": 41,
+        "reason": "dynamic-expression"
+      },
+      {
+        "fromPath": "worker/main.py",
+        "specifier": "analytics.pipeline",
+        "line": 4,
+        "reason": "namespace-package"
+      }
+    ],
+    "graph": {
+      "cycles": [
+        {
+          "id": "cycle-1",
+          "paths": [
+            "src/services/auth.service.ts",
+            "src/services/session.service.ts",
+            "src/services/token.service.ts"
+          ],
+          "edgeCount": 3
+        }
+      ],
+      "orphanPaths": [
+        "src/legacy/old-mailer.ts",
+        "web/src/vendor.min.js"
+      ],
+      "componentCount": 4
+    },
+    "importantFilePaths": [
+      "src/config/env.ts",
+      "src/services/auth.service.ts",
+      "src/utils/logger.ts",
+      "src/db/client.ts",
+      "src/utils/format.ts",
+      "src/services/billing.service.ts",
+      "src/services/token.service.ts",
+      "src/controllers/auth.controller.ts",
+      "src/controllers/billing.controller.ts",
+      "src/services/session.service.ts",
+      "src/models/user.model.ts",
+      "web/src/components/LoginForm.tsx",
+      "src/routes/auth.routes.ts",
+      "src/routes/billing.routes.ts",
+      "src/server.ts",
+      "src/routes/index.ts",
+      "worker/main.py",
+      "src/index.ts",
+      "web/src/App.tsx",
+      "package.json"
+    ],
+    "roadmap": {
+      "steps": [
+        {
+          "order": 1,
+          "path": "src/index.ts",
+          "companionPaths": [],
+          "section": "entry",
+          "why": "Entry point (package.json#main). Start reading here.",
+          "dependsOnPaths": [
+            "src/config/env.ts",
+            "src/server.ts"
+          ],
+          "dependedOnByCount": 0
+        },
+        {
+          "order": 2,
+          "path": "worker/main.py",
+          "companionPaths": [],
+          "section": "entry",
+          "why": "Entry point (python:module-guard). Start reading here.",
+          "dependsOnPaths": [],
+          "dependedOnByCount": 0
+        },
+        {
+          "order": 3,
+          "path": "src/server.ts",
+          "companionPaths": [],
+          "section": "core",
+          "why": "service used by 1 files; reached directly from index.ts.",
+          "dependsOnPaths": [
+            "src/config/env.ts",
+            "src/routes/index.ts",
+            "src/utils/logger.ts"
+          ],
+          "dependedOnByCount": 1
+        },
+        {
+          "order": 4,
+          "path": "src/routes/index.ts",
+          "companionPaths": [],
+          "section": "core",
+          "why": "route used by 1 files; reached directly from server.ts.",
+          "dependsOnPaths": [
+            "src/routes/auth.routes.ts",
+            "src/routes/billing.routes.ts"
+          ],
+          "dependedOnByCount": 1
+        },
+        {
+          "order": 5,
+          "path": "src/controllers/auth.controller.ts",
+          "companionPaths": [],
+          "section": "core",
+          "why": "controller used by 1 files; reached directly from auth.routes.ts.",
+          "dependsOnPaths": [
+            "src/services/auth.service.ts",
+            "src/utils/format.ts"
+          ],
+          "dependedOnByCount": 1
+        },
+        {
+          "order": 6,
+          "path": "src/services/auth.service.ts",
+          "companionPaths": [
+            "src/services/session.service.ts",
+            "src/services/token.service.ts"
+          ],
+          "section": "core",
+          "why": "Part of a 3-file import cycle; read these together.",
+          "dependsOnPaths": [
+            "src/models/user.model.ts",
+            "src/services/session.service.ts",
+            "src/utils/logger.ts"
+          ],
+          "dependedOnByCount": 2
+        },
+        {
+          "order": 7,
+          "path": "src/services/billing.service.ts",
+          "companionPaths": [],
+          "section": "supporting",
+          "why": "service in src/services; imported by 1 files.",
+          "dependsOnPaths": [
+            "src/db/client.ts",
+            "src/utils/logger.ts"
+          ],
+          "dependedOnByCount": 1
+        },
+        {
+          "order": 8,
+          "path": "src/models/user.model.ts",
+          "companionPaths": [],
+          "section": "supporting",
+          "why": "model in src/models; imported by 1 files.",
+          "dependsOnPaths": [
+            "src/config/env.ts",
+            "src/db/client.ts"
+          ],
+          "dependedOnByCount": 1
+        },
+        {
+          "order": 9,
+          "path": "src/db/client.ts",
+          "companionPaths": [],
+          "section": "supporting",
+          "why": "service in src/db; imported by 2 files.",
+          "dependsOnPaths": [
+            "src/config/env.ts"
+          ],
+          "dependedOnByCount": 2
+        },
+        {
+          "order": 10,
+          "path": "src/config/env.ts",
+          "companionPaths": [],
+          "section": "supporting",
+          "why": "Imported by 4 files (rank #3 by centrality) â€” the hub of src/config.",
+          "dependsOnPaths": [],
+          "dependedOnByCount": 4
+        },
+        {
+          "order": 11,
+          "path": "src/utils/logger.ts",
+          "companionPaths": [],
+          "section": "leaf-utility",
+          "why": "Leaf utility imported by 3 files; read last, for reference.",
+          "dependsOnPaths": [],
+          "dependedOnByCount": 3
+        },
+        {
+          "order": 12,
+          "path": "src/utils/format.ts",
+          "companionPaths": [],
+          "section": "leaf-utility",
+          "why": "Leaf utility imported by 2 files; read last, for reference.",
+          "dependsOnPaths": [],
+          "dependedOnByCount": 2
+        },
+        {
+          "order": 13,
+          "path": "src/legacy/old-mailer.ts",
+          "companionPaths": [],
+          "section": "unreached",
+          "why": "Not reached from any entry point â€” likely dead code or a separate tool.",
+          "dependsOnPaths": [],
+          "dependedOnByCount": 0
+        }
+      ]
+    },
+    "modules": [
+      {
+        "id": "src-controllers",
+        "name": "controllers",
+        "dirPath": "src/controllers",
+        "purposeByConvention": "Request handlers that translate HTTP into service calls.",
+        "fileCount": 2,
+        "keyFilePaths": [
+          "src/controllers/auth.controller.ts",
+          "src/controllers/billing.controller.ts"
+        ],
+        "dependsOnModuleIds": [
+          "src-services",
+          "src-utils"
+        ],
+        "dependedOnByModuleIds": [
+          "src-routes"
+        ]
+      },
+      {
+        "id": "src-routes",
+        "name": "routes",
+        "dirPath": "src/routes",
+        "purposeByConvention": "URL-to-handler mapping and router composition.",
+        "fileCount": 3,
+        "keyFilePaths": [
+          "src/routes/index.ts",
+          "src/routes/auth.routes.ts",
+          "src/routes/billing.routes.ts"
+        ],
+        "dependsOnModuleIds": [
+          "src-controllers"
+        ],
+        "dependedOnByModuleIds": []
+      },
+      {
+        "id": "src-services",
+        "name": "services",
+        "dirPath": "src/services",
+        "purposeByConvention": "Business logic and orchestration between models and controllers.",
+        "fileCount": 4,
+        "keyFilePaths": [
+          "src/services/auth.service.ts",
+          "src/services/billing.service.ts",
+          "src/services/session.service.ts",
+          "src/services/token.service.ts"
+        ],
+        "dependsOnModuleIds": [
+          "src-utils"
+        ],
+        "dependedOnByModuleIds": [
+          "src-controllers"
+        ]
+      },
+      {
+        "id": "src-utils",
+        "name": "utils",
+        "dirPath": "src/utils",
+        "purposeByConvention": "Shared helpers with no domain knowledge.",
+        "fileCount": 2,
+        "keyFilePaths": [
+          "src/utils/logger.ts",
+          "src/utils/format.ts"
+        ],
+        "dependsOnModuleIds": [],
+        "dependedOnByModuleIds": [
+          "src-controllers",
+          "src-services",
+          "web-src"
+        ]
+      },
+      {
+        "id": "web-src",
+        "name": "src",
+        "dirPath": "web/src",
+        "purposeByConvention": "React admin interface source root.",
+        "fileCount": 3,
+        "keyFilePaths": [
+          "web/src/components/LoginForm.tsx",
+          "web/src/App.tsx"
+        ],
+        "dependsOnModuleIds": [
+          "src-utils"
+        ],
+        "dependedOnByModuleIds": []
+      }
+    ],
+    "symbols": [
+      {
+        "id": "a1b2c3d4e5f60006",
+        "name": "EnvSchema",
+        "kind": "const",
+        "path": "src/config/env.ts",
+        "startLine": 5,
+        "endLine": 21,
+        "isExported": true,
+        "containerName": null,
+        "signature": "const EnvSchema: z.ZodObject"
+      },
+      {
+        "id": "a1b2c3d4e5f60007",
+        "name": "Env",
+        "kind": "type",
+        "path": "src/config/env.ts",
+        "startLine": 23,
+        "endLine": 23,
+        "isExported": true,
+        "containerName": null,
+        "signature": "type Env = z.infer<typeof EnvSchema>"
+      },
+      {
+        "id": "a1b2c3d4e5f60008",
+        "name": "loadEnv",
+        "kind": "function",
+        "path": "src/config/env.ts",
+        "startLine": 25,
+        "endLine": 44,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function loadEnv(): Env"
+      },
+      {
+        "id": "a1b2c3d4e5f60001",
+        "name": "AuthController",
+        "kind": "class",
+        "path": "src/controllers/auth.controller.ts",
+        "startLine": 12,
+        "endLine": 88,
+        "isExported": true,
+        "containerName": null,
+        "signature": "class AuthController"
+      },
+      {
+        "id": "a1b2c3d4e5f60002",
+        "name": "login",
+        "kind": "method",
+        "path": "src/controllers/auth.controller.ts",
+        "startLine": 19,
+        "endLine": 44,
+        "isExported": false,
+        "containerName": "AuthController",
+        "signature": "async login(req: Request, res: Response): Promise<void>"
+      },
+      {
+        "id": "a1b2c3d4e5f60003",
+        "name": "logout",
+        "kind": "method",
+        "path": "src/controllers/auth.controller.ts",
+        "startLine": 46,
+        "endLine": 61,
+        "isExported": false,
+        "containerName": "AuthController",
+        "signature": "async logout(req: Request, res: Response): Promise<void>"
+      },
+      {
+        "id": "a1b2c3d4e5f60004",
+        "name": "BillingController",
+        "kind": "class",
+        "path": "src/controllers/billing.controller.ts",
+        "startLine": 10,
+        "endLine": 79,
+        "isExported": true,
+        "containerName": null,
+        "signature": "class BillingController"
+      },
+      {
+        "id": "a1b2c3d4e5f60005",
+        "name": "createInvoice",
+        "kind": "method",
+        "path": "src/controllers/billing.controller.ts",
+        "startLine": 17,
+        "endLine": 48,
+        "isExported": false,
+        "containerName": "BillingController",
+        "signature": "async createInvoice(req: Request, res: Response): Promise<void>"
+      },
+      {
+        "id": "a1b2c3d4e5f60009",
+        "name": "pool",
+        "kind": "const",
+        "path": "src/db/client.ts",
+        "startLine": 8,
+        "endLine": 14,
+        "isExported": true,
+        "containerName": null,
+        "signature": "const pool: Pool"
+      },
+      {
+        "id": "a1b2c3d4e5f60010",
+        "name": "query",
+        "kind": "function",
+        "path": "src/db/client.ts",
+        "startLine": 16,
+        "endLine": 38,
+        "isExported": true,
+        "containerName": null,
+        "signature": "async function query<T>(sql: string, params: unknown[]): Promise<T[]>"
+      },
+      {
+        "id": "a1b2c3d4e5f60011",
+        "name": "main",
+        "kind": "function",
+        "path": "src/index.ts",
+        "startLine": 5,
+        "endLine": 20,
+        "isExported": false,
+        "containerName": null,
+        "signature": "async function main(): Promise<void>"
+      },
+      {
+        "id": "a1b2c3d4e5f60012",
+        "name": "sendMail",
+        "kind": "function",
+        "path": "src/legacy/old-mailer.ts",
+        "startLine": 9,
+        "endLine": 48,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function sendMail(to: string, body: string): void"
+      },
+      {
+        "id": "a1b2c3d4e5f60013",
+        "name": "UserRole",
+        "kind": "enum",
+        "path": "src/models/user.model.ts",
+        "startLine": 6,
+        "endLine": 11,
+        "isExported": true,
+        "containerName": null,
+        "signature": "enum UserRole"
+      },
+      {
+        "id": "a1b2c3d4e5f60014",
+        "name": "User",
+        "kind": "interface",
+        "path": "src/models/user.model.ts",
+        "startLine": 13,
+        "endLine": 22,
+        "isExported": true,
+        "containerName": null,
+        "signature": "interface User"
+      },
+      {
+        "id": "a1b2c3d4e5f60015",
+        "name": "findUserByEmail",
+        "kind": "function",
+        "path": "src/models/user.model.ts",
+        "startLine": 24,
+        "endLine": 51,
+        "isExported": true,
+        "containerName": null,
+        "signature": "async function findUserByEmail(email: string): Promise<User | null>"
+      },
+      {
+        "id": "a1b2c3d4e5f60016",
+        "name": "authRouter",
+        "kind": "route",
+        "path": "src/routes/auth.routes.ts",
+        "startLine": 6,
+        "endLine": 33,
+        "isExported": true,
+        "containerName": null,
+        "signature": "const authRouter: Router"
+      },
+      {
+        "id": "a1b2c3d4e5f60017",
+        "name": "billingRouter",
+        "kind": "route",
+        "path": "src/routes/billing.routes.ts",
+        "startLine": 6,
+        "endLine": 30,
+        "isExported": true,
+        "containerName": null,
+        "signature": "const billingRouter: Router"
+      },
+      {
+        "id": "a1b2c3d4e5f60018",
+        "name": "createServer",
+        "kind": "function",
+        "path": "src/server.ts",
+        "startLine": 10,
+        "endLine": 55,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function createServer(): Express"
+      },
+      {
+        "id": "a1b2c3d4e5f60021",
+        "name": "MAX_LOGIN_ATTEMPTS",
+        "kind": "const",
+        "path": "src/services/auth.service.ts",
+        "startLine": 12,
+        "endLine": 12,
+        "isExported": false,
+        "containerName": null,
+        "signature": "const MAX_LOGIN_ATTEMPTS = 5"
+      },
+      {
+        "id": "a1b2c3d4e5f60019",
+        "name": "AuthService",
+        "kind": "class",
+        "path": "src/services/auth.service.ts",
+        "startLine": 14,
+        "endLine": 132,
+        "isExported": true,
+        "containerName": null,
+        "signature": "class AuthService"
+      },
+      {
+        "id": "a1b2c3d4e5f60020",
+        "name": "authenticate",
+        "kind": "method",
+        "path": "src/services/auth.service.ts",
+        "startLine": 22,
+        "endLine": 68,
+        "isExported": false,
+        "containerName": "AuthService",
+        "signature": "async authenticate(email: string, password: string): Promise<Session>"
+      },
+      {
+        "id": "a1b2c3d4e5f60022",
+        "name": "BillingService",
+        "kind": "class",
+        "path": "src/services/billing.service.ts",
+        "startLine": 11,
+        "endLine": 104,
+        "isExported": true,
+        "containerName": null,
+        "signature": "class BillingService"
+      },
+      {
+        "id": "a1b2c3d4e5f60024",
+        "name": "Session",
+        "kind": "interface",
+        "path": "src/services/session.service.ts",
+        "startLine": 4,
+        "endLine": 7,
+        "isExported": true,
+        "containerName": null,
+        "signature": "interface Session"
+      },
+      {
+        "id": "a1b2c3d4e5f60023",
+        "name": "SessionService",
+        "kind": "class",
+        "path": "src/services/session.service.ts",
+        "startLine": 9,
+        "endLine": 80,
+        "isExported": true,
+        "containerName": null,
+        "signature": "class SessionService"
+      },
+      {
+        "id": "a1b2c3d4e5f60025",
+        "name": "signToken",
+        "kind": "function",
+        "path": "src/services/token.service.ts",
+        "startLine": 11,
+        "endLine": 39,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function signToken(payload: TokenPayload): string"
+      },
+      {
+        "id": "a1b2c3d4e5f60026",
+        "name": "verifyToken",
+        "kind": "function",
+        "path": "src/services/token.service.ts",
+        "startLine": 41,
+        "endLine": 74,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function verifyToken(token: string): TokenPayload | null"
+      },
+      {
+        "id": "a1b2c3d4e5f60027",
+        "name": "formatCurrency",
+        "kind": "function",
+        "path": "src/utils/format.ts",
+        "startLine": 4,
+        "endLine": 18,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function formatCurrency(cents: number, currency: string): string"
+      },
+      {
+        "id": "a1b2c3d4e5f60028",
+        "name": "logger",
+        "kind": "variable",
+        "path": "src/utils/logger.ts",
+        "startLine": 8,
+        "endLine": 12,
+        "isExported": true,
+        "containerName": null,
+        "signature": "const logger: Logger"
+      },
+      {
+        "id": "a1b2c3d4e5f60029",
+        "name": "App",
+        "kind": "component",
+        "path": "web/src/App.tsx",
+        "startLine": 6,
+        "endLine": 52,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function App(): JSX.Element"
+      },
+      {
+        "id": "a1b2c3d4e5f60031",
+        "name": "useSession",
+        "kind": "hook",
+        "path": "web/src/components/LoginForm.tsx",
+        "startLine": 6,
+        "endLine": 12,
+        "isExported": false,
+        "containerName": null,
+        "signature": "function useSession(): SessionState"
+      },
+      {
+        "id": "a1b2c3d4e5f60030",
+        "name": "LoginForm",
+        "kind": "component",
+        "path": "web/src/components/LoginForm.tsx",
+        "startLine": 14,
+        "endLine": 97,
+        "isExported": true,
+        "containerName": null,
+        "signature": "function LoginForm({ onSuccess }: LoginFormProps): JSX.Element"
+      },
+      {
+        "id": "a1b2c3d4e5f60032",
+        "name": "run",
+        "kind": "function",
+        "path": "worker/main.py",
+        "startLine": 18,
+        "endLine": 52,
+        "isExported": true,
+        "containerName": null,
+        "signature": "def run(batch_size: int = 100) -> None"
+      }
+    ],
+    "diagnostics": [
+      {
+        "severity": "info",
+        "code": "ENCODING_LOSSY",
+        "path": "src/legacy/old-mailer.ts",
+        "message": "File contained bytes that are not valid UTF-8; decoded with replacement characters."
+      },
+      {
+        "severity": "warning",
+        "code": "PARSE_FAILED",
+        "path": "web/src/vendor.min.js",
+        "message": "File was skipped before parsing because it is minified."
+      },
+      {
+        "severity": "info",
+        "code": "SYMLINK_OUTSIDE_REPO",
+        "path": "web/node_modules",
+        "message": "Symlink points outside the repository root and was not followed."
+      },
+      {
+        "severity": "warning",
+        "code": "TSCONFIG_UNREADABLE",
+        "path": "web/tsconfig.json",
+        "message": "tsconfig.json could not be parsed; path aliases from it were ignored."
+      }
+    ]
+  },
+  "engineVersion": "0.1.0",
+  "timings": {
+    "walkMs": 41,
+    "parseMs": 268,
+    "resolveMs": 57,
+    "graphMs": 12,
+    "totalMs": 402,
+    "cacheHitCount": 0
+  }
+}

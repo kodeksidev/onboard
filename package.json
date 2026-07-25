@@ -10,7 +10,10 @@
     "apps/*"
   ],
   "scripts": {
-    "verify": "bun run typecheck && bun run lint && bun run test",
+    "verify": "bun run typecheck && bun run lint && bun run contract:check-drift && bun run test",
+    "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
+    "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
+    "fixture:emit": "bun run --cwd \"packages/contract\" fixture:emit",
     "typecheck": "bun run --cwd \"packages/contract\" typecheck && bun run --cwd \"packages/engine\" typecheck && bun run --cwd \"apps/desktop\" typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
