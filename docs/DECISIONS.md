@@ -1594,3 +1594,22 @@ decided; it only records choices the spec left open.
     confirm the warm 10k number, which this fast path is expected to
     bring down from ~6,000-7,300 ms to roughly walk time (~1.8-2.2 s)
     plus a single-row read, comfortably inside the 6,000 ms budget.
+
+- **Phase 11 — `panP95` deferred to a real WebView2 measurement (accepted gap).**
+  Section 11 budgets scripted-pan p95 frame time at 22 ms (1,000 nodes) and
+  33 ms (5,000 nodes). After the lazy-materialization fix the measured values
+  sit right at the line and vary widely between runs on identical code —
+  16.8 ms, 33.3 ms and 33.4 ms were all observed for the same 1,000-node case.
+  The cause is the harness, not the graph: `bench:graph` drives headless Edge,
+  which rasterizes through SwiftShader in software rather than through the
+  on-screen WebView2 compositor the app actually ships on, so a PASS is strong
+  evidence but a FAIL is not conclusive. A software rasterizer also has no
+  stable frame cadence, which is why repeat runs disagree.
+  Decision (product owner, explicit): do NOT chase this number. Closing a
+  fraction of a millisecond against an unreliable measurement would mean
+  trading real visual quality for a figure that does not represent the shipping
+  renderer. The row is deferred to a genuine WebView2 measurement, which A19
+  places outside this environment's reach on Windows/Linux WebDriver and
+  entirely outside it on macOS. `firstPaint`, which IS reliable under software
+  rasterization because it measures work rather than frame pacing, passes with
+  roughly a 10x margin at both sizes (249.5 ms and 161.1 ms against 1,500 ms).
