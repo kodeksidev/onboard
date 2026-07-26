@@ -8,20 +8,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readLines } from '../src/rpc/server';
+import { binaryNameForHost } from './lib/sidecar-binary-name';
 
 const DIST_DIR = join(import.meta.dir, '..', 'dist');
 const GRAMMARS_DIR = join(import.meta.dir, '..', 'grammars');
 const FIXTURES_DIR = join(import.meta.dir, '..', 'fixtures');
-
-function binaryNameForHost(): string {
-  if (process.platform === 'win32') {
-    return 'onboard-engine-x86_64-pc-windows-msvc.exe';
-  }
-  if (process.platform === 'darwin') {
-    return process.arch === 'arm64' ? 'onboard-engine-aarch64-apple-darwin' : 'onboard-engine-x86_64-apple-darwin';
-  }
-  return 'onboard-engine-x86_64-unknown-linux-gnu';
-}
 
 interface JsonRpcMessage {
   readonly jsonrpc: '2.0';

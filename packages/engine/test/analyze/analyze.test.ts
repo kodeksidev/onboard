@@ -99,6 +99,84 @@ describe('analyze — kitchen-sink fixture (cycles, skip-rules, broken file)', (
 });
 
 /**
+ * Section 13 acceptance criterion 7, verbatim: "kitchen-sink's snapshot
+ * asserts: the known 3-file cycle appears as exactly one Cycle and one
+ * roadmap step with 2 companionPaths; the 2 known orphans appear in
+ * graph.orphanPaths; the tsconfig alias import resolves; the import()
+ * template literal is dynamic-expression; the minified and 2 MB files are
+ * isParsed: false with the correct skipReason." Before this test existed,
+ * kitchen-sink had zero import statements anywhere (cycles=0, edges=0, all
+ * 13 files "orphans") — every one of these assertions was vacuously
+ * untestable, not merely untested.
+ */
+describe('analyze — kitchen-sink fixture exercises Section 13 acceptance criterion 7', () => {
+  test('the 3-file cycle is exactly one Cycle, collapsing to one roadmap step with 2 companionPaths', async () => {
+    const result = await analyze({ repoRootAbs: join(FIXTURES_DIR, 'kitchen-sink'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test' });
+    expect(result.graph.cycles).toHaveLength(1);
+    const cycle = result.graph.cycles[0]!;
+    expect([...cycle.paths].sort()).toEqual(['src/cycle-a.ts', 'src/cycle-b.ts', 'src/cycle-c.ts']);
+
+    const cycleSteps = result.roadmap.steps.filter((s) => cycle.paths.includes(s.path));
+    expect(cycleSteps).toHaveLength(1);
+    expect(cycleSteps[0]?.companionPaths).toHaveLength(2);
+    expect([...cycleSteps[0]!.companionPaths].sort()).toEqual(
+      cycle.paths.filter((p) => p !== cycleSteps[0]?.path).sort(),
+    );
+  });
+
+  test('import() with a template literal is an UnresolvedImport with reason dynamic-expression, never a resolved edge', async () => {
+    const result = await analyze({ repoRootAbs: join(FIXTURES_DIR, 'kitchen-sink'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test' });
+    expect(
+      result.unresolvedImports.some((u) => u.fromPath === 'src/dynamic-import-demo.ts' && u.reason === 'dynamic-expression'),
+    ).toBe(true);
+    expect(result.edges.some((e) => e.fromPath === 'src/dynamic-import-demo.ts')).toBe(false);
+  });
+
+  test('the tsconfig paths alias (@/lib/shared-util) resolves to a real edge', async () => {
+    const result = await analyze({ repoRootAbs: join(FIXTURES_DIR, 'kitchen-sink'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test' });
+    expect(
+      result.edges.some((e) => e.fromPath === 'src/tsconfig-alias-consumer.ts' && e.toPath === 'src/lib/shared-util.ts'),
+    ).toBe(true);
+  });
+
+  test('the 2 known orphans appear in graph.orphanPaths, and the now-connected majority does not', async () => {
+    const result = await analyze({ repoRootAbs: join(FIXTURES_DIR, 'kitchen-sink'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test' });
+    expect(result.graph.orphanPaths).toContain('src/dynamic-import-demo.ts');
+    expect(result.graph.orphanPaths).toContain('src/sub/thing.ts');
+    // The connected majority: every source file this phase wired into the
+    // graph (via index.ts, the cycle, or the tsconfig alias) must NOT be
+    // an orphan anymore — this is the discrimination criterion 7 asks for.
+    const nowConnected = [
+      'src/index.ts',
+      'src/cycle-a.ts',
+      'src/cycle-b.ts',
+      'src/cycle-c.ts',
+      'src/tsconfig-alias-consumer.ts',
+      'src/lib/shared-util.ts',
+      'src/symbols-showcase.ts',
+      'src/crlf-file.ts',
+      'src/dir with space/file.ts',
+      'src/broken.ts',
+      'src/large-file.ts',
+      'src/minified.js',
+    ];
+    nowConnected.forEach((path) => {
+      expect(result.graph.orphanPaths).not.toContain(path);
+    });
+  });
+
+  test('the minified and 2 MB files remain isParsed: false with the correct skipReason even once imported', async () => {
+    const result = await analyze({ repoRootAbs: join(FIXTURES_DIR, 'kitchen-sink'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test' });
+    const large = result.files.find((f) => f.path === 'src/large-file.ts');
+    const minified = result.files.find((f) => f.path === 'src/minified.js');
+    expect(large?.isParsed).toBe(false);
+    expect(large?.skipReason).toBe('too-large');
+    expect(minified?.isParsed).toBe(false);
+    expect(minified?.skipReason).toBe('minified');
+  });
+});
+
+/**
  * Windows can hold a newly-closed WAL-mode SQLite file's `-shm` mapping open
  * for a short window after `Database.close()` returns (same quirk documented
  * in `test/cache/sqlite-cache-store.test.ts`, A22) — a bounded retry absorbs

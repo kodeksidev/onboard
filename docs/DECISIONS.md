@@ -1235,3 +1235,103 @@ decided; it only records choices the spec left open.
   avoid a flaky CI timing assertion) and that touching one file out of
   several updates only that file's tokens while an untouched file's tokens
   remain correct.
+- **Phase 11 (four gate-hardening items, no security review/Phase 12 until
+  green) — 1: `verify:determinism`'s determinism floor.** A fingerprint
+  comparison alone cannot distinguish a working engine from a broken one
+  that reliably produces the same EMPTY result every time — exactly how the
+  tree-sitter.wasm regression's `test:rpc` gate passed 7/7 against a binary
+  that found zero symbols. `scripts/verify-determinism.ts` now checks
+  `symbols > 0` and `edges > 0` for every fixture's cold result BEFORE any
+  fingerprint is compared, with a clear per-fixture failure message; all 5
+  vendored fixtures have real symbols and real imports by design (Section
+  11), so a `0` always means degradation, never a legitimately-empty
+  fixture. A new `VERIFY_DETERMINISM_GRAMMARS_DIR` env override lets this
+  exact gate be demonstrated failing (pointed at an empty directory, every
+  fixture reports `0 symbols`/`0 edges`, exit 1) without a second copy of
+  the script — see the Phase 11 report for the literal before/after output.
+- **Phase 11 — 2: `kitchen-sink` had zero import statements, making Section
+  13 acceptance criterion 7 untestable, not merely untested.** Added: a
+  genuine 3-file import cycle (`cycle-a.ts -> cycle-b.ts -> cycle-c.ts ->
+  cycle-a.ts`); a dynamic `import()` with a template-literal argument
+  (`dynamic-import-demo.ts`, never resolved, reason `dynamic-expression`);
+  a `tsconfig.json` with a `@/*` -> `src/*` alias plus a consumer file that
+  resolves through it; and connected the previously-orphaned majority of
+  the fixture's existing files (`symbols-showcase.ts`, `crlf-file.ts`,
+  `dir with space/file.ts`, `broken.ts`, `large-file.ts`, `minified.js`)
+  into the graph via `index.ts`, while deliberately leaving exactly 2 files
+  (`dynamic-import-demo.ts` — its only import can never resolve;
+  `sub/thing.ts` — left alone on purpose) as genuine zero-edge orphans
+  against that now-connected majority — criterion 7's own "2 known orphans"
+  wording, discriminated from the 5 structurally-inevitable non-source
+  orphans (`.gitignore`, `package.json`, `tsconfig.json`, and two nested
+  `.gitignore`/`.log` files, which can never participate in an import graph
+  regardless). Measured before/after (`edges`, `cycles`, `orphanPaths`
+  length, `dynamic-expression` count): `0/0/13/0` -> `12/1/8/1`. Five new
+  assertions in `test/analyze/analyze.test.ts` cover the cycle collapsing
+  to one roadmap step with exactly 2 `companionPaths`, the dynamic-import
+  reason, the tsconfig alias edge, the 2-orphans-vs-connected-majority
+  discrimination, and that `large-file.ts`/`minified.js` stay `isParsed:
+  false` with the correct `skipReason` even once imported.
+  `kitchen-sink.snap.json` was regenerated; `git diff --stat` confirms it
+  is the only snapshot that moved.
+- **Phase 11 — 3: `build:sidecar`'s smoke test.** Checking that four
+  filenames exist is satisfied by a non-functional placeholder — literally
+  how the original tree-sitter.wasm regression shipped. `build-sidecar.ts`
+  now launches the actual built host-platform binary after all four cross-
+  compiles finish, drives a real `engine.analyze` against `node-express`
+  (a fixture known to parse cleanly) over stdio, and throws (failing the
+  whole build, non-zero exit) unless `PARSE_FAILED === 0` and `symbols > 0`
+  — reusing the exact same substance bar as `test:rpc`'s gate, not a
+  separate weaker one. A new `scripts/lib/sidecar-binary-name.ts` is the
+  one shared place both `build-sidecar.ts` and `test-rpc.ts` resolve the
+  host binary's filename from, so they can never name it two different
+  ways. This stays entirely inside `packages/engine/dist` — nothing here
+  reaches into `apps/desktop`.
+- **Phase 11 — 4: the poisoned-cache bug — `schema_meta.engineVersion` now
+  moves when the engine's CODE changes, not just when `package.json`'s
+  version field is bumped by hand.** `scripts/build-sidecar.ts` bundles
+  `main.ts` once WITHOUT any injected constant (a chicken-and-egg problem
+  otherwise — the hash cannot include itself), hashes that bundle's text
+  with sha256 (first 12 hex chars), then compiles for real with the hash
+  injected via `bun build --define` as `process.env.ONBOARD_BUILD_HASH` — a
+  compile-time constant substitution, not a real environment-variable
+  read, so it cannot be spoofed by setting an env var against the compiled
+  binary. `src/engine-version.ts`'s `resolveEngineVersion(packageVersion,
+  buildHash)` appends it (`"0.1.0+<hash12>"`) when present, and falls back
+  to the bare package version when running from source (`bun run` never
+  applies `--define`, so the "env var" is genuinely unset there — the
+  correct, honest behavior, not a bug in the fallback). Verified with an
+  actual experiment, not reasoning: built binary A (hash `a042c6ca35b6`),
+  ran `engine.analyze` against `node-express` with a persistent
+  `appDataDir` (symbols=12, `schema_meta.engineVersion` inspected directly
+  from the `.sqlite` file = `"0.1.0+a042c6ca35b6"`); made a trivial,
+  comment-only edit to `main.ts`; rebuilt as binary B (hash
+  `4b1c400fd59f`); ran `engine.analyze` again against the SAME `appDataDir`
+  with NO manual cache clear — `schema_meta.engineVersion` now read back as
+  `"0.1.0+4b1c400fd59f"` (confirmed different), the cache was rejected and
+  rebuilt automatically, and the result was still correct (symbols=12,
+  edges=3). The demo edit was reverted immediately after (confirmed
+  byte-identical: rebuilding from the reverted source reproduces the
+  original `a042c6ca35b6` hash exactly).
+
+  Defense in depth, per the coordinator's explicit question: a parse
+  result with `hasSyntaxError: true` and zero symbols is no longer written
+  to the cache as authoritative when it comes from a SYSTEMIC failure (the
+  parser pool call itself threw — e.g. the tree-sitter.wasm regression,
+  or any future init-time bug) — `analyze-support.ts`'s
+  `persistParsePhaseResults` now distinguishes that case (`ParsePoolResult`
+  `status: 'failed'`) from a genuine per-file syntax error (`status: 'ok'`,
+  `hasSyntaxError: true` — tree-sitter is error-tolerant and always
+  returns `'ok'` for real per-file problems like `broken.ts`, which IS
+  still cached exactly as before). A systemic failure gets an in-memory
+  placeholder so `analyze()` still completes and reports a diagnostic
+  (using the real underlying error message, not a generic one), but
+  nothing is persisted for that file — so once the underlying bug is
+  fixed, the very next run (even without a version/hash change) reparses
+  it instead of trusting a poisoned row. Locked in by three new tests in
+  `test/analyze/persist-parse-phase-results.test.ts`, including one that
+  demonstrates the self-healing: a systemic failure writes nothing, and a
+  later successful parse of the same file can still write its result. This
+  is deliberately independent of the `engineVersion`/build-hash fix above —
+  either one alone would have prevented the reported bug; together they
+  are two layers, not one relying on the other.

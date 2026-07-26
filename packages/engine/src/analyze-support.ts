@@ -222,6 +222,52 @@ function persistParsedFile(cacheStore: CacheStore, f: ProcessedFile, parsed: Par
   cacheStore.replaceSymbolsForPath(f.path, buildSymbolRows(f.path, parsed.symbols));
 }
 
+/**
+ * Persists (or, per the doc comment below, deliberately withholds) each
+ * freshly-parsed file's result, wrapped in one transaction for the whole
+ * batch rather than one auto-committed write per file — N individual
+ * commits was the dominant cost behind the warm/incremental-analysis
+ * regression measured in Section 11's bench (see `docs/DECISIONS.md`).
+ * Returns the fresh `path -> ParsedFile` map for the `toParse` subset only.
+ */
+export function persistParsePhaseResults(
+  toParse: readonly ProcessedFile[],
+  results: readonly ParsePoolResult[],
+  cacheStore: CacheStore | undefined,
+): Map<string, ParsedFile> {
+  const freshByPath = new Map<string, ParsedFile>();
+  const persistOne = (f: ProcessedFile, index: number): void => {
+    const result = results[index];
+    if (result?.status === 'ok') {
+      freshByPath.set(f.path, result.parsed);
+      if (cacheStore !== undefined) {
+        persistParsedFile(cacheStore, f, result.parsed);
+      }
+      return;
+    }
+    // A SYSTEMIC parse failure (the pool call itself threw — e.g. a
+    // tree-sitter init/WASM-loading failure) is not the same thing as a
+    // genuine per-file syntax error and must never be cached as if it
+    // were: doing so poisons every later run with a false "successfully
+    // parsed as empty" result that survives even after the underlying bug
+    // is fixed, since `file_cache.content_hash` still matches and the
+    // parse-cache never suspects anything is wrong (see
+    // `docs/DECISIONS.md`'s poisoned-cache entry). Genuine per-file syntax
+    // errors (e.g. `broken.ts`) never reach this branch — tree-sitter is
+    // error-tolerant and always returns `status: 'ok'` with
+    // `hasSyntaxError: true`, which IS legitimate to cache. Diagnostics
+    // still surface the real failure (`buildParseDiagnostics` uses
+    // `result.message`); only the cache write is withheld.
+    freshByPath.set(f.path, { imports: [], symbols: [], hasSyntaxError: true });
+  };
+  if (cacheStore !== undefined) {
+    cacheStore.withTransaction(() => toParse.forEach(persistOne));
+  } else {
+    toParse.forEach(persistOne);
+  }
+  return freshByPath;
+}
+
 /** Runs the parser pool over every parseable file, reusing cached results when the content hash matches. */
 export async function runParsePhase(
   files: readonly ProcessedFile[],
@@ -238,26 +284,8 @@ export async function runParsePhase(
   const getParser = createLanguageParserFactory(grammarsDir);
   const results: readonly ParsePoolResult[] = await parseFiles(entries, getParser);
 
-  // One transaction for the whole batch, not one auto-committed write per
-  // file: N individual commits was the dominant cost behind the warm/
-  // incremental-analysis regression measured in Section 11's bench (see
-  // `docs/DECISIONS.md`) — `toParse` is empty on a fully-warm run, but a
-  // partially-changed (incremental) or cold run still pays this per-file
-  // otherwise.
-  const parsedByPath = new Map<string, ParsedFile>(cacheHit);
-  const persistOneParsedFile = (f: ProcessedFile, index: number): void => {
-    const result = results[index];
-    const parsed: ParsedFile = result?.status === 'ok' ? result.parsed : { imports: [], symbols: [], hasSyntaxError: true };
-    parsedByPath.set(f.path, parsed);
-    if (cacheStore !== undefined) {
-      persistParsedFile(cacheStore, f, parsed);
-    }
-  };
-  if (cacheStore !== undefined) {
-    cacheStore.withTransaction(() => toParse.forEach(persistOneParsedFile));
-  } else {
-    toParse.forEach(persistOneParsedFile);
-  }
+  const freshByPath = persistParsePhaseResults(toParse, results, cacheStore);
+  const parsedByPath = new Map<string, ParsedFile>([...cacheHit, ...freshByPath]);
 
   // Diagnostics must cover EVERY parsed file (cache hits included), not just
   // this run's freshly-parsed subset — otherwise a cached file's syntax-error

@@ -9,11 +9,46 @@
  * into `apps/desktop/**` — the coordinator copies these into
  * `apps/desktop/src-tauri/binaries/` themselves (Phase 5 instructions).
  */
-import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readLines } from '../src/rpc/server';
+import { binaryNameForHost } from './lib/sidecar-binary-name';
 
 const ENTRYPOINT = join(import.meta.dir, '..', 'src', 'main.ts');
 const OUT_DIR = join(import.meta.dir, '..', 'dist');
+const GRAMMARS_DIR = join(import.meta.dir, '..', 'grammars');
+const SMOKE_FIXTURE_DIR = join(import.meta.dir, '..', 'fixtures', 'node-express');
+const BUILD_HASH_LENGTH = 12;
+
+/**
+ * Fixes the poisoned-cache bug (Section 6.1: `schema_meta.engineVersion` is
+ * one of four cache-invalidation keys, and a bare `package.json` version
+ * string never moves when the engine's CODE changes without a version
+ * bump — a defective binary's empty cache survived being replaced by a
+ * fixed one, with no manual cache clear, because none of the four keys had
+ * changed). Bundles `main.ts` once WITHOUT the hash (a chicken-and-egg
+ * problem otherwise: the hash can't include itself), hashes that bundle's
+ * text, then re-bundles (compiling, this time) with the hash injected via
+ * `bun build --define` — a compile-time constant substitution, not a real
+ * environment-variable read, so it cannot be spoofed by setting an env var
+ * against the compiled binary. `src/engine-version.ts` is what consumes it.
+ */
+async function computeBuildHash(): Promise<string> {
+  const result = await Bun.build({ entrypoints: [ENTRYPOINT], target: 'bun', outdir: join(OUT_DIR, '.build-hash-scratch') });
+  if (!result.success) {
+    const messages = result.logs.map((log) => log.message).join('\n');
+    throw new Error(`build-sidecar: failed to build the hash-scan bundle:\n${messages}`);
+  }
+  const output = result.outputs[0];
+  if (output === undefined) {
+    throw new Error('build-sidecar: Bun.build produced no output artifact to hash.');
+  }
+  const text = await output.text();
+  rmSync(join(OUT_DIR, '.build-hash-scratch'), { recursive: true, force: true });
+  return createHash('sha256').update(text).digest('hex').slice(0, BUILD_HASH_LENGTH);
+}
 
 interface SidecarTarget {
   readonly bunTarget: 'bun-windows-x64' | 'bun-darwin-arm64' | 'bun-darwin-x64' | 'bun-linux-x64';
@@ -28,11 +63,12 @@ const SIDECAR_TARGETS: readonly SidecarTarget[] = [
   { bunTarget: 'bun-linux-x64', outfileName: 'onboard-engine-x86_64-unknown-linux-gnu' },
 ];
 
-async function buildOne(target: SidecarTarget): Promise<void> {
+async function buildOne(target: SidecarTarget, buildHash: string): Promise<void> {
   const outfile = join(OUT_DIR, target.outfileName);
   const result = await Bun.build({
     entrypoints: [ENTRYPOINT],
     compile: { target: target.bunTarget, outfile },
+    define: { 'process.env.ONBOARD_BUILD_HASH': JSON.stringify(buildHash) },
   });
   if (!result.success) {
     const messages = result.logs.map((log) => log.message).join('\n');
@@ -41,13 +77,110 @@ async function buildOne(target: SidecarTarget): Promise<void> {
   console.log(`built ${target.outfileName}`);
 }
 
+interface SmokeAnalyzeOutcome {
+  readonly exitCode: number;
+  readonly errorMessage: string | null;
+  readonly engineVersion: string | null;
+  readonly symbolCount: number;
+  readonly edgeCount: number;
+  readonly parseFailedCount: number;
+}
+
+async function spawnSmokeAnalyze(binaryPath: string, appDataDir: string): Promise<SmokeAnalyzeOutcome> {
+  const proc = Bun.spawn([binaryPath, '--grammars-dir', GRAMMARS_DIR], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  const responses: string[] = [];
+  const consume = (async (): Promise<void> => {
+    for await (const line of readLines(proc.stdout)) {
+      if (line.trim().length > 0) {
+        responses.push(line);
+      }
+    }
+  })();
+
+  const analyzeParams = { repoPath: SMOKE_FIXTURE_DIR, appDataDir, excludeGlobs: [], isForceRefresh: false };
+  proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'engine.version', params: {} })}\n`);
+  proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'engine.analyze', params: analyzeParams })}\n`);
+  proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'engine.shutdown', params: {} })}\n`);
+  void proc.stdin.flush();
+
+  const exitCode = await proc.exited;
+  await consume;
+
+  const messages = responses.map((line) => JSON.parse(line) as Record<string, unknown>);
+  const versionMessage = messages.find((m) => m.id === 0);
+  const engineVersion = ((versionMessage?.result as { engineVersion?: string } | undefined)?.engineVersion) ?? null;
+
+  const analyzeMessage = messages.find((m) => m.id === 1);
+  const error = analyzeMessage?.error as { message?: string } | undefined;
+  if (error !== undefined) {
+    return { exitCode, errorMessage: error.message ?? JSON.stringify(error), engineVersion, symbolCount: 0, edgeCount: 0, parseFailedCount: 0 };
+  }
+  const analyzeResult = (analyzeMessage?.result as { result?: unknown } | undefined)?.result as
+    | { symbols?: unknown[]; edges?: unknown[]; diagnostics?: { code: string }[] }
+    | undefined;
+  const symbolCount = analyzeResult?.symbols?.length ?? 0;
+  const edgeCount = analyzeResult?.edges?.length ?? 0;
+  const parseFailedCount = analyzeResult?.diagnostics?.filter((d) => d.code === 'PARSE_FAILED').length ?? 0;
+  return {
+    exitCode,
+    errorMessage: analyzeMessage === undefined ? 'no engine.analyze response received' : null,
+    engineVersion,
+    symbolCount,
+    edgeCount,
+    parseFailedCount,
+  };
+}
+
+/**
+ * The gate that would have caught the tree-sitter.wasm regression before it
+ * shipped: a 26-byte placeholder (or any non-functional binary) satisfies
+ * "four filenames exist," so `build:sidecar` now launches the actual built
+ * host-platform binary, runs a real `engine.analyze` against a known-good
+ * fixture, and requires substance (`symbols > 0`, zero `PARSE_FAILED`) —
+ * not just a successful RPC round-trip. Throws (failing the whole build) on
+ * any shortfall.
+ */
+async function smokeTestHostBinary(): Promise<void> {
+  const binaryPath = join(OUT_DIR, binaryNameForHost());
+  const appDataDir = mkdtempSync(join(tmpdir(), 'onboard-build-smoke-'));
+  let outcome: SmokeAnalyzeOutcome;
+  try {
+    outcome = await spawnSmokeAnalyze(binaryPath, appDataDir);
+  } finally {
+    rmSync(appDataDir, { recursive: true, force: true });
+  }
+
+  if (outcome.errorMessage !== null) {
+    throw new Error(`build-sidecar smoke test: engine.analyze failed: ${outcome.errorMessage}`);
+  }
+  if (outcome.exitCode !== 0) {
+    throw new Error(`build-sidecar smoke test: sidecar process exited with code ${String(outcome.exitCode)}, expected 0`);
+  }
+  if (outcome.parseFailedCount !== 0) {
+    throw new Error(
+      `build-sidecar smoke test: ${String(outcome.parseFailedCount)} PARSE_FAILED diagnostic(s) on node-express ` +
+        '(a fixture known to parse cleanly) — the binary cannot actually parse.',
+    );
+  }
+  if (outcome.symbolCount === 0) {
+    throw new Error('build-sidecar smoke test: 0 symbols extracted from node-express (expected > 0) — the binary cannot actually parse.');
+  }
+  console.log(
+    `smoke test PASS: ${binaryNameForHost()} (engineVersion=${outcome.engineVersion ?? 'unknown'}) analyzed node-express ` +
+      `with symbols=${String(outcome.symbolCount)}, edges=${String(outcome.edgeCount)}, PARSE_FAILED=${String(outcome.parseFailedCount)}`,
+  );
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
+  const buildHash = await computeBuildHash();
+  console.log(`build hash: ${buildHash}`);
   // Sequential by design: clear per-target progress output, one target at a time.
   for (const target of SIDECAR_TARGETS) {
-    await buildOne(target);
+    await buildOne(target, buildHash);
   }
   console.log(`all ${String(SIDECAR_TARGETS.length)} sidecar binaries written to ${OUT_DIR}`);
+  await smokeTestHostBinary();
 }
 
 await main();
