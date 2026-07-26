@@ -523,3 +523,118 @@ decided; it only records choices the spec left open.
   opened) — bundling them into the initial load would work against
   criterion 12's "overview in under 10 seconds" for no benefit to a user who
   never opens the graph.
+- **Phase 4 — `repo.sourceRoots` must never contain `''`, even though
+  `rank/modules.ts` needs `''` as an internal sentinel for "the repo root
+  itself" (Section 8.6's module derivation treats the repo root as a valid
+  basis for depth-1/2 candidates).** `RepoPath` requires a non-empty string
+  (mirroring the same constraint `directories.ts` already had to work around
+  for the repo root — see the next entry). Kept the internal `''` sentinel
+  flowing through `detectSourceRoots`/`computeModules` unchanged (it is
+  exactly what makes a non-monorepo repo's whole tree eligible for module
+  candidates), and instead filter it out at the one place it becomes
+  contract-facing (`analyze-assemble.ts`'s `buildRepoSection`): a repo with
+  no workspace packages now reports `sourceRoots: []`, an empty array being
+  a perfectly valid (if less informative) `RepoPath[]`, rather than `['']`.
+  Caught by the very first `analyze()` integration test run — every fixture
+  failed `AnalysisResult.parse()` with a `ZodError` on `repo.sourceRoots[0]`
+  until this was fixed.
+- **Phase 4 — `directories.ts` never emits the repo root itself as a
+  `DirectoryNode`.** Same root cause as the previous entry: `RepoPath`
+  cannot be `''`, so there is no valid way to represent the repo root as a
+  `DirectoryNode.path`. A top-level directory's `parentPath` is `null`
+  rather than pointing at an unrepresented root.
+- **Phase 4 — module qualification counts files DIRECTLY inside a candidate
+  directory, not recursively.** Section 8.6 says modules are "directories at
+  depth 1-2 below each sourceRoot containing >= MODULE_MIN_FILES parsed
+  files," which reads ambiguously as either a direct or recursive count.
+  Recursive counting creates a real paradox once combined with "a file
+  belongs to its deepest qualifying ancestor": a shallow directory that only
+  qualifies because of a deep subdirectory's files would, after those files
+  get reassigned to the deeper (also-qualifying) subdirectory, end up
+  qualifying but empty — a `ModuleCard` with `fileCount: 0` describing
+  nothing. Direct-count qualification avoids this entirely and is a
+  perfectly natural reading of "a directory containing N files." Documented
+  at the top of `rank/modules.ts`.
+- **Phase 4 — `graph.orphanPaths` = isolated files (zero in-degree AND zero
+  out-degree), deliberately narrower than the roadmap's `unreached`
+  section.** Section 10's edge-case table only says orphans "appear in the
+  roadmap's unreached section," not that the two sets are identical. Section
+  8.5 step 6's `unreached` is about BFS reachability from entry points (an
+  SCC can have plenty of edges among well-connected files and still never be
+  reached from any seed); "orphan" in the classic graph-theory sense means
+  fully disconnected. Implemented as the narrower, more literal reading in
+  `graph/orphans.ts`; every orphan is necessarily also unreached, but not
+  every unreached file is an orphan.
+- **Phase 4 — a `Cycle`'s `paths` is a deterministic greedy tour through the
+  SCC, not a full alphabetical sort.** The contract comment says "rotated so
+  the lexicographically smallest is first," which implies an underlying
+  non-alphabetical (cyclic-tour) order exists to rotate, not that the whole
+  array gets sorted. Tarjan's algorithm doesn't hand back a ready-made tour
+  for a non-simple SCC (one with internal branching beyond a single loop),
+  so `graph/cycles.ts` reconstructs one: start at the smallest member, then
+  repeatedly step to the smallest unvisited in-SCC neighbor, falling back to
+  the smallest remaining unvisited member on a dead end. Always starts at the
+  smallest member (satisfying "rotated... smallest first" literally) and is
+  fully deterministic.
+- **Phase 4 — roadmap step-8 trimming's "fill remaining slots... in
+  importance-desc order" uses `path` ascending as its tie-break.** Not
+  specified for this specific sort (unlike nearly every other ranking in
+  Sections 8.3-8.5, which all name `path` asc as the final tie-break), but
+  every one of them does, and reusing that same rule here is both consistent
+  and the only way this step is deterministic when two non-entry candidates
+  tie exactly on importance.
+- **Phase 4 — entry-point priority order (`package.json#main` -> `#bin` ->
+  `python:__main__.py` -> `convention:index.*` -> `#scripts.start` ->
+  `python:module-guard`), and `repo.detectedType`'s decision tree (Next.js >
+  React > Vue > Node.js service; Flask/Django/FastAPI > Python package;
+  workspace count > 1 beats everything else).** Section 7.1 names the
+  possible `evidence` strings and gives example `detectedType` values, but
+  specifies neither a detection priority nor a decision tree. Both are
+  implemented as the most conventional reading (explicit manifest
+  declarations outrank filesystem convention, which outranks a best-effort
+  script-string parse) and documented inline in `stack/entry-points.ts` and
+  `stack/detect-stack.ts`.
+- **Phase 4 — `python:importlib.import_module('literal')` detection is not
+  implemented; a known gap carried from Phase 3.** Section 8.2 Python rule 6
+  says `importlib.import_module('literal')` resolves like a normal import and
+  a non-literal call is `dynamic-expression`, but Phase 3's
+  `queries/python.scm` never added a capture for `importlib.import_module(...)`
+  calls (unlike JS/TS's `require()`/dynamic-`import()` handling, which IS
+  captured). No vendored fixture exercises this pattern, so it does not
+  block Phase 4's gate, but it means Python's dynamic-expression path is
+  presently unreachable in practice. Flagged explicitly rather than silently
+  left; a real fix belongs in `parse/python-parser.ts` + `queries/python.scm`,
+  not `resolve/`.
+- **Phase 4 — `package.json#imports` conditional-object targets only ever
+  resolve the `"default"` condition.** Node's real `imports` field supports
+  arbitrary condition names (`"node"`, `"import"`, `"require"`, ...); Section
+  8.2 rule 5 only says "same substitution" as `paths`, without addressing
+  conditions. Resolving every possible condition would require knowing which
+  runtime environment the analyzed repo targets, which this static analyzer
+  has no way to know; `"default"` is the one condition every consumer must
+  fall back to per the Node spec itself, so it is the only one honored
+  (`resolve/node-resolution.ts`'s `importsValueToTargets`).
+- **Phase 4 — a workspace package's bare specifier also resolves a deep
+  subpath (`@acme/core/utils`), not just the bare package name.** Section
+  8.2 rule 7 only describes resolving the bare specifier via
+  exports/module/main; deep imports bypassing a package's declared entry
+  point are commonplace in real monorepos and cost nothing extra to support
+  (`resolve/node-resolution.ts`'s `matchWorkspaceBase`), so it was added
+  defensively rather than treated as out of scope.
+- **Phase 4 — `tsconfig`/`jsconfig` `paths` targets resolve against
+  `baseUrl`, defaulting to the config's own directory when `baseUrl` is
+  absent.** Section 8.2 rule 4 doesn't say what `paths` targets are relative
+  to. This matches modern TypeScript's own documented behavior (`baseUrl`
+  became optional for `paths` in TS 4.1+, defaulting to the tsconfig's own
+  directory) — the conventional, least-surprising choice
+  (`resolve/node-resolution.ts`'s `resolveNodeImport`).
+- **Phase 4 — `analyze.ts` is split into `analyze.ts` (orchestration) +
+  `analyze-support.ts` + `analyze-rank-phase.ts` + `analyze-assemble.ts`.**
+  Section 14 lists a single `analyze.ts`, but the full walk -> parse ->
+  resolve -> graph -> rank -> assemble pipeline does not fit one file under
+  the 800-line cap while keeping every function under 50 lines (a hard
+  lint-enforced rule, not a style preference). Each extra file owns one
+  contiguous phase of the pipeline and is imported only by `analyze.ts`
+  itself, so the module remains a single logical composition root split
+  across files for size reasons only, not a change to its public surface
+  (`analyze()` is still the only export anything outside this cluster calls).

@@ -111,32 +111,32 @@ describe('createTsFamilyParser — route detection', () => {
 describe('createTsFamilyParser — raw imports', () => {
   test('extracts a static default import', () => {
     const parsed = jsParser.parse("import React from 'react';");
-    expect(parsed.imports).toEqual([{ specifier: 'react', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'react', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('marks `import type` as kind "type" with isTypeOnly true', () => {
     const parsed = tsParser.parse("import type { Foo } from './foo';");
-    expect(parsed.imports).toEqual([{ specifier: './foo', line: 1, kind: 'type', isTypeOnly: true }]);
+    expect(parsed.imports).toEqual([{ specifier: './foo', line: 1, kind: 'type', isTypeOnly: true, isLiteral: true }]);
   });
 
   test('extracts a bare re-export as kind "reexport"', () => {
     const parsed = jsParser.parse("export * from './reexport';");
-    expect(parsed.imports).toEqual([{ specifier: './reexport', line: 1, kind: 'reexport', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: './reexport', line: 1, kind: 'reexport', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts a require() call as kind "require"', () => {
     const parsed = jsParser.parse("const fs = require('node:fs');");
-    expect(parsed.imports).toEqual([{ specifier: 'node:fs', line: 1, kind: 'require', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'node:fs', line: 1, kind: 'require', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts a literal dynamic import() as kind "dynamic"', () => {
     const parsed = jsParser.parse("const mod = import('./lazy');");
-    expect(parsed.imports).toEqual([{ specifier: './lazy', line: 1, kind: 'dynamic', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: './lazy', line: 1, kind: 'dynamic', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts a non-literal dynamic import() with the raw expression as its specifier', () => {
     const parsed = jsParser.parse('const mod = import(pathVar);');
-    expect(parsed.imports).toEqual([{ specifier: 'pathVar', line: 1, kind: 'dynamic', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'pathVar', line: 1, kind: 'dynamic', isTypeOnly: false, isLiteral: false }]);
   });
 
   test('does not invent an edge for a plain function call named "notrequire"', () => {

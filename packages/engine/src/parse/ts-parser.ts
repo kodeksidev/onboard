@@ -172,7 +172,14 @@ function symbolFromMatch(match: QueryMatch, languageId: SupportedLanguageId): Ra
   return null;
 }
 
-function importKindAndSpecifier(match: QueryMatch): { specifier: string; kind: RawImportKind; isTypeOnly: boolean } | null {
+interface ImportMatchInfo {
+  readonly specifier: string;
+  readonly kind: RawImportKind;
+  readonly isTypeOnly: boolean;
+  readonly isLiteral: boolean;
+}
+
+function importKindAndSpecifier(match: QueryMatch): ImportMatchInfo | null {
   const names = match.captures.map((c) => c.name);
   if (names.includes('import.stmt')) {
     const stmt = match.captures.find((c) => c.name === 'import.stmt')!.node;
@@ -181,21 +188,22 @@ function importKindAndSpecifier(match: QueryMatch): { specifier: string; kind: R
       return null; // side-effect import with no source is unreachable per the grammar, guarded anyway
     }
     const isTypeOnly = hasTypeOnlyMarker(stmt);
-    return { specifier: stringLiteralContent(source), kind: isTypeOnly ? 'type' : 'static', isTypeOnly };
+    return { specifier: stringLiteralContent(source), kind: isTypeOnly ? 'type' : 'static', isTypeOnly, isLiteral: true };
   }
   if (names.includes('import.reexport_stmt')) {
     const stmt = match.captures.find((c) => c.name === 'import.reexport_stmt')!.node;
     const source = stmt.childForFieldName('source')!;
-    return { specifier: stringLiteralContent(source), kind: 'reexport', isTypeOnly: hasTypeOnlyMarker(stmt) };
+    return { specifier: stringLiteralContent(source), kind: 'reexport', isTypeOnly: hasTypeOnlyMarker(stmt), isLiteral: true };
   }
   if (names.includes('import.require_stmt')) {
     const arg = match.captures.find((c) => c.name === 'import.require_arg')!.node;
-    return { specifier: stringLiteralContent(arg), kind: 'require', isTypeOnly: false };
+    return { specifier: stringLiteralContent(arg), kind: 'require', isTypeOnly: false, isLiteral: true };
   }
   if (names.includes('import.dynamic_stmt')) {
     const arg = match.captures.find((c) => c.name === 'import.dynamic_arg')!.node;
-    const specifier = arg.type === 'string' ? stringLiteralContent(arg) : arg.text;
-    return { specifier, kind: 'dynamic', isTypeOnly: false };
+    const isLiteral = arg.type === 'string';
+    const specifier = isLiteral ? stringLiteralContent(arg) : arg.text;
+    return { specifier, kind: 'dynamic', isTypeOnly: false, isLiteral };
   }
   return null;
 }
@@ -209,7 +217,13 @@ function importFromMatch(match: QueryMatch): RawImport | null {
   if (anchor === undefined) {
     return null;
   }
-  return { specifier: resolved.specifier, line: anchor.startPosition.row + 1, kind: resolved.kind, isTypeOnly: resolved.isTypeOnly };
+  return {
+    specifier: resolved.specifier,
+    line: anchor.startPosition.row + 1,
+    kind: resolved.kind,
+    isTypeOnly: resolved.isTypeOnly,
+    isLiteral: resolved.isLiteral,
+  };
 }
 
 function byLineThenName(a: RawSymbol, b: RawSymbol): number {

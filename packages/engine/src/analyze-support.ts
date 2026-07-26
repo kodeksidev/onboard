@@ -1,0 +1,312 @@
+/**
+ * @onboard/engine — `analyze()` support functions (file processing, parsing,
+ * import resolution). Split out of `analyze.ts` to keep both files under
+ * the 800-line / 50-line-per-function limits.
+ */
+import { readFileSync } from 'node:fs';
+import type { AnalysisResult as AnalysisResultValue } from '@onboard/contract';
+import { BINARY_CHECK_BYTES, CACHE_SCHEMA_VERSION, SHA256_HEX_LENGTH } from './constants';
+import { determineSkipReason, type SkipReason } from './walk/skip-rules';
+import {
+  createLanguageParserFactory,
+  parseFiles,
+  buildParseDiagnostics,
+  type ParsePoolEntry,
+  type ParsePoolResult,
+} from './parse/parser-pool';
+import type { ParsedFile, RawImport, SupportedLanguageId } from './parse/language-parser';
+import { resolveRawImport, type ResolverContext } from './resolve/resolve-import';
+import { computeGrammarFingerprint } from './parse/grammar-loader';
+import { sha256Hex, countLines } from './util/hash';
+import { posixExtLower } from './util/posix-path';
+import { byteCompare } from './util/sort';
+import type { CacheStore } from './cache/cache-store';
+import { buildSymbolRows } from './index/symbol-index';
+
+export type LanguageValue = AnalysisResultValue['files'][number]['language'];
+export type DiagnosticValue = AnalysisResultValue['diagnostics'][number];
+export type EdgeValue = AnalysisResultValue['edges'][number];
+export type ExternalDependencyEdgeValue = AnalysisResultValue['externalDependencies'][number];
+export type UnresolvedImportValue = AnalysisResultValue['unresolvedImports'][number];
+
+const EXT_TO_LANGUAGE: Readonly<Record<string, LanguageValue>> = {
+  ts: 'ts',
+  tsx: 'tsx',
+  js: 'js',
+  jsx: 'jsx',
+  py: 'py',
+  json: 'json',
+  md: 'md',
+};
+
+const LANGUAGE_TO_SUPPORTED_ID: Readonly<Partial<Record<LanguageValue, SupportedLanguageId>>> = {
+  ts: 'typescript',
+  tsx: 'tsx',
+  js: 'javascript',
+  jsx: 'javascript',
+  py: 'python',
+};
+
+export function languageForPath(path: string): LanguageValue {
+  return EXT_TO_LANGUAGE[posixExtLower(path)] ?? 'other';
+}
+
+export function supportedLanguageIdFor(language: LanguageValue): SupportedLanguageId | null {
+  return LANGUAGE_TO_SUPPORTED_ID[language] ?? null;
+}
+
+function nativePath(repoRootAbs: string, relPosix: string): string {
+  return `${repoRootAbs}/${relPosix}`;
+}
+
+export function readFileText(repoRootAbs: string, relPosix: string): string | null {
+  try {
+    return readFileSync(nativePath(repoRootAbs, relPosix), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+export type FileSkipReason = SkipReason | 'unsupported-language' | 'unreadable';
+
+export interface ProcessedFile {
+  readonly path: string;
+  readonly sizeBytes: number;
+  readonly language: LanguageValue;
+  readonly languageId: SupportedLanguageId | null;
+  readonly contentHash: string;
+  readonly lineCount: number;
+  readonly skipReason: FileSkipReason | null;
+  readonly isParsed: boolean;
+  readonly headerLines: readonly string[];
+  readonly text: string;
+}
+
+function unreadableFile(path: string, sizeBytes: number): ProcessedFile {
+  return {
+    path,
+    sizeBytes,
+    language: languageForPath(path),
+    languageId: null,
+    contentHash: sha256Hex(''),
+    lineCount: 0,
+    skipReason: 'unreadable',
+    isParsed: false,
+    headerLines: [],
+    text: '',
+  };
+}
+
+/** Reads, hashes, and applies the skip-rules for one file (Sections 8.1, 8.6). */
+export function processOneFile(repoRootAbs: string, path: string, sizeBytes: number): { file: ProcessedFile; diagnostic: DiagnosticValue | null } {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(nativePath(repoRootAbs, path));
+  } catch {
+    return { file: unreadableFile(path, sizeBytes), diagnostic: { severity: 'error', code: 'FILE_UNREADABLE', path, message: 'The file could not be read.' } };
+  }
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  const contentHash = sha256Hex(bytes);
+  const language = languageForPath(path);
+  const languageId = supportedLanguageIdFor(language);
+  const skipReason = determineSkipReason({
+    sizeBytes,
+    readFirstBytes: () => bytes.subarray(0, BINARY_CHECK_BYTES),
+    readFullText: () => text,
+  });
+  const finalSkipReason: FileSkipReason | null = skipReason ?? (languageId === null ? 'unsupported-language' : null);
+  const diagnostic: DiagnosticValue | null =
+    finalSkipReason === null && text.includes('�')
+      ? { severity: 'info', code: 'ENCODING_LOSSY', path, message: 'File decoded as UTF-8 with lossy replacement.' }
+      : null;
+  const file: ProcessedFile = {
+    path,
+    sizeBytes,
+    language,
+    languageId,
+    contentHash,
+    lineCount: countLines(text),
+    skipReason: finalSkipReason,
+    isParsed: finalSkipReason === null,
+    headerLines: text.split('\n').slice(0, 3),
+    text,
+  };
+  return { file, diagnostic };
+}
+
+export interface ParsePhaseResult {
+  readonly parsedByPath: ReadonlyMap<string, ParsedFile>;
+  readonly diagnostics: readonly DiagnosticValue[];
+}
+
+interface CachedRow {
+  readonly contentHash: string;
+  readonly parsedJson: string;
+}
+
+function openCacheIfProvided(
+  cacheStore: CacheStore | undefined,
+  grammarsDir: string,
+  engineVersion: string,
+  contractSchemaVersion: number,
+): void {
+  if (cacheStore === undefined) {
+    return;
+  }
+  cacheStore.open({
+    cacheSchemaVersion: CACHE_SCHEMA_VERSION,
+    engineVersion,
+    grammarFingerprint: computeGrammarFingerprint(grammarsDir),
+    contractSchemaVersion,
+  });
+}
+
+function partitionByCacheHit(
+  files: readonly ProcessedFile[],
+  cacheStore: CacheStore | undefined,
+): { readonly cacheHit: ReadonlyMap<string, ParsedFile>; readonly toParse: readonly ProcessedFile[] } {
+  const cacheHit = new Map<string, ParsedFile>();
+  const toParse: ProcessedFile[] = [];
+  files
+    .filter((f) => f.isParsed && f.languageId !== null)
+    .forEach((f) => {
+      const cached: CachedRow | null = cacheStore?.getFileCache(f.path) ?? null;
+      if (cached !== null && cached.contentHash === f.contentHash) {
+        cacheHit.set(f.path, JSON.parse(cached.parsedJson) as ParsedFile);
+      } else {
+        toParse.push(f);
+      }
+    });
+  return { cacheHit, toParse };
+}
+
+function persistParsedFile(cacheStore: CacheStore, f: ProcessedFile, parsed: ParsedFile): void {
+  cacheStore.upsertFileCache({
+    path: f.path,
+    contentHash: f.contentHash,
+    sizeBytes: f.sizeBytes,
+    lineCount: f.lineCount,
+    language: f.language,
+    classification: 'unknown', // not yet known at parse time; analyze.ts owns the authoritative FileNode
+    isParsed: f.isParsed,
+    skipReason: f.skipReason,
+    parsedJson: JSON.stringify(parsed),
+  });
+  cacheStore.replaceSymbolsForPath(f.path, buildSymbolRows(f.path, parsed.symbols));
+}
+
+/** Runs the parser pool over every parseable file, reusing cached results when the content hash matches. */
+export async function runParsePhase(
+  files: readonly ProcessedFile[],
+  grammarsDir: string,
+  engineVersion: string,
+  contractSchemaVersion: number,
+  cacheStore: CacheStore | undefined,
+): Promise<ParsePhaseResult> {
+  openCacheIfProvided(cacheStore, grammarsDir, engineVersion, contractSchemaVersion);
+  const { cacheHit, toParse } = partitionByCacheHit(files, cacheStore);
+
+  const entries: ParsePoolEntry[] = toParse.map((f) => ({ path: f.path, languageId: f.languageId!, sourceText: f.text }));
+  const getParser = createLanguageParserFactory(grammarsDir);
+  const results: readonly ParsePoolResult[] = await parseFiles(entries, getParser);
+
+  const parsedByPath = new Map<string, ParsedFile>(cacheHit);
+  toParse.forEach((f, index) => {
+    const result = results[index];
+    const parsed: ParsedFile = result?.status === 'ok' ? result.parsed : { imports: [], symbols: [], hasSyntaxError: true };
+    parsedByPath.set(f.path, parsed);
+    if (cacheStore !== undefined) {
+      persistParsedFile(cacheStore, f, parsed);
+    }
+  });
+
+  // Diagnostics must cover EVERY parsed file (cache hits included), not just
+  // this run's freshly-parsed subset — otherwise a cached file's syntax-error
+  // diagnostic silently disappears on a warm run (Section 8.8: cold vs warm
+  // must produce an identical fingerprint).
+  const allParsedFiles = files.filter((f) => f.isParsed && f.languageId !== null);
+  const allEntries: ParsePoolEntry[] = allParsedFiles.map((f) => ({ path: f.path, languageId: f.languageId!, sourceText: f.text }));
+  const allResults: ParsePoolResult[] = allParsedFiles.map((f) => {
+    const parsed = parsedByPath.get(f.path);
+    return parsed === undefined ? { status: 'failed', message: 'no parse result' } : { status: 'ok', parsed };
+  });
+  const parseDiagnostics = buildParseDiagnostics(allEntries, allResults);
+
+  return { parsedByPath, diagnostics: parseDiagnostics };
+}
+
+export interface ResolutionOutput {
+  readonly edges: EdgeValue[];
+  readonly externalDependencies: ExternalDependencyEdgeValue[];
+  readonly unresolvedImports: UnresolvedImportValue[];
+  readonly externalImportedByPaths: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+function dedupeEdges(edges: readonly EdgeValue[]): EdgeValue[] {
+  const seen = new Set<string>();
+  const result: EdgeValue[] = [];
+  edges.forEach((edge) => {
+    const key = `${edge.fromPath}${edge.specifier}${String(edge.line)}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(edge);
+    }
+  });
+  return result;
+}
+
+/** Resolves every file's raw imports into internal edges, external deps, and unresolved imports. */
+export function resolveAllImports(
+  files: readonly { readonly path: string; readonly languageId: SupportedLanguageId | null }[],
+  parsedByPath: ReadonlyMap<string, ParsedFile>,
+  context: ResolverContext,
+): ResolutionOutput {
+  const edges: EdgeValue[] = [];
+  const unresolvedImports: UnresolvedImportValue[] = [];
+  const externalImportsByKey = new Map<string, Set<string>>();
+
+  files.forEach((f) => {
+    if (f.languageId === null) {
+      return;
+    }
+    const parsed = parsedByPath.get(f.path);
+    if (parsed === undefined) {
+      return;
+    }
+    parsed.imports.forEach((rawImport: RawImport) => {
+      const outcome = resolveRawImport(f.path, f.languageId!, rawImport, context);
+      if (outcome.kind === 'edge') {
+        edges.push(outcome.edge);
+      } else if (outcome.kind === 'external') {
+        const key = `${outcome.ecosystem}:${outcome.packageName}`;
+        if (!externalImportsByKey.has(key)) {
+          externalImportsByKey.set(key, new Set());
+        }
+        externalImportsByKey.get(key)?.add(f.path);
+      } else {
+        unresolvedImports.push(outcome.unresolved);
+      }
+    });
+  });
+
+  const externalDependencies: ExternalDependencyEdgeValue[] = [];
+  externalImportsByKey.forEach((paths, key) => {
+    const [ecosystem, ...rest] = key.split(':');
+    externalDependencies.push({
+      packageName: rest.join(':'),
+      ecosystem: ecosystem as ExternalDependencyEdgeValue['ecosystem'],
+      importedByPaths: [...paths].sort(byteCompare),
+    });
+  });
+
+  return {
+    edges: dedupeEdges(edges),
+    externalDependencies,
+    unresolvedImports,
+    externalImportedByPaths: externalImportsByKey,
+  };
+}
+
+export function assertHexLength(value: string): string {
+  return value.length === SHA256_HEX_LENGTH ? value : value.padEnd(SHA256_HEX_LENGTH, '0').slice(0, SHA256_HEX_LENGTH);
+}

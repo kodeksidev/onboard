@@ -7,7 +7,9 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "verify:determinism": "bun run scripts/verify-determinism.ts",
+    "snapshots:generate": "bun run scripts/generate-snapshots.ts"
   },
   "dependencies": {
     "@onboard/contract": "workspace:*",
