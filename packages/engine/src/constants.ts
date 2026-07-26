@@ -297,8 +297,15 @@ export const ROADMAP_LEAF_UTILITY_CLASSIFICATIONS: readonly string[] = ['util', 
 // Section 6.1 — per-repo SQLite cache
 // ---------------------------------------------------------------------------
 
-/** `PRAGMA user_version` / `schema_meta['cacheSchemaVersion']`. */
-export const CACHE_SCHEMA_VERSION = 1;
+/**
+ * `PRAGMA user_version` / `schema_meta['cacheSchemaVersion']`. Bumped to 2
+ * when `idx_token_index_path` was added to `schema.sql` (Section 11's
+ * 10,000-file scaling fix, see `docs/DECISIONS.md`) — a pre-existing cache
+ * from before that index existed must be deleted and recreated, never
+ * silently reused without it, matching Section 6.1's "delete and recreate,
+ * never migrate" invalidation rule.
+ */
+export const CACHE_SCHEMA_VERSION = 2;
 
 /** Cap on `token_index.lines_json` entries per (token, path) pair. */
 export const MAX_LINES_PER_TOKEN = 20;

@@ -288,6 +288,101 @@ describe('analyze — token_index persistence (Section 6.1, search infra)', () =
   });
 });
 
+/**
+ * Section 11's warm-analysis fast path (`tryServeCachedResultFastPath` in
+ * `analyze-support.ts`, wired via `tryFastPath` in `analyze.ts`): when a
+ * cache store is given and every file's content hash is unchanged, `analyze()`
+ * serves the cached `analysis_result` row directly instead of recomputing
+ * resolve/graph/rank/assemble. `onPhaseTiming`'s `buildGraph` label is used
+ * as an independent witness that the full rebuild path did or did not run —
+ * asserting on the RESULT alone could not distinguish "correctly served from
+ * cache" from "coincidentally recomputed the same answer", and asserting on
+ * the WITNESS alone could not distinguish "took the fast path" from "took the
+ * fast path but served something wrong". Both tests below check both.
+ */
+describe('analyze — Section 11 warm fast path', () => {
+  test('an unchanged repo takes the fast path (buildGraph never fires) and matches a full-rebuild fingerprint', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'onboard-fastpath-unchanged-'));
+    try {
+      const dbPath = join(dir, 'cache.sqlite');
+      const cold = new SqliteCacheStore(dbPath);
+      const coldResult = await analyze({
+        repoRootAbs: join(FIXTURES_DIR, 'node-express'),
+        grammarsDir: GRAMMARS_DIR,
+        engineVersion: '0.0.0-test',
+        cacheStore: cold,
+      });
+      cold.close();
+
+      let sawFullRebuildPhase = false;
+      const warm = new SqliteCacheStore(dbPath);
+      const { result: warmResult } = await analyzeWithTimings({
+        repoRootAbs: join(FIXTURES_DIR, 'node-express'),
+        grammarsDir: GRAMMARS_DIR,
+        engineVersion: '0.0.0-test',
+        cacheStore: warm,
+        onPhaseTiming: (label) => {
+          if (label === 'buildGraph') {
+            sawFullRebuildPhase = true;
+          }
+        },
+      });
+      warm.close();
+
+      expect(sawFullRebuildPhase).toBe(false);
+      expect(warmResult.fingerprint).toBe(coldResult.fingerprint);
+    } finally {
+      await removeDirWithRetry(dir);
+    }
+  });
+
+  test('touching one file falls back to the incremental path and reflects the change, never a stale served blob', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'onboard-fastpath-partial-repo-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'onboard-fastpath-partial-cache-'));
+    try {
+      cpSync(join(FIXTURES_DIR, 'node-express'), repoDir, { recursive: true });
+      const dbPath = join(cacheDir, 'cache.sqlite');
+
+      const cold = new SqliteCacheStore(dbPath);
+      await analyze({ repoRootAbs: repoDir, grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: cold });
+      cold.close();
+
+      const targetFile = join(repoDir, 'src', 'models', 'user-model.js');
+      appendFileSync(
+        targetFile,
+        '\nfunction findByIdXyzNew(id) {\n  return users.find((user) => user.id === id) ?? null;\n}\nmodule.exports.findByIdXyzNew = findByIdXyzNew;\n',
+        'utf8',
+      );
+
+      let sawFullRebuildPhase = false;
+      const warm = new SqliteCacheStore(dbPath);
+      const { result: warmResult } = await analyzeWithTimings({
+        repoRootAbs: repoDir,
+        grammarsDir: GRAMMARS_DIR,
+        engineVersion: '0.0.0-test',
+        cacheStore: warm,
+        onPhaseTiming: (label) => {
+          if (label === 'buildGraph') {
+            sawFullRebuildPhase = true;
+          }
+        },
+      });
+      warm.close();
+
+      // Proves the fast path was correctly bypassed, not merely that the
+      // final answer happens to look right — a served-stale-blob bug and a
+      // correct-incremental-rebuild both could pass a fingerprint-only
+      // check under the wrong circumstances; this pins down BOTH that the
+      // full path ran AND that its output carries the new symbol.
+      expect(sawFullRebuildPhase).toBe(true);
+      expect(warmResult.symbols.some((s) => s.name === 'findByIdXyzNew')).toBe(true);
+    } finally {
+      await removeDirWithRetry(repoDir);
+      await removeDirWithRetry(cacheDir);
+    }
+  });
+});
+
 describe('analyzeWithTimings', () => {
   test('returns the same AnalysisResult as analyze(), plus a non-negative timings breakdown', async () => {
     const { result, timings } = await analyzeWithTimings({

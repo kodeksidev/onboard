@@ -1419,3 +1419,178 @@ decided; it only records choices the spec left open.
   "when the source text changes byte-for-byte"** — whitespace- or
   comment-only edits are not guaranteed to move it, and nothing here
   should be read as claiming otherwise.
+- **Phase 11 — the 10,000-file numbers this agent first reported (cold
+  17,158 ms / warm 4,667 ms) did not reproduce through the actual staged
+  binary (coordinator measured cold 81,766 ms / warm 11,017 ms on the same
+  build); the root cause was an incomplete profiling harness, not a wrong
+  fix.** The first investigation called `analyzeWithTimings` directly —
+  never through `createEngineMethods().analyze(...)` — so it silently
+  skipped the RPC layer's own `stableStringify`+cache-write step and the
+  JSON-RPC response serialization/write, and used a hand-rolled synthetic-
+  repo generator that produced 20,000 symbols where the real bench
+  generator (`apps/desktop/bench/fixtures/generate-synthetic-repo.ts`,
+  read to get an exact byte-identical reproduction per the coordinator's
+  explicit permission — never edited) produces 30,000. Fixed by adding a
+  non-contract diagnostic timing sink end to end: `AnalyzeOptions.
+  onPhaseTiming` (a new exported `PhaseTimingSink` type in `analyze.ts`)
+  instruments `persistTokenIndex` and splits the `computeGraphAndRanking`
+  black box into `resolveImports`/`buildGraph`/`importance`/`modules`/
+  `sccCyclesOrphans`/`roadmap`; `AnalyzeMethodDeps.onPhaseTiming` extends
+  this into `stableStringify`/`putAnalysisResult` in `analyze-method.ts`;
+  and a new `RpcDebugTimingSink` in `server.ts` times the JSON-RPC
+  response's own `responseStringify`/`responseWrite`. `main.ts` wires all
+  of this to stderr (never stdout, which is the JSON-RPC channel) only
+  when `ONBOARD_DEBUG_TIMINGS=1` is set — zero cost and completely absent
+  in normal operation. With this in place, every named sub-phase now sums
+  to `AnalysisEnvelope.timings.totalMs` with no residual gap (previously
+  ~59 s of cold time was unaccounted for), and `graphMs=0` is now
+  understood correctly: it was never mistimed, `buildGraph` (which
+  includes PageRank) is simply folded into the frozen contract's
+  `resolveMs` bucket by Phase 4 design, and the sub-instrumentation now
+  shows its real, unremarkable cost directly (600-1000 ms at 10,000
+  files, not a hidden multi-second cost).
+- **Phase 11 — with the real generator and full instrumentation, "warm
+  reports parseMs with cacheHitCount=10000" is confirmed NOT re-parsing.**
+  `parseMs` on a fully-warm 10,000-file run is ~2.0-2.6 s; per-file that is
+  ~0.2-0.26 ms, matching one `bun:sqlite` cache-row read plus
+  `JSON.parse(cached.parsedJson)` — not tree-sitter invocation (which
+  never runs for a cache-hit file; `parseFiles`/`getParser` are only
+  called for the `toParse` subset, which is empty on a clean warm run).
+  Confirmed further by `analyze-support.ts`'s existing content-hash
+  skip-check logic (already correct from the earlier `token_index` fix)
+  and by this phase's own new merge of the previously-separate hash-
+  snapshot and cache-hit-partition passes into one `prepareParsePhase`
+  function — halving the number of `getFileCache` calls per file (one
+  instead of two) as a modest additional win.
+- **Phase 11 — found and fixed a second, independent, and significant
+  bug while instrumenting: `readLines` (the newline-delimited JSON-RPC
+  stdio reader, `rpc/server.ts`) was O(n^2) in the length of a single
+  large line.** It re-scanned the ENTIRE accumulated buffer for `\n` from
+  index 0 on every incoming chunk; a 10,000-file `AnalysisResult` is tens
+  of megabytes on ONE JSON-RPC line, arriving across many small `read()`
+  chunks, so the cumulative re-scanning cost grows quadratically with the
+  line's total length. Measured directly: reassembling one 4 MB line from
+  50,000 tiny (80-byte) chunks took **19,234.8 ms** before this fix and
+  well under 1,000 ms after (a dedicated regression test in
+  `test/rpc/server.test.ts` asserts under 1 s; confirmed it actually
+  catches the regression by `git stash`-ing the fix and re-running that
+  exact test, which reproduced the 19.2 s failure). Fixed by tracking
+  `scanFrom` — the buffer position already confirmed newline-free — so
+  each `indexOf` call only scans newly-appended text, never the already-
+  searched prefix. This function is used both to read the engine's own
+  stdin (small request lines, never affected) and by any TypeScript/Bun
+  reader of the engine's stdout for a large response (this agent's own
+  profiling harness, definitely; `apps/desktop/bench/support/engine-rpc-
+  client.ts` was not read — outside this phase's authorized scope — but
+  if it implements similar chunk-buffering logic independently, it may
+  be exposed to the same class of bug and is worth the coordinator's own
+  check).
+- **Phase 11 — added `CacheStore.getAnalysisResultFingerprint()` (a
+  single-column read) so a warm, unchanged re-run can skip re-running
+  `stableStringify` and `putAnalysisResult` entirely.** `stableStringify`
+  of a 10,000-file `AnalysisResult` costs ~300 ms on its own; since
+  Section 8.8 already guarantees a warm run of an unchanged repo produces
+  a byte-identical result, comparing the freshly-computed `fingerprint`
+  against the already-cached one (via this new cheap column-only query,
+  NOT the existing `getAnalysisResult()`, which would pull the entire
+  multi-megabyte `result_json` blob just to discard it) proves equality
+  without re-serializing or re-writing anything. Confirmed via a new
+  `test/rpc/methods.test.ts` case (using the `onPhaseTiming` hook to
+  assert `stableStringify`/`putAnalysisResult` do NOT fire on the second,
+  unchanged `engine.analyze` call) and a new `sqlite-cache-store.test.ts`
+  case for the method itself.
+- **Phase 11 — final, honestly-reported 10,000-file numbers, measured
+  through the actual compiled, staged-equivalent binary over stdio, real
+  bench generator, 5 runs each (not cherry-picked):**
+  ```
+  COLD (budget 60,000 ms): 30740.0, 28749.8, 29872.6, 28353.8, 30918.2 ms
+    — median ≈ 29,872.6 ms. Comfortably inside budget with ~2x headroom.
+  WARM (budget  6,000 ms):  6014.6,  7269.9,  5883.8,  6186.1,  6574.1 ms
+    — median ≈ 6,186.1 ms, mean ≈ 6,385.7 ms. Best run passes (5,883.8 ms);
+      typical/median run is ~3% over budget; worst observed run ~21% over.
+  ```
+  **Warm is a genuine, honestly-reported gap, not a papered-over one.**
+  Root cause, from the now-complete instrumentation: two phases redo full
+  work on every single run, warm included, because neither is
+  incrementally cached by design: (1) `walkMs` (~1.8-2.2 s) — every file's
+  raw bytes are still read and sha256-hashed on every run, cache-hit or
+  not, since content-hash comparison is exactly how a hit is ever
+  detected in the first place (Section 8.1); (2) `resolveMs` (~1.0-1.6 s)
+  — `computeGraphAndRanking` (import resolution, graph/PageRank building,
+  importance, modules, cycles/orphans, roadmap) recomputes from scratch
+  every run; only the parser cache and token index are incremental. Both
+  are legitimate architectural properties of the current design, not
+  bugs, and fixing either — mtime-assisted hashing for the first,
+  incremental re-ranking for the second — is a materially larger design
+  change than this phase's scope, and was not attempted given the risk of
+  touching already-verified Phase 2/4 code under time pressure. This gap
+  is reported for the user as a real, measured number, not silently
+  rounded or hidden behind a favorable single run.
+- **Phase 11 (continued) — implemented the warm-analysis fast path
+  Section 6.1's schema was designed for but that nothing ever used.** The
+  `analysis_result` table's single-row `CHECK (id = 1)` primary key was
+  written every run (via `rpc/analyze-method.ts`) and read never — a
+  design that was specified and never wired up, not merely slow. Added
+  `tryServeCachedResultFastPath` (`analyze-support.ts`): when a cache
+  store is present, every current file's content hash matches its cached
+  `file_cache` row, and no cached path is orphaned (covers deletes/
+  renames, which a per-file hash loop alone cannot detect), the stored
+  `result_json` row is parsed and returned directly — skipping resolve,
+  graph, rank, and assemble entirely. Any single content-hash mismatch,
+  or an added/removed file, falls through to the existing full
+  incremental path unchanged. `persistTokenIndex` was widened to call
+  `ensureFileCacheRow` for every file regardless of tokenizability (binary/
+  too-large/minified/unreadable included) — previously only tokenizable
+  files got a tracked content hash, so a repo containing even one such
+  file could never be recognized as "fully unchanged."
+  - **Root cause found and fixed while wiring this up:** the fast path
+    initially never engaged for any caller other than the RPC sidecar,
+    because `putAnalysisResult` was only ever called from
+    `rpc/analyze-method.ts` — `analyze()`/`analyzeWithTimings()` itself
+    never wrote `analysis_result`. Moved that write (with its existing
+    fingerprint-skip optimization) into a new `persistAnalysisResultIfChanged`
+    in `analyze.ts` itself, called from the full-rebuild path, so the
+    cache — and the fast path — is a genuine property of the engine core,
+    usable by `scripts/verify-determinism.ts` or any future CLI, not an
+    RPC-only side effect.
+  - **Vacuous-gate hazard, and the mitigation chosen:** serving a stored
+    result on a warm run makes a naive cold-vs-warm fingerprint comparison
+    tautological (a warm run trivially "agreeing" with the very row it
+    never left proves nothing about correctness). Chosen mitigation:
+    `AnalyzeOptions.disableFastPath` — an internal-only flag, not a
+    contract change — forces `scripts/verify-determinism.ts`'s existing
+    cold-vs-warm leg to keep exercising the real incremental-reconstruction
+    path, and a new fourth comparison, `warm-fastpath-vs-full-rebuild`,
+    was added per fixture: it runs the fast path with its default
+    (enabled) behavior and asserts its fingerprint equals a full rebuild's
+    — but only after independently confirming, via the `onPhaseTiming`
+    hook asserting `buildGraph` never fired, that the fast path was
+    ACTUALLY taken rather than happening to recompute the same answer.
+    Total is now 5 fixtures x 4 comparisons = 20, all passing. (The
+    alternative option — leaving cold-vs-warm as-is and adding a third
+    fastpath-vs-full-rebuild-warm comparison instead of disabling the
+    fast path for cold-vs-warm — was not chosen because it would leave
+    cold-vs-warm's own tautology unaddressed even though a separate check
+    existed elsewhere; disabling the fast path for that one leg keeps
+    every existing comparison meaning what its name says.)
+  - **Partial-change correctness, proven with a test that would fail on a
+    stale-blob bug:** `test/analyze/analyze.test.ts`'s new "Section 11
+    warm fast path" describe block has two cases. The first confirms an
+    unchanged repo takes the fast path (`buildGraph` never fires) and its
+    fingerprint matches a full rebuild. The second touches exactly one
+    file in an otherwise-fully-cached repo (appends a new function to
+    `user-model.js`) and asserts BOTH that `buildGraph` DID fire (the
+    fast path was correctly bypassed, not merely that the answer looks
+    right) AND that the returned symbols include the newly-added
+    function — a test that would fail if the engine ever served the
+    stale cached blob instead of reflecting the change.
+  - **Verification:** `bun run typecheck` clean, `bun x eslint` across
+    `src/`, `scripts/`, `test/` clean, full `bun test` 442 pass / 0 fail,
+    `bun run verify:determinism` 20/20 comparisons pass, `bun run
+    build:sidecar` succeeds with smoke test PASS. The official 10,000-file
+    warm-budget bench itself was not re-run by this agent (it runs
+    through the staged Tauri binary, out of this phase's scope) — the
+    coordinator will re-stage the freshly built sidecar and re-run it to
+    confirm the warm 10k number, which this fast path is expected to
+    bring down from ~6,000-7,300 ms to roughly walk time (~1.8-2.2 s)
+    plus a single-row read, comfortably inside the 6,000 ms budget.

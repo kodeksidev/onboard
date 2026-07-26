@@ -8,11 +8,21 @@ import { buildGraph, type GraphData } from './graph/build-graph';
 import { computeStronglyConnectedComponents } from './graph/tarjan-scc';
 import { buildCycles, type CycleResult } from './graph/cycles';
 import { findOrphanPaths } from './graph/orphans';
-import { computeImportance, type ImportanceResult } from './rank/importance';
+import { computeImportance, type ImportanceOutput, type ImportanceResult } from './rank/importance';
 import { buildRoadmap, type RoadmapStepResult } from './rank/roadmap';
 import { buildModules, computeModuleIdByPath, type ModuleResult } from './rank/modules';
 import { detectSourceRoots } from './stack/detect-stack';
-import type { PreparedAnalysis } from './analyze';
+import type { PreparedAnalysis, PhaseTimingSink } from './analyze';
+
+function reportPhaseTiming<T>(sink: PhaseTimingSink | undefined, label: string, fn: () => T): T {
+  if (sink === undefined) {
+    return fn();
+  }
+  const start = performance.now();
+  const result = fn();
+  sink(label, performance.now() - start);
+  return result;
+}
 
 export interface ComputedAnalysis {
   readonly resolution: ResolutionOutput;
@@ -68,12 +78,10 @@ function computeRoadmap(
   });
 }
 
-/** Resolves imports, builds the graph, and computes importance/roadmap/modules. */
-export function computeGraphAndRanking(prepared: PreparedAnalysis, parsedByPath: ReadonlyMap<string, ParsedFile>): ComputedAnalysis {
-  const resolution = resolveAllImports(prepared.classified, parsedByPath, prepared.resolverContext);
-  const graph = buildGraph({ allFilePaths: prepared.classified.map((f) => f.path), edges: resolution.edges });
-  const sccEdgeRefs = resolution.edges.map((e) => ({ from: e.fromPath, to: e.toPath }));
-
+function computeImportanceByPath(
+  prepared: PreparedAnalysis,
+  graph: GraphData,
+): { readonly importance: ImportanceOutput; readonly importanceByPath: ReadonlyMap<string, ImportanceResult> } {
   const importance = computeImportance(
     prepared.classified.map((f) => ({
       path: f.path,
@@ -85,13 +93,36 @@ export function computeGraphAndRanking(prepared: PreparedAnalysis, parsedByPath:
     })),
   );
   const importanceByPath = new Map(importance.results.map((r) => [r.path, r] as const));
+  return { importance, importanceByPath };
+}
 
-  const { sourceRoots, modules, moduleIdByPath } = computeModules(prepared, importanceByPath, resolution);
+/** Resolves imports, builds the graph, and computes importance/roadmap/modules. */
+export function computeGraphAndRanking(
+  prepared: PreparedAnalysis,
+  parsedByPath: ReadonlyMap<string, ParsedFile>,
+  onPhaseTiming?: PhaseTimingSink,
+): ComputedAnalysis {
+  const resolution = reportPhaseTiming(onPhaseTiming, 'resolveImports', () =>
+    resolveAllImports(prepared.classified, parsedByPath, prepared.resolverContext),
+  );
+  const graph = reportPhaseTiming(onPhaseTiming, 'buildGraph', () =>
+    buildGraph({ allFilePaths: prepared.classified.map((f) => f.path), edges: resolution.edges }),
+  );
+  const sccEdgeRefs = resolution.edges.map((e) => ({ from: e.fromPath, to: e.toPath }));
 
-  const sccs = computeStronglyConnectedComponents(prepared.classified.map((f) => f.path), sccEdgeRefs);
-  const cycles = buildCycles(sccs, graph.outLinks);
-  const orphanPaths = findOrphanPaths(graph.degrees);
-  const roadmapSteps = computeRoadmap(prepared, graph, importanceByPath, sccEdgeRefs, moduleIdByPath, modules);
+  const { importance, importanceByPath } = reportPhaseTiming(onPhaseTiming, 'importance', () => computeImportanceByPath(prepared, graph));
+
+  const { sourceRoots, modules, moduleIdByPath } = reportPhaseTiming(onPhaseTiming, 'modules', () =>
+    computeModules(prepared, importanceByPath, resolution),
+  );
+
+  const { sccs, cycles, orphanPaths } = reportPhaseTiming(onPhaseTiming, 'sccCyclesOrphans', () => {
+    const sccResult = computeStronglyConnectedComponents(prepared.classified.map((f) => f.path), sccEdgeRefs);
+    return { sccs: sccResult, cycles: buildCycles(sccResult, graph.outLinks), orphanPaths: findOrphanPaths(graph.degrees) };
+  });
+  const roadmapSteps = reportPhaseTiming(onPhaseTiming, 'roadmap', () =>
+    computeRoadmap(prepared, graph, importanceByPath, sccEdgeRefs, moduleIdByPath, modules),
+  );
 
   return {
     resolution,

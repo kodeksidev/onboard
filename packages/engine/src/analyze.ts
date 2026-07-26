@@ -10,8 +10,9 @@
  * limits a single monolithic file could not meet.
  */
 import { realpathSync } from 'node:fs';
-import { AnalysisResult, SCHEMA_VERSION } from '@onboard/contract';
+import { AnalysisResult, SCHEMA_VERSION, stableStringify } from '@onboard/contract';
 import type { AnalysisResult as AnalysisResultValue, EngineProgress } from '@onboard/contract';
+import type { ParsedFile } from './parse/language-parser';
 import { walk, type WalkFs } from './walk/walk';
 import { classifyFile } from './classify/classify-file';
 import { discoverWorkspacePackages, type WorkspacePackage } from './resolve/workspaces';
@@ -24,7 +25,15 @@ import { detectManifests, type DependencyInfoValue, type ManifestInfoValue } fro
 import { detectEntryPoints, type EntryPointValue } from './stack/entry-points';
 import { computeRepoId } from './util/hash';
 import type { CacheStore } from './cache/cache-store';
-import { processOneFile, readFileText, runParsePhase, persistTokenIndex, type DiagnosticValue, type ProcessedFile } from './analyze-support';
+import {
+  processOneFile,
+  readFileText,
+  runParsePhase,
+  persistTokenIndex,
+  tryServeCachedResultFastPath,
+  type DiagnosticValue,
+  type ProcessedFile,
+} from './analyze-support';
 import { computeGraphAndRanking, type ComputedAnalysis } from './analyze-rank-phase';
 import { assembleAnalysisResult } from './analyze-assemble';
 
@@ -51,6 +60,44 @@ export interface AnalyzeOptions {
    * shape — this is a documented granularity choice, not a contract gap.
    */
   readonly onProgress?: (progress: EngineProgress) => void;
+  /**
+   * Fine-grained, NON-contract diagnostic timing sink (Section 11's bench
+   * investigation into where cold-analysis time goes at 10,000 files — see
+   * `docs/DECISIONS.md`). `AnalysisEnvelope.timings` is frozen at five
+   * fields (Section 7.1); this reports finer sub-phase breakdowns without
+   * touching that contract, purely for profiling. Never set by the sidecar
+   * in normal operation; `main.ts` wires it to stderr only when
+   * `ONBOARD_DEBUG_TIMINGS` is set, so normal runs pay zero cost for it.
+   */
+  readonly onPhaseTiming?: PhaseTimingSink;
+  /**
+   * Section 11's warm-analysis fast path (see `docs/DECISIONS.md`): when a
+   * cache store is given and every file's content hash is unchanged (none
+   * added, removed, or modified), `analyze()` serves the cached
+   * `analysis_result` row directly instead of recomputing resolve/graph/
+   * rank/assemble — Section 8.8's determinism guarantee is exactly why
+   * this is safe (a full rebuild is GUARANTEED byte-identical). Set this to
+   * `true` to force the full pipeline regardless, bypassing the fast path
+   * entirely. Only `scripts/verify-determinism.ts` sets this — its cold-
+   * vs-warm comparison exists specifically to prove the full incremental
+   * pipeline reconstructs the correct result, which the fast path would
+   * make tautological if left enabled there. Never set by the sidecar in
+   * normal operation.
+   */
+  readonly disableFastPath?: boolean;
+}
+
+/** Reports one named sub-phase's wall-clock duration. See `AnalyzeOptions.onPhaseTiming`. */
+export type PhaseTimingSink = (label: string, ms: number) => void;
+
+function reportPhaseTiming<T>(sink: PhaseTimingSink | undefined, label: string, fn: () => T): T {
+  if (sink === undefined) {
+    return fn();
+  }
+  const start = performance.now();
+  const result = fn();
+  sink(label, performance.now() - start);
+  return result;
 }
 
 export type ClassificationValue = AnalysisResultValue['files'][number]['classification'];
@@ -208,6 +255,97 @@ function emitProgress(
   onProgress?.({ phase, processed, total, currentPath: null });
 }
 
+interface FastPathTimingInputs {
+  readonly walkMs: number;
+  readonly parseMs: number;
+  readonly cacheHitCount: number;
+}
+
+/** See `AnalyzeOptions.disableFastPath`'s doc comment. Returns `null` when the fast path does not apply. */
+function tryFastPath(
+  options: AnalyzeOptions,
+  prepared: PreparedAnalysis,
+  previousContentHashByPath: ReadonlyMap<string, string>,
+  timingInputs: FastPathTimingInputs,
+  totalStart: number,
+): AnalyzeWithTimingsResult | null {
+  if (options.disableFastPath === true) {
+    return null;
+  }
+  const fastPathResult = tryServeCachedResultFastPath(prepared.processedFiles, previousContentHashByPath, options.cacheStore);
+  if (fastPathResult === null) {
+    return null;
+  }
+  const totalMs = performance.now() - totalStart;
+  return {
+    result: fastPathResult,
+    timings: { walkMs: timingInputs.walkMs, parseMs: timingInputs.parseMs, resolveMs: 0, graphMs: 0, totalMs, cacheHitCount: timingInputs.cacheHitCount },
+  };
+}
+
+/**
+ * Writes the just-computed `result` to the single-row `analysis_result`
+ * table (Section 6.1) so a LATER `analyze()` call — from any caller, not
+ * just the RPC sidecar — can take Section 11's warm fast path
+ * (`tryServeCachedResultFastPath`). Skips the write (and the real cost of
+ * `stableStringify` on a large result: ~300 ms at 10,000 files) whenever
+ * the cached row already carries the same fingerprint, since Section 8.8's
+ * determinism guarantee means the bytes would be identical anyway. This
+ * used to live in `rpc/analyze-method.ts` (the RPC layer only), which is
+ * exactly why `scripts/verify-determinism.ts` — which calls `analyze()`
+ * directly, bypassing the RPC layer — could never actually exercise the
+ * fast path: nothing ever populated `analysis_result` for it to read.
+ * Moving this into the engine's own pipeline makes the fast path a real
+ * property of `analyze()` itself, not an RPC-only optimization.
+ */
+function persistAnalysisResultIfChanged(cacheStore: CacheStore | undefined, result: AnalysisResultValue, onPhaseTiming: PhaseTimingSink | undefined): void {
+  if (cacheStore === undefined || cacheStore.getAnalysisResultFingerprint() === result.fingerprint) {
+    return;
+  }
+  reportPhaseTiming(onPhaseTiming, 'putAnalysisResult', () => {
+    const resultJson = reportPhaseTiming(onPhaseTiming, 'stableStringify', () => stableStringify(result));
+    cacheStore.putAnalysisResult({ schemaVersion: SCHEMA_VERSION, fingerprint: result.fingerprint, resultJson });
+  });
+}
+
+interface FullRebuildInputs {
+  readonly prepared: PreparedAnalysis;
+  readonly parsedByPath: ReadonlyMap<string, ParsedFile>;
+  readonly parseDiagnostics: readonly DiagnosticValue[];
+  readonly previousContentHashByPath: ReadonlyMap<string, string>;
+  readonly timings: FastPathTimingInputs;
+  readonly totalStart: number;
+}
+
+/** The resolve -> graph -> rank -> assemble -> persist tail (Section 9 Phase 4), run whenever `tryFastPath` did not apply. */
+function runFullRebuild(options: AnalyzeOptions, inputs: FullRebuildInputs): AnalyzeWithTimingsResult {
+  const { prepared, parsedByPath, parseDiagnostics, previousContentHashByPath, timings, totalStart } = inputs;
+  const onProgress = options.onProgress;
+  const onPhaseTiming = options.onPhaseTiming;
+  const fileCount = prepared.processedFiles.length;
+
+  reportPhaseTiming(onPhaseTiming, 'persistTokenIndex', () =>
+    persistTokenIndex(prepared.processedFiles, parsedByPath, previousContentHashByPath, options.cacheStore),
+  );
+
+  emitProgress(onProgress, 'resolve', 0, fileCount);
+  const resolveStart = performance.now();
+  const computed: ComputedAnalysis = computeGraphAndRanking(prepared, parsedByPath, onPhaseTiming);
+  const resolveMs = performance.now() - resolveStart;
+  emitProgress(onProgress, 'resolve', fileCount, fileCount);
+
+  emitProgress(onProgress, 'persist', 0, fileCount);
+  const result = reportPhaseTiming(onPhaseTiming, 'assembleAndValidate', () => {
+    const finalResult = assembleAnalysisResult(prepared, computed, parsedByPath, parseDiagnostics);
+    return AnalysisResult.parse(finalResult);
+  });
+  persistAnalysisResultIfChanged(options.cacheStore, result, onPhaseTiming);
+  const totalMs = performance.now() - totalStart;
+  emitProgress(onProgress, 'persist', fileCount, fileCount);
+
+  return { result, timings: { walkMs: timings.walkMs, parseMs: timings.parseMs, resolveMs, graphMs: 0, totalMs, cacheHitCount: timings.cacheHitCount } };
+}
+
 async function analyzeInternal(options: AnalyzeOptions): Promise<AnalyzeWithTimingsResult> {
   const totalStart = performance.now();
   const onProgress = options.onProgress;
@@ -230,21 +368,15 @@ async function analyzeInternal(options: AnalyzeOptions): Promise<AnalyzeWithTimi
   const parseMs = performance.now() - parseStart;
   emitProgress(onProgress, 'parse', fileCount, fileCount);
 
-  persistTokenIndex(prepared.processedFiles, parsedByPath, previousContentHashByPath, options.cacheStore);
+  const timings: FastPathTimingInputs = { walkMs, parseMs, cacheHitCount };
+  const fastPath = tryFastPath(options, prepared, previousContentHashByPath, timings, totalStart);
+  if (fastPath !== null) {
+    emitProgress(onProgress, 'resolve', fileCount, fileCount);
+    emitProgress(onProgress, 'persist', fileCount, fileCount);
+    return fastPath;
+  }
 
-  emitProgress(onProgress, 'resolve', 0, fileCount);
-  const resolveStart = performance.now();
-  const computed: ComputedAnalysis = computeGraphAndRanking(prepared, parsedByPath);
-  const resolveMs = performance.now() - resolveStart;
-  emitProgress(onProgress, 'resolve', fileCount, fileCount);
-
-  emitProgress(onProgress, 'persist', 0, fileCount);
-  const finalResult = assembleAnalysisResult(prepared, computed, parsedByPath, parseDiagnostics);
-  const result = AnalysisResult.parse(finalResult);
-  const totalMs = performance.now() - totalStart;
-  emitProgress(onProgress, 'persist', fileCount, fileCount);
-
-  return { result, timings: { walkMs, parseMs, resolveMs, graphMs: 0, totalMs, cacheHitCount } };
+  return runFullRebuild(options, { prepared, parsedByPath, parseDiagnostics, previousContentHashByPath, timings, totalStart });
 }
 
 /** Runs the full walk -> parse -> resolve -> graph -> rank pipeline, returning a validated `AnalysisResult`. */

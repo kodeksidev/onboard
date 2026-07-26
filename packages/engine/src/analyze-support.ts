@@ -151,11 +151,6 @@ export interface ParsePhaseResult {
   readonly previousContentHashByPath: ReadonlyMap<string, string>;
 }
 
-interface CachedRow {
-  readonly contentHash: string;
-  readonly parsedJson: string;
-}
-
 function openCacheIfProvided(
   cacheStore: CacheStore | undefined,
   grammarsDir: string,
@@ -173,38 +168,39 @@ function openCacheIfProvided(
   });
 }
 
-/** Reads every file's currently-cached content hash BEFORE this run writes anything (see `ParsePhaseResult`'s doc comment). */
-function snapshotContentHashes(files: readonly ProcessedFile[], cacheStore: CacheStore | undefined): ReadonlyMap<string, string> {
-  const snapshot = new Map<string, string>();
-  if (cacheStore === undefined) {
-    return snapshot;
-  }
-  files.forEach((f) => {
-    const cached = cacheStore.getFileCache(f.path);
-    if (cached !== null) {
-      snapshot.set(f.path, cached.contentHash);
-    }
-  });
-  return snapshot;
+interface ParsePreparation {
+  /** Every file's currently-cached content hash BEFORE this run writes anything (see `ParsePhaseResult`'s doc comment). */
+  readonly previousContentHashByPath: ReadonlyMap<string, string>;
+  readonly cacheHit: ReadonlyMap<string, ParsedFile>;
+  readonly toParse: readonly ProcessedFile[];
 }
 
-function partitionByCacheHit(
-  files: readonly ProcessedFile[],
-  cacheStore: CacheStore | undefined,
-): { readonly cacheHit: ReadonlyMap<string, ParsedFile>; readonly toParse: readonly ProcessedFile[] } {
+/**
+ * One `getFileCache` call per file (not two, as an earlier version of this
+ * function did with a separate hash-snapshot pass and a separate cache-hit
+ * pass over the same files) — halves the cache-read cost of this phase,
+ * which matters at 10,000 files where every read is a real `bun:sqlite`
+ * round trip (Section 11's bench profiling; see `docs/DECISIONS.md`).
+ */
+function prepareParsePhase(files: readonly ProcessedFile[], cacheStore: CacheStore | undefined): ParsePreparation {
+  const previousContentHashByPath = new Map<string, string>();
   const cacheHit = new Map<string, ParsedFile>();
   const toParse: ProcessedFile[] = [];
-  files
-    .filter((f) => f.isParsed && f.languageId !== null)
-    .forEach((f) => {
-      const cached: CachedRow | null = cacheStore?.getFileCache(f.path) ?? null;
-      if (cached !== null && cached.contentHash === f.contentHash) {
-        cacheHit.set(f.path, JSON.parse(cached.parsedJson) as ParsedFile);
-      } else {
-        toParse.push(f);
-      }
-    });
-  return { cacheHit, toParse };
+  files.forEach((f) => {
+    const cached = cacheStore?.getFileCache(f.path) ?? null;
+    if (cached !== null) {
+      previousContentHashByPath.set(f.path, cached.contentHash);
+    }
+    if (!f.isParsed || f.languageId === null) {
+      return;
+    }
+    if (cached !== null && cached.contentHash === f.contentHash) {
+      cacheHit.set(f.path, JSON.parse(cached.parsedJson) as ParsedFile);
+    } else {
+      toParse.push(f);
+    }
+  });
+  return { previousContentHashByPath, cacheHit, toParse };
 }
 
 function persistParsedFile(cacheStore: CacheStore, f: ProcessedFile, parsed: ParsedFile): void {
@@ -277,8 +273,7 @@ export async function runParsePhase(
   cacheStore: CacheStore | undefined,
 ): Promise<ParsePhaseResult> {
   openCacheIfProvided(cacheStore, grammarsDir, engineVersion, contractSchemaVersion);
-  const previousContentHashByPath = snapshotContentHashes(files, cacheStore);
-  const { cacheHit, toParse } = partitionByCacheHit(files, cacheStore);
+  const { previousContentHashByPath, cacheHit, toParse } = prepareParsePhase(files, cacheStore);
 
   const entries: ParsePoolEntry[] = toParse.map((f) => ({ path: f.path, languageId: f.languageId!, sourceText: f.text }));
   const getParser = createLanguageParserFactory(grammarsDir);
@@ -406,21 +401,30 @@ function ensureFileCacheRow(cacheStore: CacheStore, f: ProcessedFile, parsedByPa
 
 /**
  * Persists the Section 6.1 `token_index` rows every "where is X?" content
- * match (Section 8.7 step 3) is drawn from. Tokenization is language-agnostic
- * (Section: `index/token-index.ts`'s doc comment) — it runs over every
- * readable, reasonably-sized file, not just the four parsed grammars, so a
- * hit can land in a README or a config file.
+ * match (Section 8.7 step 3) is drawn from, AND (Section 11's warm-analysis
+ * fast path, see `docs/DECISIONS.md`) guarantees every file — including
+ * `binary`/`too-large`/`minified`/`unreadable` ones, which are never
+ * tokenized — still gets a `file_cache` row tracking its content hash.
+ * Without that, a repo containing even one such file could never take the
+ * fast path: `tryServeCachedResultFastPath`'s "is anything different"
+ * check has no cached hash to compare against for a path that was never
+ * upserted, so it would always (and wrongly) look "changed."
+ *
+ * Tokenization itself is language-agnostic (`index/token-index.ts`'s doc
+ * comment) — it runs over every readable, reasonably-sized file, not just
+ * the four parsed grammars, so a hit can land in a README or a config
+ * file — but is still skipped for the four non-tokenizable skip reasons.
  *
  * Incremental-cache-gated by content hash (`previousContentHashByPath`, a
  * snapshot taken before this run wrote anything — see `ParsePhaseResult`'s
- * doc comment): a file whose hash is unchanged already has correct token
- * rows from whichever earlier run last wrote that exact content, so
- * `buildTokenIndexRows` (a pure function of `(path, text)`) does not need
- * to re-run for it. This — plus wrapping the whole batch in one
- * transaction instead of one auto-committed write per file — is what fixes
- * the warm/incremental-analysis regression measured in Section 11's bench
- * (previously every file was unconditionally re-tokenized and rewritten on
- * every single run, warm included; see `docs/DECISIONS.md`).
+ * doc comment): a file whose hash is unchanged already has a correct
+ * `file_cache` row and correct token rows (if any) from whichever earlier
+ * run last wrote that exact content, so nothing needs to run again for it.
+ * This — plus wrapping the whole batch in one transaction instead of one
+ * auto-committed write per file — is what fixes the warm/incremental-
+ * analysis regression measured in Section 11's bench (previously every
+ * file was unconditionally re-tokenized and rewritten on every single
+ * run, warm included).
  */
 export function persistTokenIndex(
   files: readonly ProcessedFile[],
@@ -433,16 +437,68 @@ export function persistTokenIndex(
   }
   cacheStore.withTransaction(() => {
     files.forEach((f) => {
+      if (previousContentHashByPath.get(f.path) === f.contentHash) {
+        return; // unchanged since a prior run already cached this exact content
+      }
+      ensureFileCacheRow(cacheStore, f, parsedByPath);
       if (f.skipReason !== null && NON_TOKENIZABLE_SKIP_REASONS.has(f.skipReason)) {
         return;
       }
-      if (previousContentHashByPath.get(f.path) === f.contentHash) {
-        return; // unchanged since a prior run already tokenized this exact content
-      }
-      ensureFileCacheRow(cacheStore, f, parsedByPath);
       cacheStore.replaceTokensForPath(f.path, buildTokenIndexRows(f.path, f.text));
     });
   });
+}
+
+/**
+ * Section 11's warm-analysis fast path (see `docs/DECISIONS.md`): if every
+ * currently-walked file's content hash still matches what is cached, and
+ * nothing was added or removed, then Section 8.8's determinism guarantee
+ * means a full walk -> parse -> resolve -> graph -> rank -> assemble pass
+ * would produce a BYTE-IDENTICAL `AnalysisResult` to the one already
+ * sitting in `analysis_result` — so this serves that row directly instead
+ * of redoing the work. Returns `null` (never throws) whenever the fast
+ * path does not clearly apply, and the caller must fall through to the
+ * full pipeline: first analysis of this repo, any file added, removed, or
+ * changed, or a corrupt/unparsable cached row.
+ *
+ * `cachedPaths` (from `file_cache`, which — after this phase's
+ * `persistTokenIndex` change — tracks EVERY file, including the four
+ * non-tokenizable skip reasons) is compared against the current file set
+ * both ways: a path cached but no longer walked means something was
+ * deleted or renamed away, which the per-file hash loop alone can never
+ * detect (every file that DOES still exist could have an unchanged hash
+ * even though the overall file SET shrank).
+ */
+export function tryServeCachedResultFastPath(
+  files: readonly ProcessedFile[],
+  previousContentHashByPath: ReadonlyMap<string, string>,
+  cacheStore: CacheStore | undefined,
+): AnalysisResultValue | null {
+  if (cacheStore === undefined) {
+    return null;
+  }
+  const cachedPaths = cacheStore.listFileCachePaths();
+  if (cachedPaths.length === 0) {
+    return null;
+  }
+  const currentPaths = new Set(files.map((f) => f.path));
+  const hasOrphanedCachedPath = cachedPaths.some((p) => !currentPaths.has(p));
+  if (hasOrphanedCachedPath) {
+    return null;
+  }
+  const anyChanged = files.some((f) => previousContentHashByPath.get(f.path) !== f.contentHash);
+  if (anyChanged) {
+    return null;
+  }
+  const cachedRow = cacheStore.getAnalysisResult();
+  if (cachedRow === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(cachedRow.resultJson) as AnalysisResultValue;
+  } catch {
+    return null;
+  }
 }
 
 export function assertHexLength(value: string): string {

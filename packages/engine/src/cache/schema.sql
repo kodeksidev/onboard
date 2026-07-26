@@ -1,7 +1,7 @@
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 1;              -- CACHE_SCHEMA_VERSION
+PRAGMA user_version = 2;              -- CACHE_SCHEMA_VERSION
 
 CREATE TABLE schema_meta (
   key   TEXT PRIMARY KEY,             -- 'cacheSchemaVersion' | 'engineVersion'
@@ -69,6 +69,14 @@ CREATE TABLE token_index (
 CREATE INDEX idx_token_index_token ON token_index(token);
 -- Reason: content search resolves a query term to candidate files with one index seek
 -- instead of scanning the repo; this replaces a bundled ripgrep (A12).
+CREATE INDEX idx_token_index_path ON token_index(path);
+-- Reason: `PRIMARY KEY (token, path)` puts `path` second, so it does not cover
+-- `DELETE FROM token_index WHERE path = ?` (the per-file re-tokenize step) the way
+-- `symbol`'s `idx_symbol_path` and `import_edge`'s `(from_path, ...)` primary key
+-- already cover their own per-file deletes. Without this index that delete degrades
+-- to a full-table scan that grows with every file already indexed, making the whole
+-- token-index persist step O(n^2) in file count — confirmed the dominant cost behind
+-- the 10,000-file cold-analysis timeout (Section 11's bench; see docs/DECISIONS.md).
 
 CREATE TABLE analysis_result (
   id             INTEGER PRIMARY KEY CHECK (id = 1),

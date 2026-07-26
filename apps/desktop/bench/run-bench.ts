@@ -498,38 +498,23 @@ async function runGraphBench(): Promise<{ output: string; hasFail: boolean }> {
   return { output, hasFail: /FAIL/.test(output) };
 }
 
-function printKnownIssueCaveat(): void {
+/**
+ * Every timing below comes from an engine proven to have parsed: `analyzeOnce`
+ * and `analyzeKeepAlive` both run `assertParsedSomething`, which aborts the run
+ * on symbols=0 or edges=0.
+ *
+ * That guard exists because of a real incident. An earlier version of this
+ * harness reported "PASS Cold analysis, 1000 files: 7465.6ms" against a sidecar
+ * whose tree-sitter WASM had failed to load: it degraded every file to
+ * PARSE_FAILED, extracted zero symbols, and still returned a structurally valid
+ * AnalysisEnvelope. The harness happily timed a pipeline doing no work. Timing
+ * an empty pipeline is not a measurement, so the run now aborts instead of
+ * printing a number nobody should trust.
+ */
+function printMeasurementIntegrityNote(): void {
   console.log('');
-  console.log(
-    '*** KNOWN ISSUE (not caused by or fixable from apps/desktop — see docs/DECISIONS.md) ***',
-  );
-  console.log(
-    'The staged sidecar binary fails to load its bundled tree-sitter core WASM runtime at',
-  );
-  console.log(
-    'runtime ("ENOENT ... tree-sitter.wasm", inside Bun\'s compiled-binary asset namespace),',
-  );
-  console.log(
-    'observed on every run in this environment. Parsing degrades to PARSE_FAILED for every',
-  );
-  console.log(
-    'file (0 symbols/edges extracted) rather than throwing, so cold/warm/incremental timings',
-  );
-  console.log(
-    'below measure a pipeline that never does real tree-sitter work — they are NOT proof the',
-  );
-  console.log(
-    'budgets would be met once parsing is fixed, only a lower bound. At 10,000 files this',
-  );
-  console.log(
-    'additionally times out well past its budget (observed: >180s against a 60s budget) rather',
-  );
-  console.log(
-    'than merely degrading, which independently fails that budget regardless of the WASM bug.',
-  );
-  console.log(
-    'This is Phase 5 (packages/engine) sidecar-packaging territory, out of apps/desktop scope.',
-  );
+  console.log('Measurement integrity: every row below is asserted to come from an engine that');
+  console.log('actually parsed (symbols > 0 and edges > 0) before any timing is recorded.');
   console.log('');
 }
 
@@ -538,7 +523,7 @@ async function main(): Promise<void> {
   console.log(`Engine binary: ${join(BINARIES_DIR, binaryNameForHost())}`);
   console.log(`Grammars dir: ${GRAMMARS_DIR}`);
   console.log(`1,000-file repeat count: ${String(REPEATS_1K)} (override with BENCH_REPEATS_1K)`);
-  printKnownIssueCaveat();
+  printMeasurementIntegrityNote();
 
   const verdicts: Verdict[] = [];
   await benchSize(1000, verdicts);
@@ -557,7 +542,7 @@ async function main(): Promise<void> {
   console.log(
     `bench:graph budgets: ${graphHasFail ? 'AT LEAST ONE FAIL (see above)' : 'ALL PASS (see above)'}`,
   );
-  printKnownIssueCaveat();
+  printMeasurementIntegrityNote();
 
   if (!allEnginePassed) {
     process.exitCode = 1;

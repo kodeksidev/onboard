@@ -386,6 +386,11 @@ export class SqliteCacheStore implements CacheStore {
       : { schemaVersion: row.schema_version, fingerprint: row.fingerprint, resultJson: row.result_json };
   }
 
+  getAnalysisResultFingerprint(): string | null {
+    const row = this.requireDb().query<{ fingerprint: string }, []>('SELECT fingerprint FROM analysis_result WHERE id = 1').get();
+    return row?.fingerprint ?? null;
+  }
+
   putAnalysisResult(row: AnalysisResultRow): void {
     this.requireDb().run(
       `INSERT INTO analysis_result (id, schema_version, fingerprint, result_json)

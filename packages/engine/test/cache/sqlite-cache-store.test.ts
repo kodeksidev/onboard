@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -274,6 +275,17 @@ describe('SqliteCacheStore — analysis_result single-row table', () => {
     expect(store.getAnalysisResult()).toBeNull();
     store.close();
   });
+
+  test('getAnalysisResultFingerprint returns just the fingerprint, matching getAnalysisResult().fingerprint', () => {
+    const store = new SqliteCacheStore(dbFilePath);
+    store.open(EXPECTED);
+    expect(store.getAnalysisResultFingerprint()).toBeNull();
+
+    store.putAnalysisResult({ schemaVersion: 1, fingerprint: 'h'.repeat(64), resultJson: '{"a":3}' });
+    expect(store.getAnalysisResultFingerprint()).toBe('h'.repeat(64));
+    expect(store.getAnalysisResultFingerprint()).toBe(store.getAnalysisResult()?.fingerprint ?? null);
+    store.close();
+  });
 });
 
 describe('SqliteCacheStore — search query methods (Section 8.7)', () => {
@@ -362,5 +374,32 @@ describe('SqliteCacheStore — search query methods (Section 8.7)', () => {
     expect(store.queryTokensByToken('auth')).toEqual([{ token: 'auth', path: 'src/a.ts', count: 2, linesJson: '[1,4]' }]);
     expect(store.queryTokensByToken('nope')).toEqual([]);
     store.close();
+  });
+});
+
+describe('SqliteCacheStore — token_index index coverage (Section 11 10,000-file scaling fix)', () => {
+  test('DELETE FROM token_index WHERE path = ? uses idx_token_index_path, never a full table scan', () => {
+    const store = new SqliteCacheStore(dbFilePath);
+    store.open(EXPECTED);
+    store.close();
+
+    // `token_index`'s `PRIMARY KEY (token, path)` puts `path` second, so it
+    // cannot cover a `WHERE path = ?` lookup the way `symbol`'s
+    // `idx_symbol_path` and `import_edge`'s `(from_path, ...)` primary key
+    // already cover their own per-file deletes. Without `idx_token_index_path`
+    // this query plans as a full table scan that gets slower as the table
+    // grows — confirmed the dominant cost behind the 10,000-file cold-analysis
+    // timeout (measured: ~204s of the ~214s total at 10k files, vs ~1.7s at
+    // 1k, a ~123x blowup for a 10x file-count increase). See docs/DECISIONS.md.
+    const db = new Database(dbFilePath);
+    try {
+      const plan = db.query("EXPLAIN QUERY PLAN DELETE FROM token_index WHERE path = ?").all('src/some-file.ts');
+      const planText = JSON.stringify(plan);
+      expect(planText).toContain('idx_token_index_path');
+      expect(planText).not.toContain('SCAN TABLE token_index');
+      expect(planText).not.toContain('SCAN token_index');
+    } finally {
+      db.close();
+    }
   });
 });
