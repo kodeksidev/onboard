@@ -221,17 +221,16 @@ async function analyzeInternal(options: AnalyzeOptions): Promise<AnalyzeWithTimi
 
   emitProgress(onProgress, 'parse', 0, fileCount);
   const parseStart = performance.now();
-  const { parsedByPath, diagnostics: parseDiagnostics, cacheHitCount } = await runParsePhase(
-    prepared.processedFiles,
-    options.grammarsDir,
-    options.engineVersion,
-    SCHEMA_VERSION,
-    options.cacheStore,
-  );
+  const {
+    parsedByPath,
+    diagnostics: parseDiagnostics,
+    cacheHitCount,
+    previousContentHashByPath,
+  } = await runParsePhase(prepared.processedFiles, options.grammarsDir, options.engineVersion, SCHEMA_VERSION, options.cacheStore);
   const parseMs = performance.now() - parseStart;
   emitProgress(onProgress, 'parse', fileCount, fileCount);
 
-  persistTokenIndex(prepared.processedFiles, parsedByPath, options.cacheStore);
+  persistTokenIndex(prepared.processedFiles, parsedByPath, previousContentHashByPath, options.cacheStore);
 
   emitProgress(onProgress, 'resolve', 0, fileCount);
   const resolveStart = performance.now();

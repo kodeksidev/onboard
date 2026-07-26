@@ -230,6 +230,10 @@ export class SqliteCacheStore implements CacheStore {
     this.db = null;
   }
 
+  withTransaction<T>(fn: () => T): T {
+    return this.requireDb().transaction(fn)();
+  }
+
   private requireDb(): Database {
     if (this.db === null) {
       throw new Error('SqliteCacheStore: open() must be called before use.');

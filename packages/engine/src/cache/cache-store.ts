@@ -75,6 +75,19 @@ export interface CacheStore {
   open(expected: CacheSchemaMeta): CacheOpenOutcome;
   close(): void;
 
+  /**
+   * Runs `fn` inside a single transaction (commits once at the end, rolls
+   * back whole if `fn` throws) instead of each write inside `fn`
+   * auto-committing individually. Bulk per-file cache writes (`analyze()`'s
+   * parse-persist and token-index-persist loops) MUST use this — one commit
+   * per file rather than one per batch was the dominant cost behind the
+   * warm-analysis regression measured in Section 11's bench (see
+   * `docs/DECISIONS.md`). A `CacheStore` with no real transaction concept
+   * (e.g. a trivial in-memory test double) may implement this as a plain
+   * `fn()` call — it is a performance contract, not a correctness one.
+   */
+  withTransaction<T>(fn: () => T): T;
+
   getFileCache(path: string): FileCacheRow | null;
   /** All cached paths, sorted ascending. */
   listFileCachePaths(): readonly string[];

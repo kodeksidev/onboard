@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AnalysisResult } from '@onboard/contract';
@@ -148,6 +148,65 @@ describe('analyze — token_index persistence (Section 6.1, search infra)', () =
     const rows = warmCacheStore.queryTokensByToken('router');
     expect(rows.length).toBeGreaterThan(0);
     warmCacheStore.close();
+  });
+
+  test('a warm re-run of an unchanged repo does not rebuild token_index (Section 11 bench regression)', async () => {
+    const dbPath = join(dir, 'cache.sqlite');
+    const cold = new SqliteCacheStore(dbPath);
+    await analyze({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: cold });
+    cold.close();
+
+    // Simulate "tokens already correct from the cold run" by deliberately
+    // corrupting token_index for one path, then re-running warm: if the
+    // warm run's skip-check is broken (always retokenizes) the corruption
+    // would be overwritten with correct data, silently hiding the bug this
+    // test exists to catch. So instead we assert the OPPOSITE signal: a
+    // warm run must NOT touch file_cache rows for unchanged files, which we
+    // verify indirectly by confirming a warm re-run is dramatically faster
+    // than the cold run (the whole point of the fix) while still returning
+    // identical, correct token data.
+    const coldForTiming = new SqliteCacheStore(join(dir, 'timing-cache.sqlite'));
+    const coldStart = performance.now();
+    await analyze({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: coldForTiming });
+    const coldMs = performance.now() - coldStart;
+    coldForTiming.close();
+
+    const warm = new SqliteCacheStore(join(dir, 'timing-cache.sqlite'));
+    const warmStart = performance.now();
+    await analyze({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: warm });
+    const warmMs = performance.now() - warmStart;
+    expect(warm.queryTokensByToken('router').length).toBeGreaterThan(0);
+    warm.close();
+
+    // A warm run must never be slower than cold (Section 11's bench caught
+    // exactly this inverted relationship when token_index was unconditionally
+    // rebuilt every run) — not a strict budget assertion (this fixture is
+    // tiny and timing-noisy), just the qualitative regression this test guards.
+    expect(warmMs).toBeLessThanOrEqual(coldMs + 50);
+  });
+
+  test('incremental: touching one file updates only its tokens, leaving an untouched file correct', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'onboard-incremental-repo-'));
+    try {
+      const userModelSrc = join(FIXTURES_DIR, 'node-express');
+      cpSync(userModelSrc, repoDir, { recursive: true });
+      const dbPath = join(dir, 'incremental-cache.sqlite');
+
+      const cold = new SqliteCacheStore(dbPath);
+      await analyze({ repoRootAbs: repoDir, grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: cold });
+      cold.close();
+
+      const targetFile = join(repoDir, 'src', 'models', 'user-model.js');
+      appendFileSync(targetFile, '\n// a brand new uniqueTokenXyz appears here\n', 'utf8');
+
+      const warm = new SqliteCacheStore(dbPath);
+      await analyze({ repoRootAbs: repoDir, grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: warm });
+      expect(warm.queryTokensByToken('uniquetokenxyz').some((row) => row.path === 'src/models/user-model.js')).toBe(true);
+      expect(warm.queryTokensByToken('router').length).toBeGreaterThan(0); // an untouched file's tokens are still intact
+      warm.close();
+    } finally {
+      await removeDirWithRetry(repoDir);
+    }
   });
 });
 

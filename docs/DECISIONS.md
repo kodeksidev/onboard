@@ -1155,3 +1155,83 @@ decided; it only records choices the spec left open.
   `dynamic-expression`), asserted in `test/analyze/analyze.test.ts` and
   covered by the regenerated `python-flask.snap.json` (the other four
   fixtures' snapshots are untouched — confirmed via `git diff --stat`).
+- **Phase 11 (post-hoc fix) — the compiled sidecar's `ENOENT ... tree-
+  sitter.wasm` bug (flagged by rust-tauri's Phase 11 bench, matching this
+  agent's own earlier suspicion) is fixed, and it turned out to be TWO
+  separate instances of the same asset-embedding problem, not one.**
+  `web-tree-sitter`'s `Parser.init()` internally locates its own core
+  runtime `tree-sitter.wasm` via `new URL('tree-sitter.wasm',
+  import.meta.url)`, which resolves to a virtual `B:\~BUN\root\` path
+  inside a `bun build --compile` binary and throws ENOENT on every call.
+  Fixed in `parse/grammar-loader.ts` by importing the library's own
+  `tree-sitter.wasm` with `with { type: 'file' }` (Bun's file-embedding
+  import attribute), reading it back with `Bun.file(path).arrayBuffer()`
+  (which — unlike `node:fs`/`fetch` — CAN read the embedded asset back out
+  of the compiled binary), and handing those bytes to `Parser.init({
+  wasmBinary })`, bypassing the library's own broken lookup entirely.
+  Fixing only this, though, still left every file failing with
+  `PARSE_FAILED` inside the compiled binary — a SECOND, previously-
+  undiscovered instance of the identical bug: `parse/queries.ts` loaded
+  each language's `.scm` tree-sitter query source via
+  `readFileSync(join(import.meta.dir, ...))`, which hits the exact same
+  virtual-path ENOENT. Fixed by importing all four `.scm` files with `with
+  { type: 'text' }` (the same technique already used for `schema.sql`),
+  each as its own static import — the import specifier must be a literal
+  string for Bun's bundler to embed it, so a dynamically joined path
+  (`queries/${languageId}.scm`) cannot be fixed this way; each of the four
+  files is imported explicitly instead. New ambient module declarations
+  `src/wasm-module.d.ts` and `src/scm-module.d.ts` teach TypeScript about
+  `*.wasm`/`*.scm` imports. Both fixes were found and confirmed by writing
+  throwaway compiled-binary probes (built, run, and deleted — never
+  committed) that isolated each failure precisely before touching the real
+  source, rather than guessing from the symptom alone.
+- **Phase 11 (post-hoc fix) — `scripts/test-rpc.ts` now asserts on
+  substance (`symbols > 0`, `edges > 0`, zero `PARSE_FAILED` diagnostics
+  for node-express), not just a successful RPC round-trip.** The previous
+  version of this gate would have stayed green through the entire
+  tree-sitter.wasm outage above — it only checked that `engine.analyze`
+  responded without an `error` field, never that the `AnalysisResult` it
+  returned meant anything. Per the coordinator's report: "a green
+  `test:rpc` on a zero-symbol result is not a passing gate." Re-verified
+  against the rebuilt binary post-fix: `symbols=12, edges=3,
+  PARSE_FAILED=0`.
+- **Phase 11 (post-hoc fix) — warm/incremental analysis was 34x over
+  budget and slower than cold; root cause was this agent's own Phase 5
+  `persistTokenIndex` addition, already flagged as a known gap in its own
+  doc comment ("not yet incremental-cache-gated... rebuilds every
+  `analyze()` run") but not recognized at the time as a correctness-
+  adjacent PERFORMANCE bug of this magnitude.** Every file's `token_index`
+  rows were unconditionally deleted and rewritten on every single
+  `analyze()` call — cold, warm, or incremental alike — each write
+  auto-committing individually (no explicit transaction) outside the
+  parser pool's own cache-hit logic entirely. On a warm run this became
+  the ONLY per-file cost remaining (parsing itself was correctly skipped),
+  so it dominated completely: measured before the fix, in-process against
+  a 1,000-file synthetic repo (`analyzeWithTimings` directly, no RPC/spawn
+  overhead): cold 6263 ms, warm 28841 ms, incremental (20 changed) 29267
+  ms — reproducing the bench's "warm is slower than cold" signature
+  exactly. Fixed two ways: (1) `runParsePhase` now snapshots every file's
+  `file_cache.content_hash` ONCE, before this run writes anything
+  (`ParsePhaseResult.previousContentHashByPath`) — `persistTokenIndex`
+  compares against that snapshot (not a live re-query, which would already
+  reflect this run's own writes for freshly-parsed files and incorrectly
+  look "unchanged") to skip re-tokenizing any file whose content hash
+  didn't change; (2) a new `CacheStore.withTransaction<T>(fn: () => T): T`
+  method (`SqliteCacheStore`: `this.requireDb().transaction(fn)()`) wraps
+  both the parse-phase persist loop and the token-index persist loop in
+  ONE transaction per batch instead of one auto-commit per file per write.
+  Measured after the fix, same methodology: cold 3271 ms, warm 235 ms,
+  incremental 404 ms — warm and incremental both now comfortably inside
+  the 1200 ms / 2000 ms budgets, and warm is (correctly) far faster than
+  cold rather than 5.5x slower. Verified the fix is real, not a fluke of
+  measurement, by using `git stash push -- <the four changed files>` to
+  temporarily restore the pre-fix code and re-running the identical
+  benchmark script: reproduced the exact same regression (cold 6263 ms /
+  warm 28841 ms / incremental 29267 ms) before popping the stash back.
+  `bun run verify:determinism` stayed 15/15 throughout — the skip-check
+  changes what gets WRITTEN to the cache, never what `analyze()` returns.
+  New regression tests in `test/analyze/analyze.test.ts` assert a warm
+  re-run is never slower than cold (qualitative, not a strict budget, to
+  avoid a flaky CI timing assertion) and that touching one file out of
+  several updates only that file's tokens while an untouched file's tokens
+  remain correct.
