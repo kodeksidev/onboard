@@ -4,7 +4,7 @@ import { buildAdjacency } from './graph-model';
 
 export interface GraphListFallbackProps {
   readonly result: AnalysisResult;
-  readonly onOpenFile: (path: string) => void;
+  readonly onOpenFile: (path: string, line?: number) => void;
 }
 
 function formatList(paths: readonly string[] | undefined): string {

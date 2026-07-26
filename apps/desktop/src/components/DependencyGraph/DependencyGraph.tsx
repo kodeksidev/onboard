@@ -14,7 +14,7 @@ import { GraphListFallback } from './GraphListFallback';
 
 export interface DependencyGraphProps {
   readonly result: AnalysisResult;
-  readonly onOpenFile?: (path: string) => void;
+  readonly onOpenFile?: (path: string, line?: number) => void;
   /** Test-only escape hatch (see `UseCytoscapeApi.getCore`'s doc comment); never used by production UI. */
   readonly onCytoscapeReady?: (cy: cytoscape.Core) => void;
 }
@@ -78,7 +78,7 @@ interface KeyDownContext extends FocusMoveContext {
   readonly focusedPath: string | null;
   readonly selectPath: (path: string | null) => void;
   readonly requestSearchFocus: () => void;
-  readonly onOpenFile: (path: string) => void;
+  readonly onOpenFile: (path: string, line?: number) => void;
 }
 
 /** Section 9 Phase 8's keyboard scheme, dispatched from `DependencyGraph`'s `onKeyDown`. */
@@ -196,7 +196,7 @@ function useCytoscapeReadyEffect(graph: UseCytoscapeApi, onCytoscapeReady: ((cy:
 /** Everything `DependencyGraph`'s JSX needs, assembled in one hook so the component itself stays render-only. */
 function useDependencyGraphController(
   result: AnalysisResult,
-  onOpenFile: (path: string) => void,
+  onOpenFile: (path: string, line?: number) => void,
   onCytoscapeReady: ((cy: cytoscape.Core) => void) | undefined,
 ): DependencyGraphController {
   const containerRef = useRef<HTMLDivElement>(null);

@@ -8,7 +8,7 @@ import { TopFilesList } from './TopFilesList';
 export interface OverviewPanelProps {
   readonly result: AnalysisResult;
   /** Optional until the file viewer lands (Phase 10) — defaults to a no-op. */
-  readonly onOpenFile?: (path: string) => void;
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 const NOOP_OPEN_FILE = (): void => undefined;

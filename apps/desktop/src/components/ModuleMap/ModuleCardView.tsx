@@ -7,7 +7,7 @@ export type ModuleCard = AnalysisResult['modules'][number];
 export interface ModuleCardViewProps {
   readonly module: ModuleCard;
   readonly moduleNamesById: ReadonlyMap<string, string>;
-  readonly onOpenFile?: (path: string) => void;
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 const NOOP_OPEN_FILE = (): void => undefined;
@@ -37,7 +37,7 @@ function KeyFileList({
   onOpenFile,
 }: {
   readonly paths: readonly string[];
-  readonly onOpenFile: (path: string) => void;
+  readonly onOpenFile: (path: string, line?: number) => void;
 }): JSX.Element {
   return (
     <ul className="space-y-1">

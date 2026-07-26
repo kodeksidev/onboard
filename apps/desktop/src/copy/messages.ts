@@ -93,6 +93,16 @@ export const ERRORS = {
     title: 'File too large to display',
     description: `${name} is ${size}. Onboard displays files up to 2 MB. Open it in your editor instead.`,
   }),
+  /**
+   * Gap: Section 10 doesn't give literal copy for E_PATH_ESCAPES_REPO (the
+   * `read_repo_file` guard against '..' and escaping symlinks). Filled with
+   * the most conventional phrasing consistent with the other AppError
+   * strings; see docs/DECISIONS.md.
+   */
+  pathEscapesRepo: (): TitledCopy => ({
+    title: "That path isn't part of this repository",
+    description: 'Onboard only opens files inside the folder it analyzed. Re-run analysis if this looks wrong.',
+  }),
   aiKeyInvalid: (provider: string): TitledCopy => ({
     title: 'That key was rejected',
     description: `${provider} returned 401. Check the key, then test again. AI stays off until a key passes.`,
@@ -180,6 +190,27 @@ export const MODULE_MAP_COPY = {
   fileCountLabel: (count: number): string => `${count} file${count === 1 ? '' : 's'}`,
 } as const;
 
+/** Section 9 Phase 10: "the everyday feature" — make it fast and keyboard-first. */
+export const WHERE_IS_SEARCH_COPY = {
+  label: 'Where is X?',
+  placeholder: 'Where is X handled? Try auth, payment, routing…',
+  expandedTermsLabel: 'Also matching:',
+  loadingLabel: 'Searching…',
+} as const;
+
+export const FILE_VIEWER_COPY = {
+  noFileOpen: {
+    title: 'No file open',
+    description: 'Choose a search result, or click a path anywhere in Onboard, to view it here.',
+  },
+  loadingLabel: 'Loading file…',
+  symbolsLabel: 'Symbols',
+  noSymbols: 'No symbols found in this file.',
+  importsLabel: 'Imports',
+  importedByLabel: 'Imported by',
+  noneLabel: 'None',
+} as const;
+
 /**
  * Every literal title in Section 10 is static — none of them interpolate a
  * value, only the descriptions do. `AppError.message` (Section 7's error
@@ -196,6 +227,8 @@ export const ERROR_TITLES: Readonly<Record<string, string>> = {
   E_ENGINE_CRASHED: ERRORS.engineCrashed('').title,
   E_ENGINE_TIMEOUT: ERRORS.engineTimeout().title,
   E_ANALYSIS_IN_PROGRESS: ERRORS.analysisInProgress().title,
+  E_FILE_TOO_LARGE: ERRORS.fileTooLarge('', '').title,
+  E_PATH_ESCAPES_REPO: ERRORS.pathEscapesRepo().title,
 };
 
 const DEFAULT_ERROR_TITLE = 'Something went wrong';

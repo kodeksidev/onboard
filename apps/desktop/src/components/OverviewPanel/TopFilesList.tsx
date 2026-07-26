@@ -4,7 +4,7 @@ import type { AnalysisResult } from '@onboard/contract';
 export interface TopFilesListProps {
   readonly importantFilePaths: AnalysisResult['importantFilePaths'];
   readonly files: AnalysisResult['files'];
-  readonly onOpenFile: (path: string) => void;
+  readonly onOpenFile: (path: string, line?: number) => void;
 }
 
 /** The "most important files" list (Section 8.4's `importantFilePaths`, top 20 by importance). */

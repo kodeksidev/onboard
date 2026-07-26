@@ -7,13 +7,15 @@ import { AnalysisProgress } from '@/components/AnalysisProgress/AnalysisProgress
 import { OverviewPanel } from '@/components/OverviewPanel/OverviewPanel';
 import { RoadmapPanel } from '@/components/RoadmapPanel/RoadmapPanel';
 import { ModuleMap } from '@/components/ModuleMap/ModuleMap';
+import { WhereIsSearch } from '@/components/WhereIsSearch/WhereIsSearch';
 import { ErrorState } from '@/components/ErrorState/ErrorState';
 import { LABELS, resolveErrorCopy } from '@/copy/messages';
 import { useRepoStore } from '@/state/repoStore';
 import type { RepoState } from '@/state/repoStore';
 import { useSettingsStore } from '@/state/settingsStore';
+import { useGraphStore } from '@/state/graphStore';
 
-type ReadyView = 'overview' | 'graph' | 'roadmap' | 'modules';
+type ReadyView = 'overview' | 'graph' | 'roadmap' | 'modules' | 'search' | 'file';
 
 interface ReadyContentProps {
   readonly result: AnalysisResult;
@@ -31,11 +33,22 @@ const DependencyGraph = lazy(() =>
   })),
 );
 
+/**
+ * CodeMirror 6 plus its four language packages (Section 4) is the app's
+ * second-heaviest dependency after Cytoscape — irrelevant until a user
+ * actually opens a file, so it is deferred the same way.
+ */
+const FileViewer = lazy(() =>
+  import('@/components/FileViewer/FileViewer').then((module) => ({ default: module.FileViewer })),
+);
+
 const READY_TABS: ReadonlyArray<{ readonly id: ReadyView; readonly label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'graph', label: 'Dependency graph' },
   { id: 'roadmap', label: 'Start here' },
   { id: 'modules', label: 'Module map' },
+  { id: 'search', label: 'Where is X?' },
+  { id: 'file', label: 'File viewer' },
 ];
 
 function tabClassName(isActive: boolean): string {
@@ -63,30 +76,76 @@ function ReadyTabList({ view, onSelect }: { readonly view: ReadyView; readonly o
   );
 }
 
-function ReadyViewPanel({ view, result }: { readonly view: ReadyView; readonly result: AnalysisResult }): JSX.Element {
+interface OpenFileRequest {
+  readonly path: string;
+  readonly line?: number;
+}
+
+interface ReadyViewPanelProps {
+  readonly view: ReadyView;
+  readonly result: AnalysisResult;
+  readonly openFile: OpenFileRequest | null;
+  readonly onOpenFile: (path: string, line?: number) => void;
+}
+
+function ReadyViewPanel({ view, result, openFile, onOpenFile }: ReadyViewPanelProps): JSX.Element {
   if (view === 'graph') {
     return (
       <Suspense fallback={<p className="p-6 text-sm text-slate-500">Loading the dependency graph…</p>}>
-        <DependencyGraph result={result} />
+        <DependencyGraph result={result} onOpenFile={onOpenFile} />
       </Suspense>
     );
   }
   if (view === 'roadmap') {
-    return <RoadmapPanel steps={result.roadmap.steps} />;
+    return <RoadmapPanel steps={result.roadmap.steps} onOpenFile={onOpenFile} />;
   }
   if (view === 'modules') {
-    return <ModuleMap modules={result.modules} />;
+    return <ModuleMap modules={result.modules} onOpenFile={onOpenFile} />;
   }
-  return <OverviewPanel result={result} />;
+  if (view === 'search') {
+    return <WhereIsSearch repoId={result.repo.id} onOpenFile={onOpenFile} />;
+  }
+  if (view === 'file') {
+    return (
+      <Suspense fallback={<p className="p-6 text-sm text-slate-500">Loading the file viewer…</p>}>
+        <FileViewer
+          repoId={result.repo.id}
+          result={result}
+          path={openFile?.path ?? null}
+          onOpenFile={onOpenFile}
+          {...(openFile?.line !== undefined ? { line: openFile.line } : {})}
+        />
+      </Suspense>
+    );
+  }
+  return <OverviewPanel result={result} onOpenFile={onOpenFile} />;
 }
 
-/** Once analysis completes: overview, graph (Phase 8), roadmap + module map (Phase 9), one tab apart. */
+/**
+ * Once analysis completes: overview, graph (Phase 8), roadmap + module map
+ * (Phase 9), search + file viewer (Phase 10), one tab apart. `onOpenFile` is
+ * the one shared callback every panel already accepts (Section 9 Phase 10's
+ * reuse instruction): it switches to the "File viewer" tab, remembers which
+ * path/line to open, and — reusing `graphStore.focusPath` rather than a
+ * second focus mechanism — centers that same file in the dependency graph,
+ * so opening a file from a search hit (or a roadmap step, or a module card)
+ * keeps the graph in sync with whatever the user just looked at.
+ */
 function ReadyContent({ result }: ReadyContentProps): JSX.Element {
   const [view, setView] = useState<ReadyView>('overview');
+  const [openFile, setOpenFile] = useState<OpenFileRequest | null>(null);
+  const focusPath = useGraphStore((state) => state.focusPath);
+
+  const handleOpenFile = (path: string, line?: number): void => {
+    setOpenFile(line !== undefined ? { path, line } : { path });
+    setView('file');
+    focusPath(path);
+  };
+
   return (
     <div className="flex flex-1 flex-col">
       <ReadyTabList view={view} onSelect={setView} />
-      <ReadyViewPanel view={view} result={result} />
+      <ReadyViewPanel view={view} result={result} openFile={openFile} onOpenFile={handleOpenFile} />
     </div>
   );
 }
