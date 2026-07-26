@@ -7,14 +7,25 @@
  * later import in this file (and everything they transitively import) only
  * runs after `fetch` and the node network modules are already poisoned —
  * nothing in this process can capture a live reference to them first.
+ *
+ * `ENGINE_VERSION` below is one of Section 6.1's four cache-invalidation keys,
+ * and it is deliberately NOT the bare `package.json` version. `build-sidecar.ts`
+ * injects a hash of the emitted bundle via `--define`, so the key moves whenever
+ * engine code changes even without a version bump. This was added after a
+ * confirmed bug: a defective build cached empty `ParsedFile` rows, and a fixed
+ * binary then served that poison indefinitely because all four keys still
+ * matched. Verified by an A/B experiment — see `docs/DECISIONS.md`.
  */
 import './guard/no-network';
 
-import { version as ENGINE_VERSION } from '../package.json';
+import { version as PACKAGE_VERSION } from '../package.json';
+import { resolveEngineVersion } from './engine-version';
 import { computeGrammarFingerprint } from './parse/grammar-loader';
 import { createEngineMethods } from './rpc/methods';
 import { createProgressReporter } from './rpc/progress';
 import { readLines, runServer } from './rpc/server';
+
+const ENGINE_VERSION = resolveEngineVersion(PACKAGE_VERSION, process.env.ONBOARD_BUILD_HASH);
 
 const GRAMMARS_DIR_FLAG = '--grammars-dir';
 

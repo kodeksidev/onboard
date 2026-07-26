@@ -83,6 +83,52 @@ interface AnalyzeOutcome {
   readonly elapsedMs: number;
   readonly repoId: string;
   readonly filesScanned: number;
+  readonly symbolCount: number;
+  readonly edgeCount: number;
+  readonly parseFailedCount: number;
+}
+
+interface AnalyzeResultShape {
+  readonly result: {
+    readonly repo: { readonly id: string };
+    readonly stats: { readonly filesScanned: number };
+    readonly symbols: readonly unknown[];
+    readonly edges: readonly unknown[];
+    readonly diagnostics: readonly { readonly code: string }[];
+  };
+}
+
+function toOutcome(elapsedMs: number, payload: AnalyzeResultShape): AnalyzeOutcome {
+  const { repo, stats, symbols, edges, diagnostics } = payload.result;
+  return {
+    elapsedMs,
+    repoId: repo.id,
+    filesScanned: stats.filesScanned,
+    symbolCount: symbols.length,
+    edgeCount: edges.length,
+    parseFailedCount: diagnostics.filter((d) => d.code === 'PARSE_FAILED').length,
+  };
+}
+
+/**
+ * Refuses to report a timing from an engine that did not actually parse.
+ *
+ * Every number in this file's first run measured a sidecar whose tree-sitter
+ * WASM failed to load: it degraded every file to PARSE_FAILED, extracted 0
+ * symbols and 0 edges, and still returned a structurally valid
+ * AnalysisEnvelope — so the harness happily timed a pipeline doing no real
+ * work and printed a PASS for the 1,000-file cold budget. Timing an empty
+ * pipeline is not a measurement, so this aborts instead.
+ */
+function assertParsedSomething(label: string, outcome: AnalyzeOutcome): void {
+  if (outcome.symbolCount === 0 || outcome.edgeCount === 0) {
+    throw new Error(
+      `bench precondition failed (${label}): engine returned symbols=${String(outcome.symbolCount)}, ` +
+        `edges=${String(outcome.edgeCount)}, filesParsed-diagnostics PARSE_FAILED=${String(outcome.parseFailedCount)}. ` +
+        'Timings from a non-parsing engine are meaningless. Run `bun run build:sidecar` (which now ' +
+        'smoke-tests the binary) and `bun run stage:sidecar`, then re-run the bench.',
+    );
+  }
 }
 
 /** One `engine.analyze` call over a freshly spawned sidecar process (Section 7.3). Measures only the analyze RPC itself, not process spawn/handshake/shutdown overhead. */
@@ -105,14 +151,9 @@ async function analyzeOnce(
     const elapsedMs = performance.now() - start;
     assertNoRpcError(analyze, 'engine.analyze');
 
-    const result = analyze.result as {
-      result: { repo: { id: string }; stats: { filesScanned: number } };
-    };
-    return {
-      elapsedMs,
-      repoId: result.result.repo.id,
-      filesScanned: result.result.stats.filesScanned,
-    };
+    const outcome = toOutcome(elapsedMs, analyze.result as AnalyzeResultShape);
+    assertParsedSomething(`analyze ${repoPath}`, outcome);
+    return outcome;
   } finally {
     await engine.session.call('engine.shutdown', {}, 5000).catch(() => undefined);
     engine.kill();
@@ -150,17 +191,9 @@ async function analyzeKeepAlive(
     );
     const elapsedMs = performance.now() - start;
     assertNoRpcError(analyze, 'engine.analyze');
-    const result = analyze.result as {
-      result: { repo: { id: string }; stats: { filesScanned: number } };
-    };
-    return {
-      engine,
-      outcome: {
-        elapsedMs,
-        repoId: result.result.repo.id,
-        filesScanned: result.result.stats.filesScanned,
-      },
-    };
+    const keepAliveOutcome = toOutcome(elapsedMs, analyze.result as AnalyzeResultShape);
+    assertParsedSomething(`analyze ${repoPath} (keep-alive)`, keepAliveOutcome);
+    return { engine, outcome: keepAliveOutcome };
   } catch (error: unknown) {
     // A timed-out or errored analyze call leaves the process running
     // (nothing else has a reference to it yet) — kill it here so it can't
