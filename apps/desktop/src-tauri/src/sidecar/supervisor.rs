@@ -212,9 +212,12 @@ fn map_remote_error(error_obj: Value) -> AppError {
             return app_error;
         }
     }
-    let detail = error_obj
-        .get("message")
-        .and_then(Value::as_str)
-        .map(|s| s.to_string());
-    AppError::new(AppErrorCode::EEngineCrashed, detail)
+    let fallback = AppError::new(
+        AppErrorCode::EEngineCrashed,
+        "The analysis engine reported an error it did not describe in a way Onboard understands.",
+    );
+    match error_obj.get("message").and_then(Value::as_str) {
+        Some(raw_message) => fallback.with_detail(raw_message.to_string()),
+        None => fallback,
+    }
 }

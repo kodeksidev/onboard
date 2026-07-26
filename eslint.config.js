@@ -39,6 +39,11 @@ export default tseslint.config(
       '**/*.sqlite',
       'packages/engine/fixtures/**',
       'packages/engine/grammars/**',
+      // Vendored fake repos used as TEST INPUT, not source: they exist to be
+      // analyzed and are deliberately imperfect. Same rationale as
+      // packages/engine/fixtures above.
+      'apps/desktop/e2e/fixtures/**',
+      'apps/desktop/bench/fixtures/generated/**',
       'apps/desktop/src-tauri/target/**',
       'apps/desktop/src-tauri/binaries/**',
       'apps/desktop/src-tauri/resources/**',

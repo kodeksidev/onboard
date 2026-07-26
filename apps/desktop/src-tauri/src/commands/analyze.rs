@@ -11,7 +11,7 @@ use crate::constants::{PATH_ARG_MAX_BYTES, SIDECAR_ANALYZE_TIMEOUT};
 use crate::contract::AnalysisEnvelope;
 use crate::error::{AppError, AppErrorCode};
 use crate::state::AppState;
-use crate::util::paths::{display_name, is_system_root};
+use crate::util::paths::{display_name, is_system_root, strip_extended_prefix};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,8 +74,16 @@ pub fn analyze_repo_core(
 
     let _guard = state.supervisor.begin_analysis()?;
 
+    // `std::fs::canonicalize` always returns a `\\?\`-prefixed
+    // extended-length path on Windows (needed for Rust's OWN filesystem
+    // calls past the legacy 260-char limit — Section 10). That prefix is a
+    // Windows/Rust-specific convention the sidecar (Bun/Node, Section 7.3)
+    // has no reason to understand; strip it before it ever crosses the
+    // process boundary so the engine receives an ordinary Windows path.
+    let repo_path_for_engine = strip_extended_prefix(&canonical_root);
+
     let params = json!({
-        "repoPath": canonical_root.to_string_lossy(),
+        "repoPath": repo_path_for_engine.to_string_lossy(),
         "appDataDir": context.app_data_dir,
         "excludeGlobs": context.exclude_globs,
         "isForceRefresh": request.is_force_refresh,
@@ -141,7 +149,8 @@ mod tests {
     fn classify_metadata_error_maps_permission_denied_to_the_literal_section_10_message() {
         let err = classify_metadata_error(std::io::ErrorKind::PermissionDenied, "acme-api");
         assert_eq!(err.code, "E_PERMISSION_DENIED");
-        assert_eq!(err.message, "Onboard can't read this folder");
+        assert!(err.message.contains("acme-api"));
+        assert!(err.message.contains("denied read access"));
     }
 
     #[test]

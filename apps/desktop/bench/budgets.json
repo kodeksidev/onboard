@@ -1,0 +1,14 @@
+{
+  "$comment": "Section 11's performance budget table, transcribed verbatim. Entries marked 'enforcedBy: run-bench.ts' are checked by this script against the real sidecar; entries marked 'enforcedBy: bench:graph' are checked by bench/graph/run-bench-graph.ts (Phase 8) against its own already-tested internal constants — duplicated here only for a single complete reference, not re-enforced a second way.",
+  "coldAnalysis1kMs": { "budget": 8000, "enforcedBy": "run-bench.ts" },
+  "warmAnalysis1kMs": { "budget": 1200, "enforcedBy": "run-bench.ts" },
+  "incremental1k20ChangedMs": { "budget": 2000, "enforcedBy": "run-bench.ts" },
+  "coldAnalysis10kMs": { "budget": 60000, "enforcedBy": "run-bench.ts" },
+  "warmAnalysis10kMs": { "budget": 6000, "enforcedBy": "run-bench.ts" },
+  "sidecarPeakRss10kMb": { "budget": 1536, "enforcedBy": "run-bench.ts" },
+  "searchQueryLatency10kP95Ms": { "budget": 120, "enforcedBy": "run-bench.ts" },
+  "graphFirstPaint1kMs": { "budget": 1500, "enforcedBy": "bench:graph" },
+  "graphPanP95_1kMs": { "budget": 22, "enforcedBy": "bench:graph" },
+  "graphPanP95_5kMs": { "budget": 33, "enforcedBy": "bench:graph" },
+  "webviewHeap5kMb": { "budget": 600, "enforcedBy": "bench:graph (not yet measured — see docs/DECISIONS.md)" }
+}

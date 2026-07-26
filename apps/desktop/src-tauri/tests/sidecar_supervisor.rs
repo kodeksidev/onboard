@@ -50,8 +50,14 @@ fn a_crash_produces_engine_crashed_with_the_exact_section_10_copy_and_restarts_o
 
     let err = result.expect_err("expected the crash to surface as an error");
     assert_eq!(err.code, "E_ENGINE_CRASHED");
-    assert_eq!(err.message, "Analysis stopped unexpectedly");
-    assert!(err.detail.unwrap().contains("C:/fake/onboard.log"));
+    // The exact Section 10 copy (the long, parameterized description —
+    // AppError has one text field, and `message` carries it; see
+    // `error.rs`'s doc comment on why the short static title never lives
+    // in AppError at all).
+    assert_eq!(
+        err.message,
+        "The analysis engine exited before finishing. The log is at C:/fake/onboard.log. Retrying usually works — the cache keeps completed files."
+    );
     assert_eq!(supervisor.restart_count(), 1);
 
     // Restart budget was actually spent: the next call spawns a fresh

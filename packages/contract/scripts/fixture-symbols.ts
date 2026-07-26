@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Hand-authored symbol table for `fixtures/sample-analysis.json`.
  *
  * Split out of `fixture-data.ts` to keep both files under the 800-line

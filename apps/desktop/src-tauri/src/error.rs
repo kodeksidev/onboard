@@ -1,11 +1,19 @@
 //! `AppError` — the error envelope shared verbatim with the TS contract
 //! (Section 7, closing block; `packages/contract/src/error.ts`).
 //!
-//! `message` is ALWAYS drawn from the literal copy table in Section 10 (or,
-//! where Section 10 defines no literal copy for a code, from the single
-//! conventional string chosen and logged in `docs/DECISIONS.md`). Raw OS
-//! errors, provider bodies, and stack traces are only ever placed in
-//! `detail`, never in `message`.
+//! Section 10's rows each show two strings per error: a short, static,
+//! per-code title ("**That folder no longer exists**") and a longer,
+//! often-parameterized description ("Onboard could not find {name}...").
+//! `AppError` has exactly one text field, `message` — and per Section 12,
+//! "`AppError.message` is always drawn from the copy table in Section 10".
+//! `react-ui`'s own copy table (`src/copy/messages.ts`) resolves the title
+//! from `code` alone (it is static and needs no runtime value) and treats
+//! `error.message` as the description — the only half that actually needs a
+//! value only Rust has (a file name, a byte count, a log path). `message`
+//! here is therefore always that long, parameterized description; the short
+//! titles are never constructed on this side at all. `detail` is reserved
+//! for genuine extra diagnostics this crate doesn't currently have (a raw
+//! OS/provider error string) — never a second copy of `message`.
 
 use serde::{Deserialize, Serialize};
 
@@ -50,27 +58,6 @@ impl AppErrorCode {
             AppErrorCode::EKeychainUnavailable => "E_KEYCHAIN_UNAVAILABLE",
         }
     }
-
-    /// The literal, user-facing `message` for this code (Section 10's copy
-    /// table verbatim where one exists).
-    fn message(self) -> &'static str {
-        match self {
-            AppErrorCode::EEngineVersionMismatch => "The analysis engine version doesn't match",
-            AppErrorCode::EPathNotFound => "That folder no longer exists",
-            AppErrorCode::ENotADirectory => "That folder can't be analyzed",
-            AppErrorCode::EPermissionDenied => "Onboard can't read this folder",
-            AppErrorCode::ENoSupportedFiles => "No supported source files found",
-            AppErrorCode::ERepoTooLarge => "This repository is too large to map in one pass",
-            AppErrorCode::EEngineCrashed => "Analysis stopped unexpectedly",
-            AppErrorCode::EEngineTimeout => "Analysis is taking too long",
-            AppErrorCode::EAnalysisInProgress => "An analysis is already running",
-            AppErrorCode::ENoAnalysis => "This repository hasn't been analyzed yet",
-            AppErrorCode::EFileTooLarge => "File too large to display",
-            AppErrorCode::EPathEscapesRepo => "That file is outside the repository",
-            AppErrorCode::EInvalidSettings => "Those settings couldn't be saved",
-            AppErrorCode::EKeychainUnavailable => "No system keyring available",
-        }
-    }
 }
 
 /// `AppError` — identical shape to the TS `AppError` (Rust ⇄ TS wire type).
@@ -83,13 +70,20 @@ pub struct AppError {
 }
 
 impl AppError {
-    pub fn new(code: AppErrorCode, detail: impl Into<Option<String>>) -> Self {
+    /// `message` is the long, parameterized Section 10 description (see
+    /// this module's doc comment) — never the short static title.
+    pub fn new(code: AppErrorCode, message: impl Into<String>) -> Self {
         AppError {
             code: code.as_str().to_string(),
-            message: code.message().to_string(),
-            detail: detail.into(),
+            message: message.into(),
+            detail: None,
             path: None,
         }
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     pub fn with_path(mut self, path: impl Into<String>) -> Self {
@@ -138,7 +132,7 @@ impl AppError {
     pub fn no_supported_files() -> Self {
         Self::new(
             AppErrorCode::ENoSupportedFiles,
-            "Onboard v1 reads JavaScript, TypeScript, and Python. This folder has none outside ignored paths. Go and Rust support is planned.".to_string(),
+            "Onboard v1 reads JavaScript, TypeScript, and Python. This folder has none outside ignored paths. Go and Rust support is planned.",
         )
     }
 
@@ -172,14 +166,14 @@ impl AppError {
     pub fn analysis_in_progress() -> Self {
         Self::new(
             AppErrorCode::EAnalysisInProgress,
-            "Wait for the current analysis to finish before starting another one.".to_string(),
+            "Wait for the current analysis to finish before starting another one.",
         )
     }
 
     pub fn no_analysis() -> Self {
         Self::new(
             AppErrorCode::ENoAnalysis,
-            "Run an analysis for this repository before searching it.".to_string(),
+            "Run an analysis for this repository before searching it.",
         )
     }
 
@@ -195,20 +189,23 @@ impl AppError {
     pub fn path_escapes_repo(offending_path: &str) -> Self {
         Self::new(
             AppErrorCode::EPathEscapesRepo,
-            "The requested path resolves outside the analyzed repository and was refused."
-                .to_string(),
+            "The requested path resolves outside the analyzed repository and was refused.",
         )
         .with_path(offending_path.to_string())
     }
 
-    pub fn invalid_settings(detail: &str) -> Self {
-        Self::new(AppErrorCode::EInvalidSettings, detail.to_string())
+    /// `message` here is caller-supplied (there is no single Section 10
+    /// template for every settings-validation failure), matching the same
+    /// "long description, no static title" convention as every other
+    /// constructor.
+    pub fn invalid_settings(message: &str) -> Self {
+        Self::new(AppErrorCode::EInvalidSettings, message.to_string())
     }
 
     pub fn keychain_unavailable() -> Self {
         Self::new(
             AppErrorCode::EKeychainUnavailable,
-            "Onboard won't write API keys to disk. Install gnome-keyring or KWallet, or use a session-only key that is forgotten when you quit.".to_string(),
+            "Onboard won't write API keys to disk. Install gnome-keyring or KWallet, or use a session-only key that is forgotten when you quit.",
         )
     }
 }
@@ -218,30 +215,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn engine_crashed_uses_the_literal_section_10_message() {
+    fn engine_crashed_uses_the_literal_section_10_description_as_message() {
         let err = AppError::engine_crashed("/tmp/onboard.log");
 
         assert_eq!(err.code, "E_ENGINE_CRASHED");
-        assert_eq!(err.message, "Analysis stopped unexpectedly");
-        assert!(err.detail.unwrap().contains("/tmp/onboard.log"));
+        assert!(err.message.contains("The analysis engine exited before finishing"));
+        assert!(err.message.contains("/tmp/onboard.log"));
+        assert!(err.detail.is_none());
     }
 
     #[test]
-    fn permission_denied_uses_the_literal_section_10_message() {
+    fn permission_denied_uses_the_literal_section_10_description_as_message() {
         let err = AppError::permission_denied("acme-api");
 
-        assert_eq!(err.message, "Onboard can't read this folder");
-        assert!(err.detail.unwrap().contains("acme-api"));
+        assert!(err.message.contains("The operating system denied read access"));
+        assert!(err.message.contains("acme-api"));
     }
 
     #[test]
-    fn file_too_large_uses_the_literal_section_10_message() {
+    fn file_too_large_uses_the_literal_section_10_description_as_message() {
         let err = AppError::file_too_large("big.log", "3.1 MB");
 
-        assert_eq!(err.message, "File too large to display");
-        let detail = err.detail.unwrap();
-        assert!(detail.contains("big.log"));
-        assert!(detail.contains("3.1 MB"));
+        assert!(err.message.contains("big.log"));
+        assert!(err.message.contains("3.1 MB"));
+        assert!(err.message.contains("Onboard displays files up to 2 MB"));
     }
 
     #[test]
@@ -252,5 +249,11 @@ mod tests {
             AppErrorCode::EAnalysisInProgress.as_str(),
             "E_ANALYSIS_IN_PROGRESS"
         );
+    }
+
+    #[test]
+    fn with_detail_attaches_developer_only_diagnostic_text() {
+        let err = AppError::engine_crashed("/tmp/onboard.log").with_detail("spawn failed: os error 2");
+        assert_eq!(err.detail.as_deref(), Some("spawn failed: os error 2"));
     }
 }

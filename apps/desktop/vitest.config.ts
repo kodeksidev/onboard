@@ -39,6 +39,13 @@ export default defineConfig({
      * than asserting a number the shared pool cannot honestly guarantee; run
      * this file with `bun run test:perf` for the authoritative measurement.
      */
-    exclude: [...configDefaults.exclude, '**/*.perf.test.tsx'],
+    /**
+     * `e2e/**` is excluded because those are WebdriverIO specs (A19), driven
+     * by `bun run e2e` through `wdio.conf.ts`. They use the WDIO runner's
+     * Mocha-style globals, so Vitest collecting them fails with
+     * `describe is not defined` — the files are correct, the collector was
+     * simply the wrong one.
+     */
+    exclude: [...configDefaults.exclude, '**/*.perf.test.tsx', 'e2e/**'],
   },
 });

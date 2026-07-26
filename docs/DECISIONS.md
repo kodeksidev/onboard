@@ -983,3 +983,128 @@ decided; it only records choices the spec left open.
   `scripts/verify-no-network.ts`, gated on `process.platform === 'linux'`
   so it runs for real in CI and prints a clear `SKIPPED` line (not a false
   pass) on this Windows dev machine, where `unshare` doesn't exist.
+- **Phase 11 — real Tauri IPC wiring found (and fixed) a genuine
+  `AppError.message`/`detail` convention mismatch between `rust-tauri` and
+  `react-ui`.** Section 12 says "`AppError.message` is always drawn from the
+  copy table in Section 10", and Section 10's rows each show two strings: a
+  short static title and a longer, often-parameterized description.
+  `react-ui`'s `resolveErrorCopy` (`src/copy/messages.ts`) resolves the
+  title from `code` alone and treats `error.message` as the description —
+  the correct reading, since the title never needs a runtime value and the
+  description usually does. `rust-tauri`'s Phase 6 `error.rs` had this
+  backwards (`message` = static title via `AppErrorCode::message()`,
+  `detail` = the long description) — invisible to Phase 6's own unit tests
+  (which only checked internal consistency) and to `react-ui`'s Phase 7-10
+  tests (which only ever supplied mock-IPC `AppError`s built already in
+  their own, correct convention). Real E2E (`apps/desktop/e2e/errors.spec.ts`)
+  is what caught it: `p*=could not find` never matched anything, because
+  the description shown was actually the short title. Fixed by rewriting
+  `error.rs` so every constructor puts the long, parameterized Section 10
+  description directly in `message` and leaves `detail` for genuine extra
+  diagnostics (an OS/provider error string) this crate doesn't currently
+  have any of. **`packages/engine/src/rpc/error-copy.ts` still has the
+  identical bug** (`message: 'That folder no longer exists'`,
+  `detail: 'Onboard could not find ...'`) — its own doc comment even
+  predates this fix, describing the old (wrong) convention as intentional.
+  Flagged to the coordinator for `ts-engine` to apply the same swap;
+  `rust-tauri`'s `map_remote_error` already passes an engine-supplied
+  `error.data` `AppError` through unchanged, so this one file is the last
+  place the wrong convention survives.
+- **Phase 11 — `repoPath` sent to `engine.analyze` must not carry a
+  `\\?\` extended-length prefix.** `std::fs::canonicalize` always returns a
+  `\\?\`-prefixed path on Windows (needed for Rust's own filesystem calls
+  past the 260-char limit, Section 10) — `analyze_repo_core` was passing
+  that canonicalized path straight through to the sidecar. The engine's own
+  existence check on the received path failed on that prefix (its own
+  `E_PATH_NOT_FOUND`, discovered when a real fixture directory that
+  genuinely existed was reported as not found), even though the identical
+  string, unprefixed, resolves fine. Fixed by stripping the prefix
+  (`util::paths::strip_extended_prefix`) before building the RPC params;
+  Rust's own confinement/canonicalization checks still use the prefixed
+  form internally where that protection actually matters.
+- **Phase 11 — sidecar/grammars directory resolution needed a dev-mode
+  fallback `resource_dir()` doesn't cover.** Tauri's bundler only copies
+  `externalBin` entries next to the executable when actually bundling
+  (`tauri build`); a plain `cargo build` (dev, this phase's E2E/bench) never
+  performs that copy, so `resource_dir()/binaries` doesn't exist yet and
+  `analyze_repo` failed immediately (spawn of a nonexistent path). Declared
+  `resources` (the grammar WASMs) ARE copied next to the dev executable by
+  `tauri-build` itself, so that half already worked. Fixed
+  `resolve_binaries_dir` (`lib.rs`) to fall back to
+  `env!("CARGO_MANIFEST_DIR")/binaries` — the exact location the
+  coordinator stages real sidecars into — when the packaged path doesn't
+  exist; `resolve_grammars_dir` mirrors the same pattern for symmetry and as
+  a guard against ever building without `tauri-build` having run.
+- **Phase 11 — `tauri-driver` needs an explicit `--native-port` distinct
+  from its own `--port`.** Without one, `tauri-driver --port 4444
+  --native-driver msedgedriver.exe` intermittently fails to bind
+  (`Only one usage of each socket address...`), reproducible by running
+  `tauri-driver` standalone. `wdio.conf.ts` now passes both
+  `--port 4444 --native-port 9515` explicitly.
+- **Phase 11 — `wdio run`'s config-level `maxInstances: 1` was not
+  sufficient on its own to serialize spec-file execution** (observed:
+  "Execution of 4 workers started" and real port collisions across the 4
+  spec files' independently spawned `tauri-driver` processes, all on the
+  same fixed ports). `apps/desktop/package.json`'s `e2e` script also passes
+  `--maxInstances 1` on the CLI, which reliably serializes them; both are
+  kept (the config value documents intent, the CLI flag is what actually
+  works in this WDIO version).
+- **Phase 11 — the native OS folder-picker dialog is unreachable from
+  WebDriver** (a well-known limitation shared by every Electron/Tauri E2E
+  setup — WebDriver drives the webview's DOM, not native OS chrome).
+  `repoStore.ts` gained one small, additive, backward-compatible action,
+  `analyzePath(path)` (extracted from the existing private `runAnalysis`
+  helper `pickFolder` already used internally) so E2E can drive a real
+  `analyze_repo` → real sidecar → real `AnalysisEnvelope` → rendered-UI
+  round trip against a known fixture path without a dialog. `main.tsx`
+  exposes it as `window.__onboardE2E` ONLY in a dedicated `vite build --mode
+  e2e` build (`apps/desktop/package.json`'s `build:e2e` script) — never in
+  `dev` or the real `vite build` Phase 14 ships.
+- **Phase 11 — `generate-synthetic-repo.ts`'s "seed 0xONBOARD" is a hashed
+  string, not a hex literal.** `O`/`N`/`B`/`D` aren't valid hex digits, so
+  `0xONBOARD` cannot be parsed as a JS numeric literal. Read literally as
+  "the seed named `0xONBOARD`" and hashed (FNV-1a, 32-bit) into the numeric
+  seed the generator's PRNG needs — deterministic either way, and it uses
+  the spec's literal string rather than substituting an arbitrary number in
+  its place.
+- **Phase 11 — root `package.json` carries a pre-existing UTF-8 BOM that
+  breaks both `vite build` and `vitest run`, discovered while wiring E2E.**
+  (Confirmed pre-existing: visible in this agent's very first read of the
+  file, before any Phase 11 edit.) Node's strict `JSON.parse` — used by
+  Vite's PostCSS auto-config search and, separately, by Vitest's
+  jsdom-environment resolution, both of which walk up to the workspace root
+  `package.json` — rejects the leading `\uFEFF` byte outright
+  (`Unexpected token '\ufeff'`). Root `package.json` is out of
+  `apps/desktop/**` scope, so **not fixed here**; worked around for the
+  half this phase actually needs (`vite build`) by supplying an explicit
+  empty `postcss: { plugins: [] }` in `apps/desktop/vite.config.ts`, which
+  skips Vite's filesystem search entirely. No equivalent workaround was
+  found for `vitest run` (its jsdom-environment resolution has no
+  comparable escape hatch from a project-level config file) — `bun run
+  test` under `apps/desktop` still exits 1 despite all 232 assertions
+  passing, and `bun run verify` (which chains `bun run test`) will fail in
+  CI until the BOM itself is removed. **Flagged to the coordinator as a
+  blocking, pre-existing repo-hygiene bug** — the fix is a one-byte strip
+  with zero semantic effect on any spec-compliant JSON parser, but touching
+  root `package.json` needs explicit authorization.
+- **Phase 11 — the staged real sidecar binary fails to load its bundled
+  tree-sitter core WASM runtime at runtime, independent of anything in
+  `apps/desktop`.** Every `engine.analyze` call against the real
+  `onboard-engine-x86_64-pc-windows-msvc.exe` (identical SHA-256 to
+  `packages/engine/dist`'s own copy — confirmed, so this is not a
+  corrupted-copy issue) prints `failed to asynchronously prepare wasm:
+  Error: ENOENT: ... open 'B:\~BUN\root\tree-sitter.wasm'` to stderr — Bun's
+  own compiled-binary embedded-asset namespace, not a real filesystem path
+  (copying a real `tree-sitter.wasm` next to the `.exe` does not help,
+  confirmed). The engine degrades rather than crashing (every file gets a
+  `PARSE_FAILED` diagnostic, 0 symbols/edges extracted anywhere) for small
+  repos, but at 10,000 files the same failure mode instead makes
+  `engine.analyze` hang past a 90s bound (observed: no response after
+  180s against a 60s budget) rather than degrade quickly. This is
+  `packages/engine`'s `build:sidecar` / `web-tree-sitter` packaging
+  territory (the missing asset is the tree-sitter *runtime* WASM, distinct
+  from and in addition to the four grammar WASMs Section 14 already lists
+  as bundle resources) — out of `apps/desktop` scope to fix. `bun run
+  bench`'s output prints this finding prominently rather than silently
+  reporting numbers measured against a pipeline that never actually
+  parses anything.
