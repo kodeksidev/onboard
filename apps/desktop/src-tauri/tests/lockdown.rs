@@ -82,6 +82,29 @@ fn shell_execute_is_scoped_to_the_onboard_engine_binary_only() {
     let allow = shell_permission["allow"].as_array().unwrap();
     assert_eq!(allow.len(), 1, "exactly one scoped binary name is allowed");
     assert_eq!(allow[0]["name"], "onboard-engine");
+
+    // `args: true` would let the webview pass ARBITRARY arguments to the
+    // sidecar. The shell never needs that: lib.rs spawns the engine with
+    // exactly ["--grammars-dir", <path>] through std::process::Command, so the
+    // capability must not grant more than the app itself uses. Flagged by the
+    // privacy audit as over-broad and tightened here.
+    let args = &allow[0]["args"];
+    assert!(
+        !args.is_boolean(),
+        "shell scope must not use `args: true`/`false` — enumerate the allowed arguments instead"
+    );
+    let args = args
+        .as_array()
+        .expect("shell scope args must be an explicit allow-list");
+    assert_eq!(args.len(), 2, "the engine takes exactly one flag and one value");
+    assert_eq!(
+        args[0], "--grammars-dir",
+        "the only literal argument the shell may pass"
+    );
+    assert!(
+        args[1].get("validator").and_then(serde_json::Value::as_str).is_some(),
+        "the grammars-dir VALUE must be constrained by a validator, not free-form"
+    );
 }
 
 #[test]

@@ -21,7 +21,7 @@
           "name": "onboard-engine",
           "cmd": "onboard-engine",
           "sidecar": true,
-          "args": true
+          "args": ["--grammars-dir", { "validator": "[^\\r\\n\\u0000]+" }]
         }
       ]
     }
