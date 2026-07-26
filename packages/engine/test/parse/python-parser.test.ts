@@ -69,40 +69,40 @@ describe('createPythonParser — route detection via decorator', () => {
 describe('createPythonParser — raw imports', () => {
   test('extracts a plain "import os"', () => {
     const parsed = pythonParser.parse('import os\n');
-    expect(parsed.imports).toEqual([{ specifier: 'os', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'os', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts an aliased import by its real module name', () => {
     const parsed = pythonParser.parse('import os.path as osp\n');
-    expect(parsed.imports).toEqual([{ specifier: 'os.path', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'os.path', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts "from typing import Optional" as a combined specifier', () => {
     const parsed = pythonParser.parse('from typing import Optional\n');
-    expect(parsed.imports).toEqual([{ specifier: 'typing.Optional', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'typing.Optional', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts a relative "from . import sibling"', () => {
     const parsed = pythonParser.parse('from . import sibling\n');
-    expect(parsed.imports).toEqual([{ specifier: '.sibling', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: '.sibling', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts a two-dot relative "from ..models import User"', () => {
     const parsed = pythonParser.parse('from ..models import User\n');
-    expect(parsed.imports).toEqual([{ specifier: '..models.User', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: '..models.User', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 
   test('extracts multiple names from one "from x import a, b"', () => {
     const parsed = pythonParser.parse('from x import a, b\n');
     expect(parsed.imports).toEqual([
-      { specifier: 'x.a', line: 1, kind: 'static', isTypeOnly: false },
-      { specifier: 'x.b', line: 1, kind: 'static', isTypeOnly: false },
+      { specifier: 'x.a', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true },
+      { specifier: 'x.b', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true },
     ]);
   });
 
   test('extracts a wildcard import as just the module', () => {
     const parsed = pythonParser.parse('from z import *\n');
-    expect(parsed.imports).toEqual([{ specifier: 'z', line: 1, kind: 'static', isTypeOnly: false }]);
+    expect(parsed.imports).toEqual([{ specifier: 'z', line: 1, kind: 'static', isTypeOnly: false, isLiteral: true }]);
   });
 });
 

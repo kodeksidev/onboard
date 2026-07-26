@@ -22,6 +22,16 @@ export interface RawImport {
   readonly line: number; // 1-based
   readonly kind: RawImportKind;
   readonly isTypeOnly: boolean;
+  /**
+   * `false` only for a `kind: 'dynamic'` import whose argument was not a
+   * string literal (e.g. `import(pathVar)`) — Phase 4 (Section 8.2 rule 9)
+   * must resolve such an import as `dynamic-expression` rather than
+   * attempting to resolve `specifier` (which is the argument's raw source
+   * text, not a path) as if it were one. Always `true` for every other kind,
+   * since their specifiers are only ever extracted from actual string
+   * literals in the grammar (Section 9 Phase 3).
+   */
+  readonly isLiteral: boolean;
 }
 
 /** One symbol found in a file, before it is written to the cache's `symbol` table. */

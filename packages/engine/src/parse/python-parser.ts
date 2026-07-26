@@ -142,11 +142,11 @@ function plainImportSpecifiers(node: Node, line: number): RawImport[] {
   for (let i = 0; i < node.childCount; i += 1) {
     const child = node.child(i);
     if (child?.type === 'dotted_name') {
-      imports.push({ specifier: child.text, line, kind: 'static', isTypeOnly: false });
+      imports.push({ specifier: child.text, line, kind: 'static', isTypeOnly: false, isLiteral: true });
     } else if (child?.type === 'aliased_import') {
       const moduleNode = child.child(0);
       if (moduleNode !== null) {
-        imports.push({ specifier: moduleNode.text, line, kind: 'static', isTypeOnly: false });
+        imports.push({ specifier: moduleNode.text, line, kind: 'static', isTypeOnly: false, isLiteral: true });
       }
     }
   }
@@ -198,11 +198,11 @@ function fromImportSpecifiers(node: Node, line: number): RawImport[] {
   const imports: RawImport[] = [];
   for (const nameNode of fromImportNames(node)) {
     if (nameNode.type === 'wildcard_import') {
-      imports.push({ specifier: basePath, line, kind: 'static', isTypeOnly: false });
+      imports.push({ specifier: basePath, line, kind: 'static', isTypeOnly: false, isLiteral: true });
       continue;
     }
     const importedText = nameNode.type === 'aliased_import' ? (nameNode.child(0)?.text ?? '') : nameNode.text;
-    imports.push({ specifier: `${basePath}${separator}${importedText}`, line, kind: 'static' as RawImportKind, isTypeOnly: false });
+    imports.push({ specifier: `${basePath}${separator}${importedText}`, line, kind: 'static' as RawImportKind, isTypeOnly: false, isLiteral: true });
   }
   return imports;
 }

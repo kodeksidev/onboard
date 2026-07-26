@@ -1,7 +1,8 @@
 /**
- * @onboard/engine — constants (Sections 8.1, 8.6, 6.1).
+ * @onboard/engine — constants (Sections 8.1, 8.3, 8.4, 8.5, 8.6, 6.1).
  *
- * Every literal referenced by the deterministic walk (8.1), the file
+ * Every literal referenced by the deterministic walk (8.1), PageRank (8.3),
+ * importance ranking (8.4), the roadmap derivation (8.5), the file
  * classification rules (8.6), and the per-repo SQLite cache (6.1) lives
  * here as an `UPPER_SNAKE_CASE` export. No later module may inline one of
  * these values — import it from here instead.
@@ -231,6 +232,58 @@ export const ASSET_EXTENSIONS: readonly string[] = [
 /** Section 8.6 — module derivation thresholds. */
 export const MODULE_MIN_FILES = 3;
 export const MAX_MODULES = 40;
+
+// ---------------------------------------------------------------------------
+// Section 8.3 — PageRank
+// ---------------------------------------------------------------------------
+
+export const PAGERANK_DAMPING = 0.85;
+export const PAGERANK_MAX_ITERATIONS = 100;
+export const PAGERANK_EPSILON = 1e-6;
+export const PAGERANK_PRECISION = 6;
+
+// ---------------------------------------------------------------------------
+// Section 8.4 — importance ranking
+// ---------------------------------------------------------------------------
+
+export const W_PAGERANK = 0.55;
+export const W_IN_DEGREE = 0.3;
+export const W_ROLE = 0.15;
+
+/** `roleBoost` classification buckets, checked top to bottom (first match wins). */
+export const ROLE_BOOST_HIGH = 0.8;
+export const ROLE_BOOST_HIGH_CLASSIFICATIONS: readonly string[] = ['route', 'controller', 'service', 'store'];
+export const ROLE_BOOST_MEDIUM = 0.6;
+export const ROLE_BOOST_MEDIUM_CLASSIFICATIONS: readonly string[] = ['model', 'component', 'hook'];
+export const ROLE_BOOST_LOW = 0.3;
+export const ROLE_BOOST_LOW_CLASSIFICATIONS: readonly string[] = ['util', 'config'];
+export const ROLE_BOOST_ENTRYPOINT = 1.0;
+
+export const TOP_IMPORTANT_FILES = 20;
+
+// ---------------------------------------------------------------------------
+// Section 8.5 — "start here" roadmap derivation
+// ---------------------------------------------------------------------------
+
+export const MAX_ROADMAP_SEEDS = 5;
+export const MAX_ROADMAP_DEPTH = 12;
+export const MAX_UNREACHED_STEPS = 10;
+export const ROADMAP_TARGET_LENGTH = 12;
+export const ROADMAP_MAX_LENGTH = 25;
+export const ROADMAP_DEPENDS_ON_CAP = 8;
+/** Section 8.5 step 5's leaf-utility segment set (a literal list, distinct from `UTIL_SEGMENTS`). */
+export const ROADMAP_LEAF_UTILITY_SEGMENTS: readonly string[] = [
+  'utils',
+  'util',
+  'helpers',
+  'helper',
+  'lib',
+  'libs',
+  'constants',
+  'types',
+  'config',
+];
+export const ROADMAP_LEAF_UTILITY_CLASSIFICATIONS: readonly string[] = ['util', 'config'];
 
 // ---------------------------------------------------------------------------
 // Section 6.1 — per-repo SQLite cache
