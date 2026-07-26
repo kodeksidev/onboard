@@ -5,9 +5,9 @@ import { build } from 'vite';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
-import { buildGraphElements } from '../../src/components/DependencyGraph/graph-model';
+import { buildLazyGraphElements } from '../../src/components/DependencyGraph/graph-model';
 import { buildLayoutOptions } from '../../src/components/DependencyGraph/useCytoscape';
-import { autoCollapseIfNeeded, createNoopExpandCollapseApi } from '../../src/components/DependencyGraph/collapse';
+import { computeAutoCollapsedDirectoryPaths } from '../../src/components/DependencyGraph/collapse';
 import { generateSyntheticResult } from './generate-synthetic-graph';
 import type { GraphBenchResult } from './browser-harness/harness';
 
@@ -45,20 +45,18 @@ import type { GraphBenchResult } from './browser-harness/harness';
  *     measurement; this script is Phase 8's best honest approximation.
  *
  * **What the real numbers say (see docs/DECISIONS.md for the full story):**
- * `useCytoscape.ts` now collapses eligible directories BEFORE running fcose
- * (previously it laid out the whole graph, then collapsed), so this
- * synthetic graph's 1,000/5,000 total files both settle to only 13 VISIBLE
- * nodes for layout — and layout itself is no longer the bottleneck. But
- * constructing the underlying Cytoscape model (creating every node/edge
- * object and applying styles, even ones instantly hidden by collapse) still
- * scales with the TOTAL element count, not the visible one: first paint
- * passes comfortably at 1,000 nodes but fails at 5,000, and pan p95 fails at
- * both node counts under these (SwiftShader) conditions. That is a real,
- * distinct performance ceiling — construction cost, not layout cost — left
- * as an open item for a follow-up phase (candidate fix: only materialize a
- * collapsed directory's descendants in the Cytoscape model when it is
- * actually expanded, instead of creating and immediately hiding all of
- * them).
+ * `useCytoscape.ts` decides the collapsed-directory set BEFORE building any
+ * Cytoscape element (`collapse.ts`'s `computeAutoCollapsedDirectoryPaths`)
+ * and then materializes ONLY the elements that will actually be visible
+ * (`graph-model.ts`'s `buildLazyGraphElements`) — a directory's descendants
+ * are added to the live core on demand, when that directory is expanded
+ * (`collapse.ts`'s `expandLazyDirectory`), not up front. Construction cost
+ * now scales with what is visible (13 nodes for both the 1,000- and
+ * 5,000-file synthetic graphs below, since neither graph's directory count
+ * changes with file count), not with `result.files.length`, closing the
+ * gap this comment used to describe: first paint used to pass at 1,000
+ * nodes but fail at 5,000 purely from building, then instantly hiding,
+ * thousands of extra file nodes and edges.
  */
 
 const GRAPH_FIRST_PAINT_BUDGET_MS = 1500;
@@ -86,16 +84,11 @@ function registerHeadlessExtensionsOnce(): void {
 function runHeadlessConstructAndLayout(nodeCount: number): Promise<{ visibleNodeCount: number; elapsedMs: number }> {
   registerHeadlessExtensionsOnce();
   const result = generateSyntheticResult(nodeCount);
-  const elements = buildGraphElements(result);
+  const totalElementCount = result.files.length + result.directories.length;
+  const collapsedDirs = computeAutoCollapsedDirectoryPaths(result.directories, totalElementCount);
+  const elements = buildLazyGraphElements(result, collapsedDirs);
   const start = performance.now();
   const cy = cytoscape({ headless: true, styleEnabled: true, elements: [...elements.nodes, ...elements.edges] });
-  // Bun has no `document` at all, so — exactly like production's own
-  // canvas-less fallback (`useCytoscape.ts`) — the real expand-collapse
-  // extension (whose cue-layer `init()` unconditionally touches
-  // `document`) cannot run here; use the same no-op stand-in production
-  // uses in that situation.
-  const api = createNoopExpandCollapseApi();
-  autoCollapseIfNeeded(cy, api, elements.nodes.length);
   const visibleNodeCount = cy.nodes(':visible').length;
   return new Promise((resolve) => {
     cy.one('layoutstop', () => {

@@ -5,12 +5,15 @@ import {
   assignModuleColors,
   buildAdjacency,
   buildGraphElements,
+  buildLazyGraphElements,
   computeNodeSize,
   directoryNodeId,
   fileNodeId,
   orderPathsByImportance,
   pathFromNodeId,
+  resolveVisibleNodeId,
 } from './graph-model';
+import { buildLargeSyntheticResult } from './graph-lazy-fixtures';
 
 const SAMPLE = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 
@@ -115,5 +118,83 @@ describe('buildGraphElements', () => {
     const file = elements.nodes.find((node) => node.data.id === fileNodeId('src/index.ts'));
     expect(dir?.classes).toContain('directory-node');
     expect(file?.classes).toContain('file-node');
+  });
+});
+
+describe('buildLazyGraphElements', () => {
+  test('with an empty collapsed set, produces the same nodes and edges as buildGraphElements (never a behavior change for a small repo)', () => {
+    const full = buildGraphElements(SAMPLE);
+    const lazy = buildLazyGraphElements(SAMPLE, new Set());
+
+    expect(lazy.nodes.map((node) => node.data.id).sort()).toEqual(full.nodes.map((node) => node.data.id).sort());
+    expect(lazy.edges.map((edge) => edge.data.id).sort()).toEqual(full.edges.map((edge) => edge.data.id).sort());
+  });
+
+  test('a file inside a collapsed directory is not materialized as a node', () => {
+    const lazy = buildLazyGraphElements(SAMPLE, new Set(['src/config']));
+
+    expect(lazy.nodes.find((node) => node.data.id === fileNodeId('src/config/env.ts'))).toBeUndefined();
+  });
+
+  test('the collapsed directory itself is still materialized, labeled with its hidden descendant count', () => {
+    const lazy = buildLazyGraphElements(SAMPLE, new Set(['src/config']));
+
+    const dirNode = lazy.nodes.find((node) => node.data.id === directoryNodeId('src/config'));
+    expect(dirNode).toBeDefined();
+    expect(dirNode?.classes).toContain('lazy-collapsed');
+    expect(dirNode?.data.label).toContain('+');
+  });
+
+  test('at a large scale, node/edge count scales with the collapsed set, not with the total file count', () => {
+    const large = buildLargeSyntheticResult(30, 21); // 630 files, 61 directories
+    const totalElementCount = large.files.length + large.directories.length;
+    expect(totalElementCount).toBeGreaterThan(600);
+
+    const collapsedDirs = new Set(large.directories.filter((directory) => directory.path !== 'src').map((directory) => directory.path));
+    const lazy = buildLazyGraphElements(large, collapsedDirs);
+
+    // Only the always-materialized directory nodes remain — every file is hidden.
+    expect(lazy.nodes).toHaveLength(large.directories.length);
+    expect(lazy.nodes.some((node) => (node.classes ?? '').includes('file-node'))).toBe(false);
+  });
+
+  test('multiple edges that redirect to the same directory pair are deduplicated into one directory-level edge', () => {
+    const large = buildLargeSyntheticResult(2, 2);
+    const result = {
+      ...large,
+      edges: [
+        { fromPath: 'src/mod0/index.ts', toPath: 'src/mod1/index.ts', specifier: './x', line: 1, kind: 'static' as const, isTypeOnly: false },
+        { fromPath: 'src/mod0/nested/file1.ts', toPath: 'src/mod1/index.ts', specifier: './x', line: 1, kind: 'static' as const, isTypeOnly: false },
+        { fromPath: 'src/mod0/index.ts', toPath: 'src/mod1/nested/file1.ts', specifier: './x', line: 1, kind: 'static' as const, isTypeOnly: false },
+      ],
+    };
+    const collapsedDirs = new Set(['src/mod0', 'src/mod1']);
+
+    const lazy = buildLazyGraphElements(result, collapsedDirs);
+
+    const dir0ToDir1 = lazy.edges.filter(
+      (edge) => edge.data.source === directoryNodeId('src/mod0') && edge.data.target === directoryNodeId('src/mod1'),
+    );
+    expect(dir0ToDir1).toHaveLength(1); // three underlying edges, one aggregate edge
+  });
+
+  test('an edge whose endpoints both fold into the same collapsed directory is not rendered at all (internal to that directory)', () => {
+    const large = buildLargeSyntheticResult(1, 5);
+    const collapsedDirs = new Set(['src/mod0', 'src/mod0/nested']);
+
+    const lazy = buildLazyGraphElements(large, collapsedDirs);
+
+    expect(lazy.edges).toHaveLength(0); // every file in this fixture folds into 'src/mod0' — no edge survives
+  });
+});
+
+describe('resolveVisibleNodeId', () => {
+  test('resolves to the real file id when nothing is collapsed', () => {
+    expect(resolveVisibleNodeId('src/config/env.ts', new Set())).toBe(fileNodeId('src/config/env.ts'));
+  });
+
+  test('resolves to the shallowest collapsed ancestor directory, even when a deeper ancestor is also collapsed', () => {
+    const collapsedDirs = new Set(['src/mod0', 'src/mod0/nested']);
+    expect(resolveVisibleNodeId('src/mod0/nested/file.ts', collapsedDirs)).toBe(directoryNodeId('src/mod0'));
   });
 });

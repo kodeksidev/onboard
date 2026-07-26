@@ -3,14 +3,17 @@ import type { RefObject } from 'react';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
+import type { AnalysisResult } from '@onboard/contract';
 import { buildGraphStylesheet } from './graph-style';
-import { fileNodeId } from './graph-model';
+import { buildLazyGraphElements, fileNodeId } from './graph-model';
 import type { GraphElements } from './graph-model';
 import {
   GRAPH_AUTO_COLLAPSE_THRESHOLD,
-  autoCollapseIfNeeded,
+  computeAutoCollapsedDirectoryPaths,
   createNoopExpandCollapseApi,
+  expandLazyDirectory,
   getExpandCollapseApi,
+  reconcileLazyElements,
 } from './collapse';
 import type { ExpandCollapseApi } from './collapse';
 
@@ -63,11 +66,14 @@ export function createCore(
 
 /**
  * `visibleNodeCount` is measured AFTER auto-collapse (Section 9 Phase 8's
- * ">600 nodes" rule), not the raw element count: `initializeGraph` collapses
- * deep directories before ever calling this, so fcose only ever lays out
- * what will actually be visible. `quality: 'draft'` is the remaining safety
- * net for repo shapes the depth->=2 rule can't shrink (e.g. thousands of
- * files directly under one shallow directory) — it skips fcose's iterative
+ * ">600 nodes" rule), not the raw element count: `initializeGraph` decides
+ * the collapsed-directory set and builds ONLY the resulting visible
+ * elements (`collapse.ts`'s `computeAutoCollapsedDirectoryPaths` +
+ * `graph-model.ts`'s `buildLazyGraphElements`) before ever calling this, so
+ * fcose only ever lays out what actually exists in the graph, not what
+ * exists-then-gets-hidden. `quality: 'draft'` is the remaining safety net
+ * for repo shapes the depth->=2 rule can't shrink (e.g. thousands of files
+ * directly under one shallow directory) — it skips fcose's iterative
  * incremental phase entirely in favor of one spectral pass, trading layout
  * refinement for bounded cost on graphs this large (see docs/DECISIONS.md
  * for the measurements that motivated this).
@@ -127,33 +133,58 @@ interface InitializedGraph {
   readonly api: ExpandCollapseApi;
 }
 
+/**
+ * Mutable box shared between `initializeGraph` (which sets the initial
+ * collapsed-directory set) and the directory tap handler installed below
+ * (which shrinks it on expand) and `useCytoscape`'s own `expandAll`
+ * (which empties it). A plain object rather than a React ref so this stays
+ * usable from `initializeGraph`, a plain function with no hook access.
+ */
+type CollapsedDirsBox = { current: ReadonlySet<string> };
+
+/**
+ * Feeds Cytoscape only what will be visible, decided BEFORE any element is
+ * built (`collapse.ts`'s `computeAutoCollapsedDirectoryPaths` +
+ * `graph-model.ts`'s `buildLazyGraphElements` — see their doc comments for
+ * the measurements this fixes), then lays out only that visible set. A
+ * lazily-collapsed directory's descendants are materialized on demand, by
+ * tapping it (`expandLazyDirectory`), not up front.
+ */
 function initializeGraph(
-  elements: GraphElements,
+  result: AnalysisResult,
   container: HTMLDivElement | null,
   isReducedMotion: boolean,
+  collapsedDirsBox: CollapsedDirsBox,
   onNodeTap: ((id: string) => void) | undefined,
   onReady: () => void,
 ): InitializedGraph {
   registerCytoscapeExtensions();
   const canRender = supportsCanvasRendering();
+  const totalElementCount = result.files.length + result.directories.length;
+  collapsedDirsBox.current = computeAutoCollapsedDirectoryPaths(result.directories, totalElementCount);
+
+  const elements = buildLazyGraphElements(result, collapsedDirsBox.current);
   const cy = createCore(elements, container, canRender);
   const api = canRender
     ? getExpandCollapseApi(cy, { animate: !isReducedMotion, undoable: false, cueEnabled: true })
     : createNoopExpandCollapseApi();
 
-  // Collapse BEFORE laying out, not after: cytoscape-expand-collapse removes
-  // a collapsed node's descendants from layout participation entirely, so a
-  // repo whose directory structure trips the >600-node auto-collapse rule
-  // never asks fcose to position the hidden nodes at all (see
-  // docs/DECISIONS.md for the measurements this fixed).
-  autoCollapseIfNeeded(cy, api, elements.nodes.length);
   const visibleNodeCount = cy.nodes(':visible').length;
-
   runInitialLayout(cy, isReducedMotion, canRender, visibleNodeCount, onReady);
   attachLabelVisibility(cy);
   if (onNodeTap !== undefined) {
     cy.on('tap', 'node.file-node', (event) => onNodeTap(event.target.id()));
   }
+  // Tap-to-expand for a lazily-collapsed directory (Section 9 Phase 8
+  // follow-up): `cytoscape-expand-collapse`'s own expand path assumes the
+  // node's children already exist in the graph, which is false here by
+  // design, so this bypasses the extension for exactly this interaction.
+  cy.on('tap', 'node.directory-node.lazy-collapsed', (event) => {
+    const path = event.target.data('path') as string;
+    collapsedDirsBox.current = expandLazyDirectory(cy, result, path, collapsedDirsBox.current);
+    const nextVisibleCount = cy.nodes(':visible').length;
+    cy.layout(buildLayoutOptions(isReducedMotion, canRender, nextVisibleCount)).run();
+  });
   return { cy, api };
 }
 
@@ -250,7 +281,7 @@ export function applySearchFilter(cy: cytoscape.Core | null, query: string): voi
 
 export interface UseCytoscapeOptions {
   readonly containerRef: RefObject<HTMLDivElement | null>;
-  readonly elements: GraphElements;
+  readonly result: AnalysisResult;
   readonly isReducedMotion: boolean;
   readonly onNodeTap?: (id: string) => void;
 }
@@ -275,16 +306,44 @@ export interface UseCytoscapeApi {
   getCore: () => cytoscape.Core | null;
 }
 
+/**
+ * Materializes every remaining lazily-collapsed directory in one pass
+ * (Section 9 Phase 8's toolbar "Expand all" — a dead control otherwise,
+ * since the real `cytoscape-expand-collapse` extension has no children to
+ * expand for a directory this project never materialized) and re-lays-out
+ * the now-fully-visible graph. No-op when nothing is left to expand.
+ */
+function materializeAllLazyDirectories(
+  cy: cytoscape.Core,
+  result: AnalysisResult,
+  isReducedMotion: boolean,
+  collapsedDirsRef: CollapsedDirsBox,
+): void {
+  if (collapsedDirsRef.current.size === 0) {
+    return;
+  }
+  collapsedDirsRef.current = new Set();
+  reconcileLazyElements(cy, buildLazyGraphElements(result, collapsedDirsRef.current));
+  const visibleNodeCount = cy.nodes(':visible').length;
+  cy.layout(buildLayoutOptions(isReducedMotion, supportsCanvasRendering(), visibleNodeCount)).run();
+}
+
 /** Owns the one `cytoscape.Core` instance for the mounted `DependencyGraph` (Section 5). */
 export function useCytoscape(options: UseCytoscapeOptions): UseCytoscapeApi {
-  const { containerRef, elements, isReducedMotion, onNodeTap } = options;
+  const { containerRef, result, isReducedMotion, onNodeTap } = options;
   const cyRef = useRef<cytoscape.Core | null>(null);
   const apiRef = useRef<ExpandCollapseApi | null>(null);
+  const collapsedDirsRef = useRef<ReadonlySet<string>>(new Set());
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const { cy, api } = initializeGraph(elements, containerRef.current, isReducedMotion, onNodeTap, () =>
-      setIsReady(true),
+    const { cy, api } = initializeGraph(
+      result,
+      containerRef.current,
+      isReducedMotion,
+      collapsedDirsRef,
+      onNodeTap,
+      () => setIsReady(true),
     );
     cyRef.current = cy;
     apiRef.current = api;
@@ -292,14 +351,15 @@ export function useCytoscape(options: UseCytoscapeOptions): UseCytoscapeApi {
       cy.destroy();
       cyRef.current = null;
       apiRef.current = null;
+      collapsedDirsRef.current = new Set();
       setIsReady(false);
     };
     // Re-initializing on every `isReducedMotion`/`onNodeTap` change would tear
     // down and rebuild the whole graph (losing layout/expand state) for an
-    // unrelated preference toggle; only new `elements` (a new analysis) does.
+    // unrelated preference toggle; only new `result` (a new analysis) does.
     // This project's eslint config has no react-hooks plugin, so no
     // exhaustive-deps suppression comment is needed here.
-  }, [elements]);
+  }, [result]);
 
   return {
     isReady,
@@ -308,7 +368,12 @@ export function useCytoscape(options: UseCytoscapeOptions): UseCytoscapeApi {
     clearHighlight: useCallback(() => clearHighlight(cyRef.current), []),
     applySearchFilter: useCallback((query: string) => applySearchFilter(cyRef.current, query), []),
     applyRouteOverlay: useCallback((paths: readonly string[]) => applyRouteOverlay(cyRef.current, paths), []),
-    expandAll: useCallback(() => apiRef.current?.expandAll(), []),
+    expandAll: useCallback(() => {
+      apiRef.current?.expandAll();
+      if (cyRef.current !== null) {
+        materializeAllLazyDirectories(cyRef.current, result, isReducedMotion, collapsedDirsRef);
+      }
+    }, [result, isReducedMotion]),
     collapseAll: useCallback(() => apiRef.current?.collapseAll(), []),
     getCore: useCallback(() => cyRef.current, []),
   };

@@ -1,18 +1,19 @@
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
-import { buildGraphElements } from '../../../src/components/DependencyGraph/graph-model';
+import { buildLazyGraphElements } from '../../../src/components/DependencyGraph/graph-model';
 import { createCore, buildLayoutOptions } from '../../../src/components/DependencyGraph/useCytoscape';
-import { autoCollapseIfNeeded, getExpandCollapseApi } from '../../../src/components/DependencyGraph/collapse';
+import { computeAutoCollapsedDirectoryPaths } from '../../../src/components/DependencyGraph/collapse';
 import { generateSyntheticResult } from '../generate-synthetic-graph';
 
 /**
  * Runs INSIDE a real (headless) browser, driven over CDP by
  * `run-bench-graph.ts` — this is the genuine-measurement half of Section 9
  * Phase 8's `bench:graph`. It reuses the exact production entry points
- * (`createCore`, `buildLayoutOptions`, `autoCollapseIfNeeded`) rather than a
- * parallel reimplementation, so a real-browser number here is a number
- * about the shipped code path, not a lookalike.
+ * (`createCore`, `buildLayoutOptions`, `computeAutoCollapsedDirectoryPaths`,
+ * `buildLazyGraphElements`) rather than a parallel reimplementation, so a
+ * real-browser number here is a number about the shipped code path, not a
+ * lookalike.
  */
 
 const PAN_FRAME_COUNT = 60;
@@ -51,17 +52,22 @@ function percentile95(sortedAscending: readonly number[]): number {
   return sortedAscending[index] ?? 0;
 }
 
-/** Builds the graph, collapses per the production rule, and runs the production layout. Returns the live core. */
+/**
+ * Builds the graph via lazy materialization (the production path: decide
+ * the collapsed-directory set FIRST, then build only the visible elements —
+ * `collapse.ts` + `graph-model.ts`) and runs the production layout. Returns
+ * the live core.
+ */
 async function buildAndLayout(
   nodeCount: number,
   container: HTMLElement,
 ): Promise<{ cy: cytoscape.Core; visibleNodeCount: number }> {
   const result = generateSyntheticResult(nodeCount);
-  const elements = buildGraphElements(result);
+  const totalElementCount = result.files.length + result.directories.length;
+  const collapsedDirs = computeAutoCollapsedDirectoryPaths(result.directories, totalElementCount);
+  const elements = buildLazyGraphElements(result, collapsedDirs);
 
   const cy = createCore(elements, container as HTMLDivElement, true);
-  const api = getExpandCollapseApi(cy, { animate: false, undoable: false, cueEnabled: false });
-  autoCollapseIfNeeded(cy, api, elements.nodes.length);
   const visibleNodeCount = cy.nodes(':visible').length;
 
   await new Promise<void>((resolve) => {

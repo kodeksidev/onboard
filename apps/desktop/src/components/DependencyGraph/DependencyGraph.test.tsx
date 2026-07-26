@@ -5,6 +5,7 @@ import { AnalysisEnvelope } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { DependencyGraph } from './DependencyGraph';
 import { useGraphStore } from '@/state/graphStore';
+import { buildLargeSyntheticResult } from './graph-lazy-fixtures';
 
 const SAMPLE = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 
@@ -87,5 +88,28 @@ describe('DependencyGraph', () => {
     await user.keyboard('{Escape}');
 
     expect(useGraphStore.getState().selectedPath).toBeNull();
+  });
+
+  /**
+   * Section 9 Phase 8 follow-up: the node SET keyboard nav traverses is now
+   * dynamic (`keyboard-nav.ts`'s reducer, unaffected — it's pure over the
+   * FULL `AnalysisResult`, never over whatever happens to be materialized
+   * into Cytoscape). This exceeds `GRAPH_AUTO_COLLAPSE_THRESHOLD`, so its
+   * highest-importance file lives inside a lazily-collapsed directory and
+   * is never added to the Cytoscape core at all — proving focus/announce
+   * still works correctly even when the focused node doesn't exist there.
+   */
+  test('keyboard navigation still reaches a file that lazy materialization never added to the Cytoscape core', async () => {
+    const user = userEvent.setup();
+    const large = buildLargeSyntheticResult(30, 21); // 630 files, well past the 600 auto-collapse threshold
+    render(<DependencyGraph result={large} />);
+
+    await user.click(getCanvasRegion());
+    await user.keyboard('{ArrowDown}');
+
+    await waitFor(() => {
+      expect(useGraphStore.getState().focusedPath).toBe('src/mod0/index.ts'); // importanceRank 1, hidden by auto-collapse
+    });
+    expect(screen.getByText(/src\/mod0\/index\.ts, rank 1 of 630/)).toBeInTheDocument();
   });
 });
