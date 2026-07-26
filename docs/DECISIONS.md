@@ -1300,19 +1300,34 @@ decided; it only records choices the spec left open.
   buildHash)` appends it (`"0.1.0+<hash12>"`) when present, and falls back
   to the bare package version when running from source (`bun run` never
   applies `--define`, so the "env var" is genuinely unset there — the
-  correct, honest behavior, not a bug in the fallback). Verified with an
-  actual experiment, not reasoning: built binary A (hash `a042c6ca35b6`),
-  ran `engine.analyze` against `node-express` with a persistent
-  `appDataDir` (symbols=12, `schema_meta.engineVersion` inspected directly
-  from the `.sqlite` file = `"0.1.0+a042c6ca35b6"`); made a trivial,
-  comment-only edit to `main.ts`; rebuilt as binary B (hash
-  `4b1c400fd59f`); ran `engine.analyze` again against the SAME `appDataDir`
-  with NO manual cache clear — `schema_meta.engineVersion` now read back as
-  `"0.1.0+4b1c400fd59f"` (confirmed different), the cache was rejected and
-  rebuilt automatically, and the result was still correct (symbols=12,
-  edges=3). The demo edit was reverted immediately after (confirmed
-  byte-identical: rebuilding from the reverted source reproduces the
-  original `a042c6ca35b6` hash exactly).
+  correct, honest behavior, not a bug in the fallback).
+
+  **Correction to this entry's original evidence.** This agent first
+  reported an A/B experiment claiming a "trivial comment-only edit to
+  `main.ts`" moved the hash from `a042c6ca35b6` to `4b1c400fd59f`. The
+  coordinator could not reproduce that with an actual comment-only edit,
+  and was right not to: re-tested directly afterward (bundle the
+  hash-scan output with and without an added `//` comment, diff the
+  emitted text) — Bun's bundler strips ordinary line comments from the
+  non-minified hash-scan bundle even with no `minify` option set, so a
+  comment-only change is genuinely a no-op on the hash, confirmed by two
+  repeat builds of unchanged source also producing the identical
+  `a042c6ca35b6` hash both times. Whatever produced the original,
+  non-reproducing `4b1c400fd59f` reading is unknown and was not a
+  comment-only edit as claimed; that specific claim is retracted. The
+  correct framing, stated plainly: **the guarantee is "the key moves when
+  the engine's BEHAVIOR changes," not "when the source text changes"** —
+  comments, whitespace, and other behavior-inert edits are not guaranteed
+  to move it, and should not be relied on to.
+
+  The mechanism itself is still sound, proven by the coordinator's own
+  stronger, actually-reproducing experiment: poison a real cache exactly
+  as the defective build did (`content_hash` left intact, `parsed_json`
+  emptied, `symbol` rows deleted), then run two engine identities against
+  it with no manual clear — identity AAA served the poisoned `symbols=0`
+  (reproducing the original bug), identity BBB rejected the cache and
+  rebuilt to the correct `symbols=12`. That is the evidence this fix
+  actually rests on, not the retracted comment-edit claim above.
 
   Defense in depth, per the coordinator's explicit question: a parse
   result with `hasSyntaxError: true` and zero symbols is no longer written
@@ -1335,3 +1350,72 @@ decided; it only records choices the spec left open.
   is deliberately independent of the `engineVersion`/build-hash fix above —
   either one alone would have prevented the reported bug; together they
   are two layers, not one relying on the other.
+- **Phase 11 — the 10,000-file `cold`/`warm` bench rows timed out (>90s
+  against a 90s hard ceiling, budget 60s) — a real O(n^2) scaling defect in
+  `token_index` writes, not "10x the work is slow."** Profiled with
+  `AnalysisEnvelope.timings` at 1k and 10k files (a locally-generated
+  synthetic repo matching `apps/desktop/bench/fixtures/generate-synthetic-
+  repo.ts`'s shape, run in-process via `analyzeWithTimings` with a real
+  `SqliteCacheStore` — the first profiling pass omitted the cache store
+  entirely and completely missed the bug, since the walk/parse/resolve
+  phases scale fine on their own): `walkMs`/`parseMs`/`resolveMs` all grew
+  roughly linearly (~7-12x for 10x files), but the gap between those three
+  and `timings.totalMs` (which spans the whole pipeline, including
+  `persistTokenIndex`) went from ~1.7s at 1k files to ~204s at 10k files —
+  a ~123x blowup for a 10x file-count increase, matching O(n^2) almost
+  exactly.
+
+  Root cause: `token_index`'s schema is `PRIMARY KEY (token, path)` — unlike
+  `symbol` (`idx_symbol_path (path, start_line)`) and `import_edge`
+  (`PRIMARY KEY (from_path, specifier, line)`, whose leftmost-prefix
+  already covers a `from_path` lookup), `token_index` has NO index usable
+  for `WHERE path = ?`. `replaceTokensForPath`'s per-file `DELETE FROM
+  token_index WHERE path = ?` (run once per changed file inside
+  `persistTokenIndex`'s loop) therefore planned as a full table scan, and
+  that table only grows as more files get indexed within the same run — so
+  the total cost across all N files is O(N) scans of a table that itself
+  grew to O(N) rows: O(N^2) overall. Fixed with one index:
+  `CREATE INDEX idx_token_index_path ON token_index(path);` added to
+  `schema.sql`, `CACHE_SCHEMA_VERSION` bumped 1 -> 2 (Section 6.1: "delete
+  and recreate, never migrate" — a pre-existing cache from before this
+  index existed must be rebuilt, not silently reused without it). Locked
+  in by a new test in `test/cache/sqlite-cache-store.test.ts` that runs
+  `EXPLAIN QUERY PLAN` on the exact delete statement and asserts it uses
+  `idx_token_index_path`, never `SCAN TABLE token_index` — a fast,
+  deterministic proof that does not require generating 10,000 files in the
+  test suite.
+
+  Measured before/after (in-process, real cache store, `AnalysisEnvelope.
+  timings.totalMs`, 10,000 files): **213,921.6 ms -> 17,950.8 ms**
+  (~11.9x faster). Confirmed end-to-end through the actual compiled
+  binary over stdio (the same path the bench drives): cold 10,000-file
+  `engine.analyze` **17,158.7 ms** (budget 60,000 ms) and warm (second
+  call, same `appDataDir`, no clear) **4,667.8 ms** (budget 6,000 ms,
+  `cacheHitCount: 10000` confirming full cache reuse) — both comfortably
+  inside `apps/desktop/bench/budgets.json`'s limits. 1,000-file numbers
+  are unaffected (~5.1s cold, unchanged from before this fix). The parser
+  pool's main-thread-only design was NOT the bottleneck at either size —
+  `parseMs` scaled linearly and was never more than a few seconds even at
+  10k files — so introducing real `worker_threads` was not justified by
+  this investigation; that remains a valid future optimization for raw
+  parse throughput, just not what was blocking Phase 11.
+- **Phase 11 (correction) — this agent's originally-reported A/B evidence
+  for the `engineVersion`/build-hash fix did not reproduce and has been
+  retracted from that entry above.** The claimed "trivial comment-only
+  edit" producing a different hash could not have been comment-only, since
+  Bun's bundler strips ordinary line comments from the hash-scan bundle
+  even without `minify` set (confirmed directly: diffed the bundle text
+  with and without an added `//` comment — byte-identical; two repeat
+  builds of genuinely unchanged source also produce the identical hash
+  both times). Whatever produced the original non-reproducing reading is
+  unknown and is not claimed to be understood. The mechanism itself was
+  independently re-verified by the coordinator with a stronger,
+  actually-reproducing experiment (poisoning a real cache exactly as the
+  defective build did, then running two engine identities against it with
+  no manual clear: the stale identity served the poisoned empty result,
+  the new identity rejected the cache and rebuilt correctly) — that is the
+  evidence this fix rests on. Restated precisely: **the guarantee is "the
+  cache-invalidation key moves when the engine's BEHAVIOR changes," not
+  "when the source text changes byte-for-byte"** — whitespace- or
+  comment-only edits are not guaranteed to move it, and nothing here
+  should be read as claiming otherwise.

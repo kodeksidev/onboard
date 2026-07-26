@@ -49,6 +49,32 @@ function buildNodeStyles(): cytoscape.StylesheetJson {
   ];
 }
 
+/** Section 9 Phase 8 follow-up (lazy materialization): styles for a directory node's collapsed/hidden states. */
+function buildLazyCollapseStyles(): cytoscape.StylesheetJson {
+  return [
+    {
+      // A directory whose descendants have not been materialized into
+      // Cytoscape yet (`collapse.ts`'s lazy-collapse set). Solid border + a
+      // "(+N hidden files)" label (`graph-model.ts`) distinguishes it from
+      // an ordinary, fully-expanded directory node; tapping it expands it
+      // (`useCytoscape.ts`).
+      selector: 'node.directory-node.lazy-collapsed',
+      style: {
+        'border-style': 'solid',
+        'border-width': 2,
+        'background-opacity': 0.75,
+      },
+    },
+    {
+      // A directory nested inside another, still-collapsed directory: real
+      // Cytoscape node, but not shown (`collapse.ts`'s `reconcileLazyElements`
+      // toggles this class rather than removing/re-adding the node).
+      selector: '.hidden-by-collapse',
+      style: { display: 'none' },
+    },
+  ];
+}
+
 function buildEdgeStyles(): cytoscape.StylesheetJson {
   return [
     {
@@ -78,6 +104,14 @@ function buildEdgeStyles(): cytoscape.StylesheetJson {
         opacity: 0.9,
         'z-index': 10,
       },
+    },
+    {
+      // A directory-level stand-in for one or more real import edges whose
+      // endpoint is currently hidden by collapse (`graph-model.ts`'s
+      // `buildLazyGraphElements`) — "edges to a collapsed directory still
+      // render as directory-level edges."
+      selector: 'edge.directory-edge',
+      style: { 'line-style': 'dotted' },
     },
   ];
 }
@@ -113,5 +147,5 @@ function buildInteractionStyles(): cytoscape.StylesheetJson {
 }
 
 export function buildGraphStylesheet(): cytoscape.StylesheetJson {
-  return [...buildNodeStyles(), ...buildEdgeStyles(), ...buildInteractionStyles()];
+  return [...buildNodeStyles(), ...buildLazyCollapseStyles(), ...buildEdgeStyles(), ...buildInteractionStyles()];
 }

@@ -4,7 +4,7 @@ import type cytoscape from 'cytoscape';
 import type { AnalysisResult } from '@onboard/contract';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { registerGraphFocusHandler, useGraphStore } from '@/state/graphStore';
-import { buildAdjacency, buildGraphElements, fileNodeId, orderPathsByImportance, pathFromNodeId } from './graph-model';
+import { buildAdjacency, fileNodeId, orderPathsByImportance, pathFromNodeId } from './graph-model';
 import type { GraphKeyboardModel } from './keyboard-nav';
 import { interpretGraphKey, reduceGraphFocus } from './keyboard-nav';
 import { useCytoscape } from './useCytoscape';
@@ -205,7 +205,6 @@ function useDependencyGraphController(
   const [searchQuery, setSearchQuery] = useState('');
   const [announcement, setAnnouncement] = useState('');
 
-  const elements = useMemo(() => buildGraphElements(result), [result]);
   const keyboardModel = useMemo(() => buildKeyboardModel(result), [result]);
 
   const focusedPath = useGraphStore((state) => state.focusedPath);
@@ -217,7 +216,7 @@ function useDependencyGraphController(
 
   const graph = useCytoscape({
     containerRef,
-    elements,
+    result,
     isReducedMotion,
     onNodeTap: (id) => handleNodeTap({ result, selectPath, graph, announce: setAnnouncement }, id),
   });

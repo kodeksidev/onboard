@@ -119,11 +119,11 @@ function buildDirectoryNodes(result: AnalysisResult): cytoscape.NodeDefinition[]
 }
 
 function buildFileNodes(
-  result: AnalysisResult,
+  files: readonly FileNode[],
   directoryPaths: ReadonlySet<string>,
   moduleColors: ReadonlyMap<string, string>,
 ): cytoscape.NodeDefinition[] {
-  return result.files.map((file) => ({
+  return files.map((file) => ({
     data: {
       id: fileNodeId(file.path),
       label: file.path.slice(file.path.lastIndexOf('/') + 1),
@@ -169,8 +169,162 @@ export function buildGraphElements(result: AnalysisResult): GraphElements {
   return {
     nodes: [
       ...buildDirectoryNodes(result),
-      ...buildFileNodes(result, directoryPaths, moduleColors),
+      ...buildFileNodes(result.files, directoryPaths, moduleColors),
     ],
     edges: buildEdges(result),
   };
 }
+
+// #region lazy materialization (Section 9 Phase 8 follow-up performance fix)
+//
+// `buildGraphElements` above feeds Cytoscape one node per file and one
+// compound node per directory, unconditionally — correct, but its
+// construction cost scales with `result.files.length` even for a directory
+// that auto-collapse (`collapse.ts`) is about to hide immediately. Measured
+// in `bench/graph`: at 5,000 files (all landing under 12 auto-collapsed
+// directories, both node counts settling to the same 13 VISIBLE nodes),
+// first paint cost 5,000/1,000 = 5x more than at 1,000 files, purely from
+// building-then-hiding four thousand extra file nodes and their edges.
+//
+// `buildLazyGraphElements` below is the fix: given a set of directory paths
+// that are (or will be) collapsed, it materializes EVERY directory node
+// (directories are the compound structure and are typically far fewer than
+// files — the synthetic bench graph has exactly 13 regardless of file
+// count) but only the FILE nodes that are not hidden by a collapsed
+// ancestor. An edge whose endpoint is hidden is redirected to (and
+// deduplicated against) the shallowest collapsed ancestor directory, so
+// "edges to a collapsed directory still render as directory-level edges."
+// `collapse.ts`'s `expandLazyDirectory` recomputes and reconciles this same
+// element set against a live `cytoscape.Core` when a lazy directory is
+// expanded — real work happens once, on demand, not up front for the whole
+// repo.
+
+/** The directory path a file or directory lives directly under, or `null` at repo root. */
+function directoryContaining(path: string): string | null {
+  const lastSlash = path.lastIndexOf('/');
+  return lastSlash === -1 ? null : path.slice(0, lastSlash);
+}
+
+/** `dirPath`'s ancestor chain, shallowest first, including `dirPath` itself as the last entry. */
+function directoryAncestorChain(dirPath: string): readonly string[] {
+  const segments = dirPath.split('/');
+  return segments.map((_segment, index) => segments.slice(0, index + 1).join('/'));
+}
+
+/**
+ * The shallowest (topmost) directory in `collapsedDirs` that hides
+ * `containingDirPath` (a file's own directory, or a directory's PARENT when
+ * checking whether that directory itself is hidden) — always the currently
+ * VISIBLE blocker even when a deeper ancestor is also collapsed, since a
+ * directory nested inside another collapsed directory is itself hidden and
+ * so cannot be a rendering target.
+ */
+function shallowestCollapsedAncestor(
+  containingDirPath: string | null,
+  collapsedDirs: ReadonlySet<string>,
+): string | null {
+  if (containingDirPath === null) {
+    return null;
+  }
+  for (const candidate of directoryAncestorChain(containingDirPath)) {
+    if (collapsedDirs.has(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function isDirectoryHiddenByCollapse(directory: DirectoryNode, collapsedDirs: ReadonlySet<string>): boolean {
+  return shallowestCollapsedAncestor(directoryContaining(directory.path), collapsedDirs) !== null;
+}
+
+/** The id of whatever currently-visible node stands in for `path`: itself, if visible, or its shallowest collapsed ancestor directory. */
+export function resolveVisibleNodeId(path: string, collapsedDirs: ReadonlySet<string>): string {
+  const hiddenBy = shallowestCollapsedAncestor(directoryContaining(path), collapsedDirs);
+  return hiddenBy === null ? fileNodeId(path) : directoryNodeId(hiddenBy);
+}
+
+function directoryLabel(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1);
+}
+
+function buildLazyDirectoryNodes(
+  result: AnalysisResult,
+  collapsedDirs: ReadonlySet<string>,
+): cytoscape.NodeDefinition[] {
+  return result.directories.map((directory) => {
+    const isLazyCollapsed = collapsedDirs.has(directory.path);
+    const isHidden = isDirectoryHiddenByCollapse(directory, collapsedDirs);
+    const classes = ['directory-node', isLazyCollapsed ? 'lazy-collapsed' : null, isHidden ? 'hidden-by-collapse' : null]
+      .filter((value): value is string => value !== null)
+      .join(' ');
+    const baseLabel = directoryLabel(directory.path);
+    return {
+      data: {
+        id: directoryNodeId(directory.path),
+        label: isLazyCollapsed ? `${baseLabel} (+${directory.descendantFileCount})` : baseLabel,
+        path: directory.path,
+        ...parentIdField(directoryParentId(directory)),
+      },
+      classes,
+    };
+  });
+}
+
+function buildLazyEdges(result: AnalysisResult, collapsedDirs: ReadonlySet<string>): cytoscape.EdgeDefinition[] {
+  const directEdges: cytoscape.EdgeDefinition[] = [];
+  const aggregateEdges = new Map<string, cytoscape.EdgeDefinition>();
+  result.edges.forEach((edge) => {
+    const sourceId = resolveVisibleNodeId(edge.fromPath, collapsedDirs);
+    const targetId = resolveVisibleNodeId(edge.toPath, collapsedDirs);
+    if (sourceId === targetId) {
+      return; // both endpoints fold into the same visible node: an edge internal to one (collapsed) directory, not shown
+    }
+    const isDirect = sourceId === fileNodeId(edge.fromPath) && targetId === fileNodeId(edge.toPath);
+    if (isDirect) {
+      directEdges.push({
+        data: { id: `${sourceId}->${targetId}#${edge.line}`, source: sourceId, target: targetId, kind: edge.kind },
+        classes: 'import-edge',
+      });
+      return;
+    }
+    const key = `${sourceId}=>${targetId}`;
+    if (!aggregateEdges.has(key)) {
+      aggregateEdges.set(key, {
+        data: { id: `dir-edge:${key}`, source: sourceId, target: targetId },
+        classes: 'import-edge directory-edge',
+      });
+    }
+  });
+  return [...directEdges, ...aggregateEdges.values()];
+}
+
+export interface LazyGraphElements extends GraphElements {
+  /** Directory paths currently collapsed (materialized as a compound node, but with no real descendant elements yet). */
+  readonly lazyDirectoryPaths: ReadonlySet<string>;
+}
+
+/**
+ * Builds only the Cytoscape elements that are actually visible given
+ * `collapsedDirs`. When `collapsedDirs` is empty (the common case for a
+ * repo under the auto-collapse threshold) this produces node-for-node,
+ * edge-for-edge the same output as `buildGraphElements` — lazy
+ * materialization is strictly additive, never a behavior change, for a repo
+ * small enough that nothing is ever hidden.
+ */
+export function buildLazyGraphElements(result: AnalysisResult, collapsedDirs: ReadonlySet<string>): LazyGraphElements {
+  const directoryPaths = new Set(result.directories.map((directory) => directory.path));
+  const moduleColors = assignModuleColors(result.modules.map((moduleCard) => moduleCard.id));
+  const visibleFiles = result.files.filter(
+    (file) => shallowestCollapsedAncestor(directoryContaining(file.path), collapsedDirs) === null,
+  );
+  return {
+    nodes: [
+      ...buildLazyDirectoryNodes(result, collapsedDirs),
+      ...buildFileNodes(visibleFiles, directoryPaths, moduleColors),
+    ],
+    edges: buildLazyEdges(result, collapsedDirs),
+    lazyDirectoryPaths: collapsedDirs,
+  };
+}
+// #endregion
