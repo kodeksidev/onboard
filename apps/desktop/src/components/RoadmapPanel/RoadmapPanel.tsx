@@ -7,7 +7,7 @@ import { useRoadmapRoute } from './useRoadmapRoute';
 
 export interface RoadmapPanelProps {
   readonly steps: AnalysisResult['roadmap']['steps'];
-  readonly onOpenFile?: (path: string) => void;
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 const NOOP_OPEN_FILE = (): void => undefined;

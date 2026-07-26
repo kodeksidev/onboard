@@ -1,8 +1,10 @@
 import { AnalysisEnvelope } from '@onboard/contract';
-import type { AppError, EngineProgress, SearchHit, SearchRequest, SearchResponse } from '@onboard/contract';
+import type { AppError, EngineProgress } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { DEFAULT_SETTINGS } from './settings-schema';
 import type { Settings, SettingsPatch } from './settings-schema';
+import { buildSearchResponse } from './mock-search';
+import { BENCH_LARGE_FILE_LINE_COUNT, BENCH_LARGE_FILE_PATH, buildBenchLargeFileContent } from './mock-bench-file';
 import type {
   AiActionResult,
   AnalysisErrorListener,
@@ -81,31 +83,6 @@ function buildSyntheticFileContent(lineCount: number, path: string): string {
   return lines.join('\n');
 }
 
-function buildSearchResponse(request: SearchRequest): SearchResponse {
-  const term = request.query.trim().toLowerCase();
-  const droppedTerms = term.length > 0 && term.length < 3 ? [term] : [];
-  const hits = SAMPLE_ENVELOPE.result.files
-    .filter((file) => term.length >= 3 && file.path.toLowerCase().includes(term))
-    .slice(0, request.limit)
-    .map(
-      (file): SearchHit => ({
-        path: file.path,
-        score: file.importance,
-        matchKinds: ['path-segment'],
-        symbol: null,
-        lineHits: [],
-        importance: file.importance,
-      }),
-    );
-  return {
-    query: request.query,
-    expandedTerms: [],
-    droppedTerms,
-    hits,
-    totalCandidateCount: hits.length,
-  };
-}
-
 async function analyzeRepo(state: MockIpcState): Promise<AnalysisEnvelope> {
   const total = SAMPLE_ENVELOPE.result.stats.filesScanned;
   for (const event of buildProgressEvents(total)) {
@@ -116,6 +93,15 @@ async function analyzeRepo(state: MockIpcState): Promise<AnalysisEnvelope> {
 }
 
 async function readRepoFile(request: ReadRepoFileRequest): Promise<ReadRepoFileResult> {
+  if (request.path === BENCH_LARGE_FILE_PATH) {
+    return {
+      path: BENCH_LARGE_FILE_PATH,
+      language: 'ts',
+      lineCount: BENCH_LARGE_FILE_LINE_COUNT,
+      isTruncated: false,
+      content: buildBenchLargeFileContent(),
+    };
+  }
   const file = findFile(request.path);
   if (file === null) {
     return rejectWith({
@@ -201,7 +187,7 @@ export function createMockIpc(): OnboardIpc {
   return {
     pickRepoFolder: async (): Promise<PickRepoFolderResult> => ({ path: MOCK_REPO_PATH }),
     analyzeRepo: () => analyzeRepo(state),
-    searchRepo: async (request) => buildSearchResponse(request),
+    searchRepo: async (request) => buildSearchResponse(SAMPLE_ENVELOPE.result, request),
     readRepoFile,
     getSettings: async () => state.settings,
     updateSettings: async (patch) => updateSettings(state, patch),

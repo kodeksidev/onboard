@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 import { useRepoStore } from '@/state/repoStore';
 import { useSettingsStore } from '@/state/settingsStore';
+import { useGraphStore } from '@/state/graphStore';
 import { DEFAULT_SETTINGS } from '@/ipc/settings-schema';
 
 afterEach(() => {
@@ -15,6 +16,7 @@ afterEach(() => {
     error: null,
   });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: false });
+  useGraphStore.setState({ selectedPath: null, focusedPath: null, focusToken: 0, searchFocusToken: 0 });
 });
 
 /**
@@ -50,5 +52,36 @@ describe('App (mounted against mock IPC)', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       '🔒 Static mode · no network · nothing leaves this machine',
     );
+  });
+
+  /**
+   * Section 9 Phase 10's reuse instruction: `onOpenFile` must actually do
+   * something end-to-end, not just be accepted and ignored (every panel
+   * already declared the prop before this phase, but `App.tsx` never wired
+   * a handler — a dead control until now). Also proves the "reuse
+   * `focusPath`" instruction: opening a file from a search hit is expected
+   * to focus that same path in `graphStore`, the one cross-component focus
+   * seam, rather than a second one.
+   */
+  test('clicking a "where is x?" result opens that file, at that line, in the File viewer tab', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 384 });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Choose folder' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'acme-billing-api' })).toBeInTheDocument());
+
+    await user.click(screen.getByRole('tab', { name: 'Where is X?' }));
+    await user.type(screen.getByRole('combobox', { name: 'Where is X?' }), 'authenticate');
+    await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole('button', { name: /open src\/services\/auth\.service\.ts, line 22/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'File viewer', selected: true })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(document.querySelector('.cm-editor')).not.toBeNull();
+    });
+    expect(useGraphStore.getState().focusedPath).toBe('src/services/auth.service.ts');
   });
 });

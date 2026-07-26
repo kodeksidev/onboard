@@ -3,7 +3,7 @@ import type { AnalysisResult } from '@onboard/contract';
 
 export interface EntryPointListProps {
   readonly entryPoints: AnalysisResult['entryPoints'];
-  readonly onOpenFile: (path: string) => void;
+  readonly onOpenFile: (path: string, line?: number) => void;
 }
 
 /** Entry points ranked by likelihood (Section 7.1's `EntryPoint`, already sorted by `rank`). */

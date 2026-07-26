@@ -10,7 +10,7 @@ export interface RoadmapStepCardProps {
   readonly step: RoadmapStep;
   readonly isFocused: boolean;
   readonly onFocus: () => void;
-  readonly onOpenFile?: (path: string) => void;
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 const NOOP_OPEN_FILE = (): void => undefined;

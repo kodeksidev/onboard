@@ -6,7 +6,7 @@ import { ModuleCardView } from './ModuleCardView';
 
 export interface ModuleMapProps {
   readonly modules: AnalysisResult['modules'];
-  readonly onOpenFile?: (path: string) => void;
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 const NOOP_OPEN_FILE = (): void => undefined;

@@ -692,3 +692,122 @@ decided; it only records choices the spec left open.
   act on it; opening the tab afterward re-mounts `DependencyGraph`, which
   then centers on whatever was already focused — verified by a dedicated
   cross-tab integration test (`RoadmapPanel.graphIntegration.test.tsx`).
+- **Phase 10 — `mock-search.ts`'s ranking is a genuine but deliberately
+  simplified re-implementation of Section 8.7, not the engine's frozen
+  `KEYWORD_MAP`/token index.** Those live in `ts-engine`'s scope, not
+  `apps/desktop/**`. `MOCK_KEYWORD_MAP` is explicitly documented in the file
+  as NOT authoritative; the weights (`W_SYMBOL_EXACT`, `W_FILENAME_EXACT`,
+  `P_TEST`, `P_GENERATED`, `MIN_SEARCH_TERM_LENGTH`, `EXPANSION_DECAY`,
+  etc.) are transcribed from Section 8.7 verbatim so the UI's sort order,
+  dropped-term copy, and expanded-term display are all real behavior against
+  real fixture data (32 symbols / 24 files, real `importance` values) — only
+  the keyword-expansion table itself is a stand-in until Phase 11 wires the
+  real sidecar.
+- **Phase 10 — a synthetic 20,000-line file (`mock-bench-file.ts`,
+  `bench/synthetic-20000-lines.ts`) was added to `mock-ipc.ts`'s
+  `readRepoFile` for the render-time gate.** `sample-analysis.json` is a
+  frozen, hand-authored 24-file fixture (Phase 1) with no file anywhere near
+  that size, and nothing about it may change to accommodate a Phase 10
+  benchmark. The content is generated deterministically (`syntheticValue{N}
+  = {N}` per line, no randomness) purely from a line count, so it is
+  identical on every run and is clearly a bench fixture, not sample source
+  from a real repository.
+- **Phase 10 — the "20,000-line file renders in <= 400ms" gate IS
+  measured honestly inside the ordinary jsdom/vitest suite, unlike Phase
+  8's Cytoscape/canvas gate.** A throwaway probe (since deleted) confirmed
+  empirically that CodeMirror 6 genuinely virtualizes its DOM under
+  jsdom — only the visible window's `.cm-line` elements are ever built,
+  regardless of document length (verified again in
+  `FileViewer.perf.test.tsx` itself: 14 DOM lines for a 20,000-line
+  document). This is a real difference from Phase 8's Cytoscape+`<canvas>`
+  rendering, which jsdom cannot lay out or rasterize at all. So this gate
+  needed no CDP/headless-Edge fallback: `FileViewer.perf.test.tsx` asserts
+  a real `performance.now()` wall-clock delta plus the DOM-node-count proof,
+  both against real behavior, not an estimate.
+- **Phase 10 — the perf gate test is excluded from the default `vitest run`
+  and given its own config/script (`vitest.perf.config.ts`, `bun run
+  test:perf`).** Measured in isolation the mount is consistently ~185-220ms
+  (well under the 400ms budget), repeatably; once, run inside the full
+  ~40-file parallel suite, the same assertion measured 641ms due to CPU
+  contention across concurrently-running worker threads (the DOM node count
+  it also asserts was identical both times — 14 `.cm-line` elements — so the
+  variance is scheduling noise, not a rendering regression). Rather than
+  loosen the budget or accept a non-deterministically-red test in the
+  default suite, this mirrors the precedent `bench:graph` (Phase 8) already
+  set: a performance-sensitive gate is measured in a dedicated, uncontended
+  run rather than asserted as a number the shared worker pool cannot
+  honestly guarantee.
+- **Phase 10 — `@tanstack/react-virtual` needs an `offsetHeight` stub to do
+  anything under jsdom, and CodeMirror 6 needs a `Range.prototype
+  .getClientRects`/`getBoundingClientRect` stub for its scroll-centering
+  math.** Both are jsdom's well-documented lack of a real layout engine, not
+  application bugs. `virtual-core`'s `observeElementRect` measures
+  `element.offsetHeight` specifically (confirmed by reading
+  `node_modules/@tanstack/virtual-core`'s source, not guessed), which is
+  always 0 under jsdom; the `offsetHeight` stub in each `WhereIsSearch*`
+  test file supplies the same viewport height the component itself renders,
+  so the virtualizer's own windowing logic still runs for real against that
+  value. `Range.prototype.getClientRects` is unimplemented in this jsdom
+  version outright (`TypeError: ... is not a function`) and is now stubbed
+  globally in `src/test/setup.ts`, returning an empty rect list — it changes
+  nothing about what CodeMirror computes from document/selection state (line
+  numbers, content, `EditorState.selection`), only the horizontal-pixel
+  measurement jsdom cannot provide.
+- **Phase 10 — `SearchResultRow`'s two nested "action" elements
+  (open-at-line, jump-to-specific-line) are `role="button"` `<div>`/`<span>`
+  elements with no `tabIndex`, not native `<button>`s.** The row itself is
+  `role="option"` inside `WhereIsSearch`'s `aria-activedescendant` listbox
+  (real DOM focus always stays on the search input). Per the ARIA APG, an
+  `option` must not contain focusable descendants; axe-core's
+  `no-focusable-content` rule caught this as a real violation during this
+  phase, and further caught that a `tabIndex={-1}` `<button>` does NOT fix
+  it (axe's own message: "a negative tabindex ... does not prevent
+  assistive technologies from focusing the element"). Removing native
+  button semantics entirely (while keeping `aria-label` and the onClick
+  handler) is the fix that actually satisfies the rule. Keyboard users
+  still reach the primary "open file" action via `WhereIsSearch`'s
+  ArrowUp/ArrowDown + Enter handling on the input itself; only the
+  secondary per-line-hit jump (a mouse convenience beyond what Section 9
+  Phase 10 requires) has no dedicated keyboard path.
+- **Phase 10 — CodeMirror's own `.cm-content` (`role="textbox"`) needs an
+  explicit `aria-label`, added via a new `ariaLabel` option on
+  `useCodeMirror` (`EditorView.contentAttributes`).** axe-core's
+  `aria-input-field-name` rule flagged the read-only editor's textbox role
+  as unnamed; `FileViewer` passes `` `File contents: ${path}` `` so the name
+  is specific to whatever file is open, not a generic placeholder.
+- **Phase 10 — two `AppError` codes gained `ERROR_TITLES`/copy entries that
+  Section 10 doesn't give literal strings for: `E_FILE_TOO_LARGE` (reusing
+  the already-existing `ERRORS.fileTooLarge` title) and
+  `E_PATH_ESCAPES_REPO` (new `ERRORS.pathEscapesRepo`, for `read_repo_file`'s
+  "path outside the analyzed folder" guard).** Both are real, enumerated
+  `AppErrorCode` values (Section 7's closed set) that `FileViewer` can now
+  actually receive from `read_repo_file`, so leaving them unmapped would
+  have shown the generic "Something went wrong" title in a case Section 10
+  clearly anticipates (the error code exists specifically for it).
+- **Phase 10 — `App.tsx` now wires `onOpenFile` end-to-end for the first
+  time.** Every panel (`OverviewPanel`, `ModuleMap`, `RoadmapPanel`,
+  `DependencyGraph`) has accepted an `onOpenFile` prop since earlier phases,
+  but `App.tsx` never passed a real handler — a dead control until this
+  phase. `ReadyContent`'s `handleOpenFile` now switches to a new "File
+  viewer" tab, remembers the requested path/line, and calls
+  `useGraphStore.getState().focusPath(path)` — reusing the one frozen
+  cross-component focus seam from Phase 9 rather than adding a second one —
+  so opening a file from anywhere in the app (a search hit, a roadmap step,
+  a module card, a graph node) also centers that file in the dependency
+  graph. Covered end-to-end by a new `App.test.tsx` case, not just a unit
+  test on `WhereIsSearch` in isolation.
+- **Phase 10 — `FileViewer` is lazy-loaded the same way `DependencyGraph`
+  is; `WhereIsSearch` is not.** CodeMirror 6 plus its four language packages
+  is the second-heaviest dependency after Cytoscape (confirmed by the
+  production build: a dedicated `FileViewer-*.js` chunk at ~197kB gzipped,
+  separate from the ~115kB gzipped main bundle) and, like the graph, is
+  irrelevant to the Overview a user sees first. `WhereIsSearch` only adds
+  `@tanstack/react-virtual`, small enough to stay in the main bundle
+  alongside the other eagerly-loaded panels.
+- **Phase 10 — `ImportsPanel`'s imports/importers are computed via
+  `DependencyGraph/graph-model.ts`'s existing `buildAdjacency(result.edges)`,
+  not a second adjacency-building function.** `FileViewer` needed the exact
+  same "who does this file import, who imports it" data `DependencyGraph`
+  already derives; importing the existing pure function (already unit
+  tested in `graph-model.test.ts`) keeps there being exactly one place that
+  interprets `AnalysisResult.edges` this way.
