@@ -7,6 +7,7 @@ pub mod commands;
 pub mod constants;
 pub mod contract;
 pub mod error;
+pub mod privacy;
 pub mod secrets;
 pub mod sidecar;
 pub mod state;
@@ -107,7 +108,10 @@ fn build_app_state(app: &tauri::App) -> AppState {
 
     let supervisor = SidecarSupervisor::new(SidecarConfig {
         program,
-        args: vec!["--grammars-dir".to_string(), grammars_dir.to_string_lossy().to_string()],
+        args: vec![
+            "--grammars-dir".to_string(),
+            grammars_dir.to_string_lossy().to_string(),
+        ],
         log_path: log_path.to_string_lossy().to_string(),
         max_restarts: constants::SIDECAR_MAX_RESTARTS,
     });

@@ -38,3 +38,15 @@ pub const PATH_ARG_MAX_BYTES: usize = 4096;
 /// API key length bounds accepted by `store_ai_key` (Section 12).
 pub const AI_KEY_MIN_LEN: usize = 8;
 pub const AI_KEY_MAX_LEN: usize = 512;
+
+/// Section 8.9 R4 caps, enforced after redaction, before anything is sent.
+pub const AI_MAX_LINES_PER_FILE: usize = 200;
+pub const AI_MAX_BYTES_PER_FILE: usize = 8192;
+pub const AI_MAX_FILES: usize = 24;
+pub const AI_MAX_TOTAL_BYTES: usize = 98_304;
+
+/// Section 8.9 R2 rule thresholds that aren't regex literals.
+pub const HIGH_ENTROPY_MIN_LEN: usize = 24;
+pub const HIGH_ENTROPY_MIN_CHAR_CLASSES: u32 = 3;
+pub const HIGH_ENTROPY_MIN_BITS_PER_CHAR: f64 = 4.0;
+pub const ASSIGNMENT_HEURISTIC_MIN_VALUE_LEN: usize = 8;

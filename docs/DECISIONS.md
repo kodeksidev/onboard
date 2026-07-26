@@ -1613,3 +1613,76 @@ decided; it only records choices the spec left open.
   entirely outside it on macOS. `firstPaint`, which IS reliable under software
   rasterization because it measures work rather than frame pacing, passes with
   roughly a 10x margin at both sizes (249.5 ms and 161.1 ms against 1,500 ms).
+- **Phase 12 step 1 — `Snippet` (what `redact()` accepts) is a second,
+  separate type from `contract::EngineSnippet` (the wire DTO), deliberately
+  without `Deserialize`.** Section 12 asks that "whole-file or whole-repo
+  content must be rejected by construction, not by a runtime check" — but
+  `EngineSnippet` must have public fields and a real `Deserialize` impl
+  (it deserializes the actual `engine.snippets` RPC response), and deriving
+  `Deserialize` on ANY type makes it constructible from arbitrary JSON by
+  ANY module regardless of field privacy (serde's derive-generated
+  `deserialize` is emitted in the type's own defining module, exactly like
+  hand-written code there, and is reachable through the public
+  `serde_json::from_str::<T>` free function from anywhere). So
+  `RedactedPayload` — and, by the same reasoning, the `Snippet` type
+  `redact()` builds internally — must never derive it. `privacy::redact::Snippet`
+  is therefore a private-fielded, non-`Deserialize` type whose only
+  constructor (`Snippet::from_engine`) converts from a real `EngineSnippet`;
+  see `redact.rs`'s module doc comment for the full writeup of what this
+  does and does not guarantee (it prevents a whole class of accidental
+  misuse — there is no path from `&str`/`fs::read` to either type — but
+  cannot prevent a same-crate contributor from deliberately fabricating a
+  fake `EngineSnippet`; that residual gap is a code-review problem, not a
+  type-system one, consistent with Section 12's "accidental exfiltration,
+  not malicious insider" threat model).
+- **Phase 12 step 1 — R4's per-file cap (200 lines / 8,192 bytes) truncates
+  rather than drops the whole file.** Section 8.9 only describes an
+  "overflow: keep highest-ranked files first ..., drop the tail" behavior
+  for the AGGREGATE file-count/total-byte cap, not the per-file one.
+  Truncating preserves partial context for an otherwise-relevant file
+  instead of silently losing it entirely; `caps::truncate_content` keeps
+  the first N lines and then the first M bytes (never splitting a UTF-8
+  character), applied per file BEFORE the aggregate cap runs.
+- **Phase 12 step 1 — R3's re-scan needed a guard against re-matching its
+  own `<redacted>` placeholder, or every redaction using rule 11 (the
+  generic assignment heuristic) would spuriously abort with
+  `E_AI_PAYLOAD_UNSAFE` on every request.** `<redacted>` is 11 characters
+  with no space/quote/comma/semicolon, which satisfies rule 11's own value
+  pattern `[^\s"',;]{8,}` — so re-running R2 on a line like `API_KEY:
+  <redacted>` would "find a new match" (the placeholder itself) and
+  incorrectly conclude a secret survived. Fixed by special-casing the
+  literal placeholder text as never a match inside
+  `redact_assignment_heuristic` — rules 2-10 and 12 don't have this problem
+  (their formats/length thresholds structurally cannot match an
+  11-character generic string). Verified empirically that this makes the
+  full 12-rule pipeline genuinely idempotent: a `proptest` property test
+  over 512 generated printable-ASCII inputs (256 cases x 2 properties)
+  found no counterexample, and a natural, naively-constructed
+  non-idempotent input could not be found by hand either — R3's abort
+  branch is therefore exercised directly with synthetic pre/post strings
+  (`ensure_idempotent`, extracted as its own pure function) rather than a
+  fabricated "natural" trigger, since one doesn't appear to exist for this
+  specific rule set (see `redact.rs`'s test comments).
+- **Phase 12 step 1 — `E_AI_PAYLOAD_UNSAFE` has no literal Section 10 copy**
+  (Section 10's row for this case, "A secret survives redaction", only
+  describes the behavior — "Request aborted ...; nothing is sent" — not a
+  UI string). Filled with conventional phrasing matching the voice of the
+  rows that do have literal copy.
+- **Phase 12 step 1 — compile-fail tests shell out to `cargo build` against
+  a tiny external fixture crate instead of using `trybuild`'s default
+  snapshot mode.** `trybuild` handles the plumbing well, but its
+  `compile_fail` verdict is an exact `.stderr` text comparison (including
+  line/column numbers), which is brittle across rustc versions for reasons
+  unrelated to whether the actual guarantee still holds — and this phase
+  was explicitly warned it had already produced five vacuous gates from
+  exactly this kind of environment/tooling brittleness. Shelling out
+  directly (`tests/redaction_compile_fail.rs` + the
+  `tests/fixtures/redaction-violations/` crate) allows asserting on stable
+  rustc error CODES (`E0451`, `E0599`, `E0277`) plus a keyword instead —
+  verified to actually catch the "vacuous gate" failure mode by temporarily
+  swapping one fixture for an unrelated typo (an `E0433` unresolved-path
+  error) and confirming the test correctly failed with a "wrong reason"
+  message, then reverting. The fixture crate shares this crate's
+  `target/` directory (`--target-dir`) so `onboard_lib` and its
+  dependencies compile once (~25s) and every subsequent fixture build
+  reuses the cache (<1s each) rather than a full dependency rebuild per case.
