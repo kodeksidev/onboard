@@ -104,8 +104,33 @@ export interface HandleLineResult {
   readonly shouldShutdown: boolean;
 }
 
+/**
+ * Section 11 bench investigation (see `analyze.ts`'s `PhaseTimingSink` doc
+ * comment): reports how long building the RPC response JSON took
+ * (`responseStringify`) and how long writing it to stdout took
+ * (`responseWrite`) — the two costs the frozen `AnalysisEnvelope.timings`
+ * cannot see, since both happen entirely outside `analyze()`. Optional,
+ * never used in normal operation.
+ */
+export type RpcDebugTimingSink = (label: string, ms: number) => void;
+
+function timedCall<T>(sink: RpcDebugTimingSink | undefined, label: string, fn: () => T): T {
+  if (sink === undefined) {
+    return fn();
+  }
+  const start = performance.now();
+  const result = fn();
+  sink(label, performance.now() - start);
+  return result;
+}
+
 /** Handles exactly one already-trimmed, non-empty line. Never throws. */
-export async function handleRpcLine(line: string, methods: EngineMethods, writeLine: (out: string) => void): Promise<HandleLineResult> {
+export async function handleRpcLine(
+  line: string,
+  methods: EngineMethods,
+  writeLine: (out: string) => void,
+  onDebugTiming?: RpcDebugTimingSink,
+): Promise<HandleLineResult> {
   const parsed = parseRequestLine(line);
   if (!parsed.ok) {
     writeLine(errorResponse(parsed.id, -32700, 'Parse error'));
@@ -118,7 +143,8 @@ export async function handleRpcLine(line: string, methods: EngineMethods, writeL
   }
   try {
     const result = await callMethod(methods, method, params);
-    writeLine(successResponse(id, result));
+    const responseLine = timedCall(onDebugTiming, 'responseStringify', () => successResponse(id, result));
+    timedCall(onDebugTiming, 'responseWrite', () => writeLine(responseLine));
     return { shouldShutdown: method === 'engine.shutdown' };
   } catch (error) {
     writeLine(buildErrorResponseForThrown(id, error));
@@ -130,6 +156,7 @@ export interface RunServerOptions {
   readonly methods: EngineMethods;
   readonly lines: AsyncIterable<string>;
   readonly writeLine: (out: string) => void;
+  readonly onDebugTiming?: RpcDebugTimingSink;
 }
 
 /** Reads newline-delimited requests until EOF or a successful `engine.shutdown`. */
@@ -139,7 +166,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     if (line.length === 0) {
       continue;
     }
-    const { shouldShutdown } = await handleRpcLine(line, options.methods, options.writeLine);
+    const { shouldShutdown } = await handleRpcLine(line, options.methods, options.writeLine, options.onDebugTiming);
     if (shouldShutdown) {
       return;
     }
@@ -151,11 +178,21 @@ export async function runServer(options: RunServerOptions): Promise<void> {
  * lines. A JSON-RPC message is never guaranteed to arrive in one `read()`
  * chunk (or to be alone in one), so this buffers across chunks rather than
  * assuming one message per read.
+ *
+ * `scanFrom` tracks how much of `buffer` has already been confirmed
+ * newline-free, so each `indexOf` call only scans the newly-appended tail
+ * instead of re-scanning the whole (growing) buffer from index 0 every
+ * time. Without this, one large single-line message (a 10,000-file
+ * `AnalysisResult` is tens of megabytes on one JSON-RPC line) arriving
+ * across many small `read()` chunks costs O(n^2) in the line's total
+ * length — confirmed a real, measurable cost in Section 11's bench
+ * investigation (see `docs/DECISIONS.md`), not a hypothetical.
  */
 export async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let scanFrom = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -163,12 +200,14 @@ export async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGener
         break;
       }
       buffer += decoder.decode(value, { stream: true });
-      let newlineIndex = buffer.indexOf('\n');
+      let newlineIndex = buffer.indexOf('\n', scanFrom);
       while (newlineIndex !== -1) {
         yield buffer.slice(0, newlineIndex);
         buffer = buffer.slice(newlineIndex + 1);
-        newlineIndex = buffer.indexOf('\n');
+        scanFrom = 0;
+        newlineIndex = buffer.indexOf('\n', scanFrom);
       }
+      scanFrom = buffer.length;
     }
   } finally {
     reader.releaseLock();

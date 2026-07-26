@@ -169,4 +169,49 @@ describe('readLines', () => {
     }
     expect(collected).toEqual(['{"a":1}', '{"b":2}']);
   });
+
+  test('reassembles one huge line arriving across many tiny chunks (Section 11 bench: a 10,000-file AnalysisResult is one multi-megabyte JSON-RPC line)', async () => {
+    const hugeLine = 'x'.repeat(2_000_000);
+    const chunkSize = 37; // deliberately tiny and not a divisor of hugeLine.length
+    const chunks: string[] = [];
+    for (let i = 0; i < hugeLine.length; i += chunkSize) {
+      chunks.push(hugeLine.slice(i, i + chunkSize));
+    }
+    chunks.push('\n');
+    chunks.push('{"tail":true}\n');
+
+    const stream = streamFromChunks(chunks);
+    const collected: string[] = [];
+    for await (const line of readLines(stream)) {
+      collected.push(line);
+    }
+    expect(collected).toHaveLength(2);
+    expect(collected[0]).toHaveLength(hugeLine.length);
+    expect(collected[0]).toBe(hugeLine);
+    expect(collected[1]).toBe('{"tail":true}');
+  });
+
+  test('never re-scans an already-confirmed-newline-free prefix (the O(n^2) regression this fix closes)', async () => {
+    // A crude but effective regression guard: reassembling a ~4 MB single
+    // line from ~50,000 tiny chunks must stay well under a second. Before
+    // this fix, re-scanning the whole growing buffer on every chunk made
+    // this quadratic and multiple seconds slow on this exact shape of input.
+    const hugeLine = 'y'.repeat(4_000_000);
+    const chunkSize = 80;
+    const chunks: string[] = [];
+    for (let i = 0; i < hugeLine.length; i += chunkSize) {
+      chunks.push(hugeLine.slice(i, i + chunkSize));
+    }
+    chunks.push('\n');
+
+    const stream = streamFromChunks(chunks);
+    const start = performance.now();
+    const collected: string[] = [];
+    for await (const line of readLines(stream)) {
+      collected.push(line);
+    }
+    const elapsedMs = performance.now() - start;
+    expect(collected).toEqual([hugeLine]);
+    expect(elapsedMs).toBeLessThan(1000);
+  });
 });

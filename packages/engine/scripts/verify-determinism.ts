@@ -13,12 +13,29 @@
  * gate did not catch (see `docs/DECISIONS.md`).
  *
  * For each of the 5 fixtures, asserts:
- *   1. cold-vs-cold   — two independent cold `analyze()` runs agree.
- *   2. cold-vs-warm   — a cache-primed run agrees with the cold fingerprint.
- *   3. shuffled-walk  — a run with `readdir` results reversed (never sorted
- *      by the walker itself) still agrees, proving the global re-sort
- *      (Section 8.1 step 4) is what makes the walk order-independent.
- * 5 fixtures x 3 comparisons = 15 total, matching the gate exactly.
+ *   1. cold-vs-cold        — two independent cold `analyze()` runs agree.
+ *   2. cold-vs-warm        — a cache-primed FULL RECONSTRUCTION (the warm
+ *      fast path is deliberately disabled here via `disableFastPath: true`)
+ *      agrees with the cold fingerprint. This is what actually exercises
+ *      the incremental parse-cache/token-index reuse path — see the next
+ *      point for why it must not take the fast path instead.
+ *   3. shuffled-walk       — a run with `readdir` results reversed (never
+ *      sorted by the walker itself) still agrees, proving the global
+ *      re-sort (Section 8.1 step 4) is what makes the walk order-independent.
+ *   4. warm-fastpath-vs-full-rebuild — Section 11's warm-analysis fast path
+ *      (serves the cached `analysis_result` row directly when every file's
+ *      hash is unchanged, skipping resolve/graph/rank/assemble entirely)
+ *      must return a fingerprint IDENTICAL to a full rebuild. This is the
+ *      comparison that would fail if the fast path ever served a stale or
+ *      wrong result — without it, enabling the fast path by default would
+ *      make comparison #2 tautological (a warm run trivially "agreeing"
+ *      with itself by returning the very row it never left) rather than
+ *      proving anything about correctness. This script's own
+ *      `onPhaseTiming` hook double-checks the fast path was ACTUALLY taken
+ *      (not merely that it happened to produce the right answer while
+ *      secretly doing a full rebuild anyway) by asserting `buildGraph`
+ *      never fires on that run.
+ * 5 fixtures x 4 comparisons = 20 total.
  */
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,12 +87,20 @@ interface ComparisonResult {
   readonly fixture: string;
   readonly comparison: string;
   readonly passed: boolean;
+  readonly failureDetail?: string;
 }
 
 async function runColdFull(fixtureDir: string): Promise<AnalysisResultValue> {
   return analyze({ repoRootAbs: fixtureDir, grammarsDir: EFFECTIVE_GRAMMARS_DIR, engineVersion: ENGINE_VERSION });
 }
 
+/**
+ * `disableFastPath: true` is the whole point of this function (see the
+ * header comment's #2): it must exercise the real incremental
+ * reconstruction path (parse-cache/token-index reuse, then a full
+ * resolve/graph/rank/assemble), never Section 11's warm fast path, or this
+ * comparison would prove nothing.
+ */
 async function runWarm(fixtureDir: string): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), 'onboard-verify-determinism-'));
   try {
@@ -90,9 +115,44 @@ async function runWarm(fixtureDir: string): Promise<string> {
       grammarsDir: EFFECTIVE_GRAMMARS_DIR,
       engineVersion: ENGINE_VERSION,
       cacheStore: second,
+      disableFastPath: true,
     });
     second.close();
     return result.fingerprint;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The fast path itself, left fully enabled (the sidecar's real default
+ * behavior) — proves it returns a fingerprint identical to a full rebuild,
+ * and (via the `sawFullRebuildPhase` guard) that it genuinely took the fast
+ * path rather than happening to do a full rebuild anyway.
+ */
+async function runFastPathWarm(fixtureDir: string): Promise<{ fingerprint: string; tookFastPath: boolean }> {
+  const dir = mkdtempSync(join(tmpdir(), 'onboard-verify-determinism-fastpath-'));
+  try {
+    const dbPath = join(dir, 'cache.sqlite');
+    const first = new SqliteCacheStore(dbPath);
+    await analyze({ repoRootAbs: fixtureDir, grammarsDir: EFFECTIVE_GRAMMARS_DIR, engineVersion: ENGINE_VERSION, cacheStore: first });
+    first.close();
+
+    let sawFullRebuildPhase = false;
+    const second = new SqliteCacheStore(dbPath);
+    const result = await analyze({
+      repoRootAbs: fixtureDir,
+      grammarsDir: EFFECTIVE_GRAMMARS_DIR,
+      engineVersion: ENGINE_VERSION,
+      cacheStore: second,
+      onPhaseTiming: (label) => {
+        if (label === 'buildGraph') {
+          sawFullRebuildPhase = true;
+        }
+      },
+    });
+    second.close();
+    return { fingerprint: result.fingerprint, tookFastPath: !sawFullRebuildPhase };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -139,6 +199,7 @@ async function verifyFixture(fixture: string): Promise<{ substanceFailures: read
   const coldB = (await runColdFull(fixtureDir)).fingerprint;
   const warm = await runWarm(fixtureDir);
   const shuffled = await runShuffled(fixtureDir);
+  const fastPath = await runFastPathWarm(fixtureDir);
 
   return {
     substanceFailures,
@@ -146,6 +207,14 @@ async function verifyFixture(fixture: string): Promise<{ substanceFailures: read
       { fixture, comparison: 'cold-vs-cold', passed: coldA === coldB },
       { fixture, comparison: 'cold-vs-warm', passed: coldA === warm },
       { fixture, comparison: 'cold-vs-shuffled-walk', passed: coldA === shuffled },
+      {
+        fixture,
+        comparison: 'warm-fastpath-vs-full-rebuild',
+        passed: fastPath.tookFastPath && coldA === fastPath.fingerprint,
+        ...(fastPath.tookFastPath
+          ? {}
+          : { failureDetail: 'the fast path was never taken (buildGraph fired) — this run proved nothing about it' }),
+      },
     ],
   };
 }
@@ -163,7 +232,8 @@ async function main(): Promise<void> {
     const results = comparisons;
     allResults.push(...results);
     results.forEach((r) => {
-      console.log(`${r.passed ? 'PASS' : 'FAIL'}  ${r.fixture} :: ${r.comparison}`);
+      const detail = r.failureDetail === undefined ? '' : ` (${r.failureDetail})`;
+      console.log(`${r.passed ? 'PASS' : 'FAIL'}  ${r.fixture} :: ${r.comparison}${detail}`);
     });
   }
 

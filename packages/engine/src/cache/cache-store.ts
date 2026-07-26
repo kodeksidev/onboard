@@ -107,5 +107,14 @@ export interface CacheStore {
   queryTokensByToken(token: string): readonly TokenIndexRow[];
 
   getAnalysisResult(): AnalysisResultRow | null;
+  /**
+   * Just the `fingerprint` column, without pulling the (potentially huge —
+   * tens of megabytes at 10,000 files) `result_json` blob along with it.
+   * Lets a warm re-run skip re-serializing and re-writing an unchanged
+   * `AnalysisResult` (Section 11's bench profiling: `stableStringify` alone
+   * was ~300 ms at 10,000 files) with a cheap single-column read instead of
+   * paying a cost comparable to the write it exists to avoid.
+   */
+  getAnalysisResultFingerprint(): string | null;
   putAnalysisResult(row: AnalysisResultRow): void;
 }

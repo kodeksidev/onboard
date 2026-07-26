@@ -51,9 +51,21 @@ function writeLine(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
+/**
+ * Section 11 bench investigation into the 10,000-file cold-analysis timeout
+ * (see `docs/DECISIONS.md`): `AnalysisEnvelope.timings` is frozen at five
+ * fields, so this reports a finer sub-phase breakdown to STDERR — never
+ * stdout, which is the JSON-RPC channel — only when `ONBOARD_DEBUG_TIMINGS`
+ * is set. Zero cost in normal operation (the sidecar never sets this).
+ */
+function debugTimingSink(label: string, ms: number): void {
+  process.stderr.write(`${JSON.stringify({ debugTiming: label, ms })}\n`);
+}
+
 async function main(): Promise<void> {
   const grammarsDir = parseGrammarsDirFlag(process.argv.slice(2));
   const grammarFingerprint = computeGrammarFingerprint(grammarsDir);
+  const debugTimingsEnabled = process.env.ONBOARD_DEBUG_TIMINGS === '1';
 
   const progressReporter = createProgressReporter((progress) => {
     writeLine(JSON.stringify({ jsonrpc: '2.0', method: 'engine.progress', params: progress }));
@@ -64,9 +76,15 @@ async function main(): Promise<void> {
     grammarsDir,
     grammarFingerprint,
     onProgress: (progress) => progressReporter.report(progress, progress.processed === progress.total),
+    ...(debugTimingsEnabled ? { onPhaseTiming: debugTimingSink } : {}),
   });
 
-  await runServer({ methods, lines: readLines(Bun.stdin.stream()), writeLine });
+  await runServer({
+    methods,
+    lines: readLines(Bun.stdin.stream()),
+    writeLine,
+    ...(debugTimingsEnabled ? { onDebugTiming: debugTimingSink } : {}),
+  });
   process.exit(0);
 }
 

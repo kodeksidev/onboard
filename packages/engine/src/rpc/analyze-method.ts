@@ -4,8 +4,7 @@
 import { mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { EngineAnalyzeParams, EngineAnalyzeResult, EngineProgress } from '@onboard/contract';
-import { SCHEMA_VERSION, stableStringify } from '@onboard/contract';
-import { analyzeWithTimings } from '../analyze';
+import { analyzeWithTimings, type PhaseTimingSink } from '../analyze';
 import type { CacheStore } from '../cache/cache-store';
 import { MAX_REPO_FILES } from '../constants';
 import { KEYWORD_MAP, loadUserKeywordMap, mergeKeywordMaps } from '../search/keyword-map';
@@ -107,6 +106,8 @@ export interface AnalyzeMethodDeps {
   readonly createCacheStore: (dbFilePath: string) => CacheStore;
   readonly onProgress: (progress: EngineProgress) => void;
   readonly sessions: SessionStore;
+  /** Section 11 bench investigation's diagnostic timing sink — see `analyze.ts`'s doc comment. */
+  readonly onPhaseTiming?: PhaseTimingSink;
 }
 
 export async function runAnalyzeMethod(params: EngineAnalyzeParams, deps: AnalyzeMethodDeps): Promise<EngineAnalyzeResult> {
@@ -126,12 +127,11 @@ export async function runAnalyzeMethod(params: EngineAnalyzeParams, deps: Analyz
     throw domainError('E_NO_SUPPORTED_FILES', message, detail, params.repoPath);
   }
 
-  cacheStore.putAnalysisResult({
-    schemaVersion: SCHEMA_VERSION,
-    fingerprint: envelope.result.fingerprint,
-    resultJson: stableStringify(envelope.result),
-  });
-
+  // `analyze()` itself now writes `analysis_result` (see `analyze.ts`'s
+  // `persistAnalysisResultIfChanged` doc comment) — moved there from this
+  // method specifically so `scripts/verify-determinism.ts` and any other
+  // direct `analyze()` caller can exercise Section 11's warm fast path
+  // too, not just the RPC sidecar. Nothing left to do here.
   const session: RepoSession = {
     canonicalRoot,
     cacheStore,
@@ -156,6 +156,7 @@ async function runAnalyzePipeline(
       cacheStore,
       excludeGlobs: params.excludeGlobs,
       onProgress: deps.onProgress,
+      ...(deps.onPhaseTiming === undefined ? {} : { onPhaseTiming: deps.onPhaseTiming }),
     });
   } catch (error) {
     cacheStore.close();

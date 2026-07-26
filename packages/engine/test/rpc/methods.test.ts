@@ -249,3 +249,38 @@ describe('engine.snippets', () => {
     await methods.shutdown({});
   });
 });
+
+describe('engine.analyze — skips re-serializing an unchanged analysis_result (Section 11 bench)', () => {
+  let appDataDir: string;
+
+  beforeEach(() => {
+    appDataDir = mkdtempSync(join(tmpdir(), 'onboard-rpc-appdata-'));
+  });
+
+  afterEach(async () => {
+    await removeDirWithRetry(appDataDir);
+  });
+
+  test('a warm re-run of an unchanged repo never calls stableStringify/putAnalysisResult again', async () => {
+    const phaseTimings: string[] = [];
+    const methods = createEngineMethods({
+      engineVersion: '0.0.0-test',
+      grammarsDir: GRAMMARS_DIR,
+      grammarFingerprint: 'fingerprint-test',
+      onProgress: () => {},
+      onPhaseTiming: (label) => phaseTimings.push(label),
+    });
+
+    const analyzeParams = { repoPath: join(FIXTURES_DIR, 'node-express'), appDataDir, excludeGlobs: [], isForceRefresh: false };
+    await methods.analyze(analyzeParams);
+    expect(phaseTimings).toContain('stableStringify');
+    expect(phaseTimings).toContain('putAnalysisResult');
+
+    phaseTimings.length = 0;
+    const warmResult = await methods.analyze(analyzeParams);
+    expect(phaseTimings).not.toContain('stableStringify');
+    expect(phaseTimings).not.toContain('putAnalysisResult');
+    expect(warmResult.result.files.length).toBeGreaterThan(0);
+    await methods.shutdown({});
+  });
+});

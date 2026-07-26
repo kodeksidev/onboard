@@ -25,6 +25,7 @@ import type {
 import { SCHEMA_VERSION } from '@onboard/contract';
 import { SqliteCacheStore } from '../cache/sqlite-cache-store';
 import type { CacheStore } from '../cache/cache-store';
+import type { PhaseTimingSink } from '../analyze';
 import { runAnalyzeMethod } from './analyze-method';
 import { runReadFileMethod } from './read-file-method';
 import { runSearchMethod } from './search-method';
@@ -38,6 +39,8 @@ export interface EngineMethodsConfig {
   readonly onProgress: (progress: EngineProgress) => void;
   /** DI seam for tests; defaults to a real `SqliteCacheStore` per repo. */
   readonly createCacheStore?: (dbFilePath: string) => CacheStore;
+  /** Section 11 bench investigation's diagnostic timing sink — see `analyze.ts`'s doc comment. */
+  readonly onPhaseTiming?: PhaseTimingSink;
 }
 
 export interface EngineMethods {
@@ -73,6 +76,7 @@ export function createEngineMethods(config: EngineMethodsConfig): EngineMethods 
         createCacheStore,
         onProgress: config.onProgress,
         sessions,
+        ...(config.onPhaseTiming === undefined ? {} : { onPhaseTiming: config.onPhaseTiming }),
       }),
 
     search: (params) => Promise.resolve(runSearchMethod(params, sessions)),
