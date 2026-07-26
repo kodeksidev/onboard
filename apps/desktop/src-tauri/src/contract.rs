@@ -486,6 +486,41 @@ pub struct FileContent {
     pub content: String,
 }
 
+// ---------------------------------------------------------------------------
+// `engine.snippets` (Section 7.3): "The only source of text the AI path may
+// use." Phase 12 step 1's `privacy::redact::redact` accepts exactly this
+// wire shape (never a bare `String`) — see that module's doc comment for
+// what that does and does not guarantee. These two types derive
+// `Deserialize` deliberately: they exist ONLY to receive the real sidecar
+// RPC response, which is legitimately untrusted external input that must be
+// deserializable; that is not true of anything in `privacy::redact`'s own
+// output types.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineSnippetsParams {
+    pub repo_id: String,
+    pub paths: Vec<String>,
+    pub max_lines_per_file: u32,
+    pub max_bytes_per_file: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineSnippet {
+    pub path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineSnippetsResult {
+    pub snippets: Vec<EngineSnippet>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,5 +565,14 @@ mod tests {
         let request: SearchRequest =
             serde_json::from_str(r#"{"repoId":"0123456789abcdef","query":"auth"}"#).unwrap();
         assert_eq!(request.limit, 50);
+    }
+
+    #[test]
+    fn engine_snippets_result_deserializes_the_section_7_3_wire_shape() {
+        let json = r#"{"snippets":[{"path":"src/a.ts","startLine":1,"endLine":5,"content":"export const a = 1;"}]}"#;
+        let result: EngineSnippetsResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.snippets.len(), 1);
+        assert_eq!(result.snippets[0].path, "src/a.ts");
+        assert_eq!(result.snippets[0].start_line, 1);
     }
 }

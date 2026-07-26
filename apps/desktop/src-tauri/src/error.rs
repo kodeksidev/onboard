@@ -37,6 +37,11 @@ pub enum AppErrorCode {
     EPathEscapesRepo,
     EInvalidSettings,
     EKeychainUnavailable,
+    /// Phase 12 step 1 (Section 8.9 R3): the redaction pass's own
+    /// idempotence re-scan still matched something after one full R1-R4
+    /// pass — the request is aborted outright rather than sending a
+    /// partially-redacted payload.
+    EAiPayloadUnsafe,
 }
 
 impl AppErrorCode {
@@ -56,6 +61,7 @@ impl AppErrorCode {
             AppErrorCode::EPathEscapesRepo => "E_PATH_ESCAPES_REPO",
             AppErrorCode::EInvalidSettings => "E_INVALID_SETTINGS",
             AppErrorCode::EKeychainUnavailable => "E_KEYCHAIN_UNAVAILABLE",
+            AppErrorCode::EAiPayloadUnsafe => "E_AI_PAYLOAD_UNSAFE",
         }
     }
 }
@@ -208,6 +214,17 @@ impl AppError {
             "Onboard won't write API keys to disk. Install gnome-keyring or KWallet, or use a session-only key that is forgotten when you quit.",
         )
     }
+
+    /// Section 10 gives no literal copy for this code (only Section 12's R3
+    /// behavior description exists: "A secret survives redaction; nothing
+    /// is sent"); this message follows the same voice as the rows that do
+    /// have literal copy — logged in `docs/DECISIONS.md`.
+    pub fn ai_payload_unsafe() -> Self {
+        Self::new(
+            AppErrorCode::EAiPayloadUnsafe,
+            "Onboard found what still looks like a secret after redacting this content, so nothing was sent. Exclude the affected file or remove the secret, then try again.",
+        )
+    }
 }
 
 #[cfg(test)]
@@ -219,7 +236,9 @@ mod tests {
         let err = AppError::engine_crashed("/tmp/onboard.log");
 
         assert_eq!(err.code, "E_ENGINE_CRASHED");
-        assert!(err.message.contains("The analysis engine exited before finishing"));
+        assert!(err
+            .message
+            .contains("The analysis engine exited before finishing"));
         assert!(err.message.contains("/tmp/onboard.log"));
         assert!(err.detail.is_none());
     }
@@ -228,7 +247,9 @@ mod tests {
     fn permission_denied_uses_the_literal_section_10_description_as_message() {
         let err = AppError::permission_denied("acme-api");
 
-        assert!(err.message.contains("The operating system denied read access"));
+        assert!(err
+            .message
+            .contains("The operating system denied read access"));
         assert!(err.message.contains("acme-api"));
     }
 
@@ -253,7 +274,8 @@ mod tests {
 
     #[test]
     fn with_detail_attaches_developer_only_diagnostic_text() {
-        let err = AppError::engine_crashed("/tmp/onboard.log").with_detail("spawn failed: os error 2");
+        let err =
+            AppError::engine_crashed("/tmp/onboard.log").with_detail("spawn failed: os error 2");
         assert_eq!(err.detail.as_deref(), Some("spawn failed: os error 2"));
     }
 }

@@ -1,0 +1,17 @@
+[package]
+name = "redaction-violations-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately NOT part of any [workspace] — this crate exists only so
+# `tests/redaction_compile_fail.rs` can `cargo build` each `src/bin/*.rs`
+# fixture as a REAL, external crate depending on `onboard_lib`, proving each
+# violation fails to compile for the specific reason claimed (private field
+# access, no such constructor, an unsatisfied trait bound) rather than for
+# any old unrelated reason. None of these binaries are meant to ever
+# successfully build — see the parent test file.
+
+[dependencies]
+onboard = { path = "../../.." }
+serde_json = "1"
