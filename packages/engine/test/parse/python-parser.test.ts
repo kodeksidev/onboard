@@ -106,6 +106,30 @@ describe('createPythonParser — raw imports', () => {
   });
 });
 
+describe('createPythonParser — importlib.import_module (Section 8.2 rule 6)', () => {
+  test('a literal string argument is extracted as a normal, literal, resolvable import', () => {
+    const parsed = pythonParser.parse("import importlib\nimportlib.import_module('app.models.user_model')\n");
+    expect(parsed.imports).toContainEqual({
+      specifier: 'app.models.user_model',
+      line: 2,
+      kind: 'static',
+      isTypeOnly: false,
+      isLiteral: true,
+    });
+  });
+
+  test('a non-literal (variable) argument is extracted as a non-literal dynamic import', () => {
+    const parsed = pythonParser.parse('import importlib\ndef load(name):\n    return importlib.import_module(name)\n');
+    expect(parsed.imports).toContainEqual({ specifier: 'name', line: 3, kind: 'dynamic', isTypeOnly: false, isLiteral: false });
+  });
+
+  test('ignores a trailing keyword argument and captures only the first positional argument', () => {
+    const parsed = pythonParser.parse("import importlib\nimportlib.import_module('pkg.mod', package='pkg')\n");
+    expect(parsed.imports).toContainEqual({ specifier: 'pkg.mod', line: 2, kind: 'static', isTypeOnly: false, isLiteral: true });
+    expect(parsed.imports.some((imp) => imp.specifier === 'pkg')).toBe(false);
+  });
+});
+
 describe('createPythonParser — syntax error detection', () => {
   test('flags hasSyntaxError for malformed source without throwing', () => {
     const parsed = pythonParser.parse('def broken(:\n    return\n!!!\n');

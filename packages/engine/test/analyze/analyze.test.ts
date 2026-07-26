@@ -60,6 +60,14 @@ describe('analyze — python-flask fixture (relative imports, __main__.py)', () 
     expect(result.edges.some((e) => e.fromPath === 'app/routes/user_routes.py' && e.toPath === 'app/models/user_model.py')).toBe(true);
     expect(result.entryPoints.some((e) => e.path === 'app/__main__.py' && e.evidence === 'python:__main__.py')).toBe(true);
   });
+
+  test('importlib.import_module(...) (Section 8.2 rule 6): a literal argument resolves, a non-literal one is dynamic-expression', async () => {
+    const result = await analyze({ repoRootAbs: join(FIXTURES_DIR, 'python-flask'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test' });
+    expect(result.edges.some((e) => e.fromPath === 'app/dynamic_loader.py' && e.toPath === 'app/models/user_model.py')).toBe(true);
+    expect(
+      result.unresolvedImports.some((u) => u.fromPath === 'app/dynamic_loader.py' && u.reason === 'dynamic-expression'),
+    ).toBe(true);
+  });
 });
 
 describe('analyze — mixed-monorepo fixture (workspace resolution)', () => {
