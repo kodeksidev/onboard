@@ -144,7 +144,10 @@ describe('engine.analyze — domain errors', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(DomainError);
       expect((error as DomainError).appError.code).toBe('E_PATH_NOT_FOUND');
-      expect((error as DomainError).appError.message).toBe('That folder no longer exists');
+      expect((error as DomainError).appError.message).toBe(
+        'Onboard could not find does-not-exist. It may have been moved, renamed, or deleted.',
+      );
+      expect((error as DomainError).appError.detail).toBeNull();
     }
   });
 

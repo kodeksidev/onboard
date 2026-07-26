@@ -1108,3 +1108,50 @@ decided; it only records choices the spec left open.
   bench`'s output prints this finding prominently rather than silently
   reporting numbers measured against a pipeline that never actually
   parses anything.
+- **Phase 5 (post-hoc fix) — `src/rpc/error-copy.ts` had `AppError.message`
+  and `detail` backwards; every helper now puts the Section 10 long
+  description in `message` and leaves `detail: null`.** Caught by rust-tauri
+  during Phase 11 integration (they hit the identical problem on their side
+  and fixed it there, then correctly flagged that this engine module had
+  never been touched and still had it wrong) and routed back here rather
+  than silently patched on the Rust side. Section 7's frozen schema is
+  explicit that `detail` is "developer detail; logged locally, shown behind
+  a 'Details' disclosure," and Section 12 reinforces it ("stack traces...
+  go to `detail`") — the previous version put the actionable Section 10
+  description there and left only the short title-like fragment in
+  `message`, which the UI's `resolveErrorCopy` renders as the visible
+  description (it derives the *title* from `code` alone). Fixed for all
+  five literal-copy codes (`E_PATH_NOT_FOUND`, `E_PERMISSION_DENIED`,
+  `E_NO_SUPPORTED_FILES`, `E_REPO_TOO_LARGE`, `E_FILE_TOO_LARGE`) plus the
+  three placeholder codes. `E_PATH_ESCAPES_REPO`'s placeholder text is now
+  copied verbatim from `apps/desktop/src/copy/messages.ts`'s
+  `ERRORS.pathEscapesRepo().description` (the UI's own gap-fill for that
+  code) so the two sides show identical text instead of two independently
+  invented strings; `E_NOT_A_DIRECTORY` and `E_NO_ANALYSIS` have no UI-side
+  entry to align with yet, so they remain this engine's own reasonable
+  text, still flagged as pending confirmation. Locked in by a new
+  `test/rpc/error-copy.test.ts` asserting the convention (and the
+  `E_PATH_ESCAPES_REPO` byte-for-byte match) for every helper, plus a
+  corrected assertion in `test/rpc/methods.test.ts` that previously checked
+  the old (backwards) string.
+- **Phase 5 (post-hoc fix) — `importlib.import_module(...)` (Section 8.2
+  rule 6) is now captured by `python.scm` and resolved/reported correctly;
+  it was previously nominally documented but structurally unreachable.**
+  Added a query pattern matching `importlib.import_module(...)` calls
+  (anchored to the first positional argument only, so a trailing keyword
+  argument like `package=` is never mistaken for the module name),
+  `python-parser.ts` extraction that treats a literal string argument as a
+  normal, literal, resolvable import and any other argument shape as a
+  non-literal `dynamic` import, and — the part that made the rule
+  genuinely inert before this fix — `resolve-import.ts`'s `resolvePython`
+  never actually short-circuited on `kind === 'dynamic' && !isLiteral` the
+  way `resolveJsTsFamily` already did for JS/TS's `import()`; without that
+  check a non-literal `importlib.import_module(name)` would have been
+  handed straight to `resolvePythonImport` and silently misreported (most
+  likely as `no-match-on-disk`) instead of `dynamic-expression`. Exercised
+  end-to-end, not just at the unit level: a new `app/dynamic_loader.py` in
+  the `python-flask` fixture has both a literal call (resolves to
+  `app/models/user_model.py`) and a non-literal one (reports
+  `dynamic-expression`), asserted in `test/analyze/analyze.test.ts` and
+  covered by the regenerated `python-flask.snap.json` (the other four
+  fixtures' snapshots are untouched — confirmed via `git diff --stat`).

@@ -103,4 +103,29 @@ describe('resolveRawImport — Python', () => {
       unresolved: { fromPath: 'app/main.py', specifier: '.sibling', line: 1, reason: 'no-match-on-disk' },
     });
   });
+
+  test('a non-literal importlib.import_module(...) argument is dynamic-expression, never resolved (Section 8.2 rule 6)', () => {
+    const context = contextWith({}, { existingPathSet: new Set(['name.py']) }); // even if this "resolves" by accident, it must not be tried
+    const outcome = resolveRawImport(
+      'app/main.py',
+      'python',
+      rawImport({ specifier: 'name', kind: 'dynamic', isLiteral: false }),
+      context,
+    );
+    expect(outcome).toEqual({
+      kind: 'unresolved',
+      unresolved: { fromPath: 'app/main.py', specifier: 'name', line: 1, reason: 'dynamic-expression' },
+    });
+  });
+
+  test('a literal importlib.import_module(...) argument IS resolved with the same rules as a normal import', () => {
+    const context = contextWith({}, { existingPathSet: new Set(['models.py']) });
+    const outcome = resolveRawImport(
+      'app/main.py',
+      'python',
+      rawImport({ specifier: 'models', kind: 'dynamic', isLiteral: true }),
+      context,
+    );
+    expect(outcome.kind).toBe('edge');
+  });
 });

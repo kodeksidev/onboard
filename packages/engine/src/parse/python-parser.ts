@@ -207,7 +207,30 @@ function fromImportSpecifiers(node: Node, line: number): RawImport[] {
   return imports;
 }
 
+/**
+ * `importlib.import_module(...)` (Section 8.2 rule 6). A literal string
+ * argument is resolved with the same rules as a normal `import`; anything
+ * else (a variable, an f-string, a concatenation, ...) is recorded as a
+ * non-literal `dynamic` import so the resolver reports `dynamic-expression`
+ * instead of inventing an edge from opaque runtime data.
+ */
+function dynamicImportFromMatch(match: QueryMatch): RawImport[] {
+  const call = match.captures.find((c) => c.name === 'import.dynamic_call')?.node ?? null;
+  const arg = match.captures.find((c) => c.name === 'import.dynamic_arg')?.node ?? null;
+  if (call === null || arg === null) {
+    return [];
+  }
+  const line = call.startPosition.row + 1;
+  if (arg.type === 'string') {
+    return [{ specifier: stringLiteralContent(arg), line, kind: 'static', isTypeOnly: false, isLiteral: true }];
+  }
+  return [{ specifier: arg.text, line, kind: 'dynamic', isTypeOnly: false, isLiteral: false }];
+}
+
 function importsFromMatch(match: QueryMatch): RawImport[] {
+  if (match.captures.some((c) => c.name === 'import.dynamic_call')) {
+    return dynamicImportFromMatch(match);
+  }
   const stmt = match.captures.find((c) => c.name === 'import.stmt')?.node ?? null;
   if (stmt === null) {
     return [];

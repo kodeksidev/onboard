@@ -65,6 +65,12 @@ function resolveJsTsFamily(
 }
 
 function resolvePython(fromPath: string, rawImport: RawImport, context: PythonResolutionContext): ResolvedImportOutcome {
+  if (rawImport.kind === 'dynamic' && !rawImport.isLiteral) {
+    return {
+      kind: 'unresolved',
+      unresolved: { fromPath, specifier: rawImport.specifier, line: rawImport.line, reason: 'dynamic-expression' },
+    };
+  }
   const result = resolvePythonImport(fromPath, rawImport.specifier, context);
   if (result.kind === 'resolved') {
     return {
