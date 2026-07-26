@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p bench/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "bench:graph": "bun run bench/graph/run-bench-graph.ts"
@@ -36,6 +36,7 @@
     "@types/react": "~19.2.6",
     "@types/react-dom": "~19.2.3",
     "@vitejs/plugin-react": "~4.7.0",
+    "bun-types": "~1.3.14",
     "jest-axe": "~10.0.0",
     "jsdom": "~27.4.0",
     "tailwindcss": "~4.1.16",

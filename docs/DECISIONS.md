@@ -429,22 +429,90 @@ decided; it only records choices the spec left open.
   specifying multi-target behavior. Documented in
   `keyboard-nav.ts`'s file header; revisit if Phase 9/10 usage shows this
   reads as a dead end for files with several dependencies.
-- **Phase 8 — `bench:graph` reports headless Cytoscape timings and explicitly
-  does not claim to measure the gate's real budgets.** Attempted a genuine
-  browser-based measurement first: `playwright-core` driving the machine's
-  installed Microsoft Edge via `executablePath` (no browser download
-  needed). The Edge process launched and exited immediately (exit code 255)
-  every time, and the Vitest/jsdom environment has no working 2D canvas
-  either (no `canvas` npm package) — so no real compositor is reachable
-  from this environment at all, by either route. Rather than fabricate a
-  first-paint or frame-time number, `bench/graph/run-bench-graph.ts` prints
-  this gap explicitly, reports the real Section 9 Phase 8 budget numbers as
-  the *target* (not a result), and measures — genuinely — headless
-  `cytoscape` + `cytoscape-fcose` + `cytoscape-expand-collapse` construction
-  and layout-completion time against the same deterministic synthetic
-  graphs Phase 11's real, browser-based `bun run bench` (Section 11) will
-  use at the same node counts. The script still exits non-zero on a true
-  hang (300s sanity ceiling) so a real regression is not silent.
+- **Phase 8 — `bench:graph` drives a real headless Microsoft Edge over the
+  Chrome DevTools Protocol (a plain WebSocket), not `--dump-dom` and not
+  `playwright-core`.** First attempt (`playwright-core`'s
+  `chromium.launch({ executablePath: ... })` against the system's installed
+  Edge) reproducibly failed: the Edge process launched and exited
+  immediately (exit code 255) every time. That is a `playwright-core`
+  launcher problem, not a "no browser reachable" problem — confirmed by
+  invoking the same `msedge.exe` directly (`--headless=new --dump-dom`),
+  which works. Two further dead ends before landing on CDP: (1) `--dump-dom`
+  dumps the DOM the instant the `load` event fires and never waits for the
+  async layout/pan measurement the harness needs to run — proven with a
+  `setTimeout` probe that `--dump-dom` alone reports the pre-timeout DOM;
+  (2) `--virtual-time-budget` does make `--dump-dom` wait, but it also
+  breaks `requestAnimationFrame` scheduling: with `--disable-gpu`, a single
+  rAF fires only once, near the very end of the virtual budget, instead of
+  every ~16ms, and a busy rAF loop never completed at all in repeated
+  attempts. Driving Edge directly over CDP (`Runtime.evaluate` with
+  `awaitPromise: true` on `window.__runGraphBench(nodeCount)`, no DOM
+  scraping) uses real wall-clock time throughout and sidesteps both
+  problems entirely — verified first with a plain `setTimeout` probe
+  through the same code path before building the real harness.
+  `bench/graph/browser-harness/` is a small Vite-built page that imports
+  the actual production entry points (`createCore`, `buildLayoutOptions`,
+  `autoCollapseIfNeeded` — all exported from `useCytoscape.ts`/`collapse.ts`
+  for exactly this reuse) rather than a parallel reimplementation, served
+  from a local `Bun.serve()` static server (not `file://`, to avoid
+  Chromium's CORS restriction on `type="module"` scripts loaded from a
+  `file://` origin). `--disable-gpu` is deliberately NOT passed (Section 9
+  Phase 8's coordinator note suggested it, but empirically it is what broke
+  `requestAnimationFrame` above); headless Chromium/Edge still typically
+  rasterizes via SwiftShader software rendering either way, so the
+  "pessimistic versus the real WebView2 compositor" caveat still applies
+  and is printed by the script every run, alongside "this is still not the
+  Tauri webview — Phase 11 remains authoritative." If Edge or the CDP
+  handshake fails for any reason, the script catches it, prints the failure
+  reason, and still runs the headless-only (no browser) baseline rather
+  than exiting with nothing — that baseline uses the same production
+  functions run under Bun/JavaScriptCore with no canvas at all.
+- **Phase 8 — real measurement obtained; it exposed a genuine, unresolved
+  performance ceiling, not just a measurement-methodology problem.** With
+  the CDP harness actually running fcose in Chromium/Edge's real V8, at
+  1,000 synthetic files: `firstPaint ≈ 850–1,140 ms` (PASSES the 1,500 ms
+  budget); at 5,000 files: `firstPaint ≈ 4,900–5,800 ms` (FAILS). Scripted
+  pan p95 is `≈ 50 ms` at 1,000 nodes and `≈ 230 ms` at 5,000 (FAILS both
+  the 22 ms and 33 ms budgets). Investigating *why*, per the coordinator's
+  ask, led to two real production fixes in `useCytoscape.ts`, both kept
+  regardless of what the bench says because they are correct on their own
+  terms:
+  1. **Auto-collapse now runs BEFORE the initial layout, not after.**
+     `cytoscape-expand-collapse` removes a collapsed node's descendants
+     from layout participation entirely, so collapsing first means fcose
+     never has to position hidden nodes at all. Previously `initializeGraph`
+     ran layout on the *whole* graph, then collapsed — meaning the
+     >600-node auto-collapse rule (Phase 8's own paragraph) was not
+     actually saving any layout cost. After the fix, this synthetic graph's
+     visible node count for layout purposes is 13 at BOTH 1,000 and 5,000
+     total files (same directory shape, `MODULE_COUNT = 12` regardless of
+     file count).
+  2. **`quality: 'draft'` (fcose) kicks in whenever the VISIBLE
+     (post-collapse) node count still exceeds the same 600-node threshold**
+     — a safety net for repo shapes the depth->=2 collapse rule can't
+     shrink (e.g. thousands of files directly under one shallow directory).
+     `tile: false` and `packComponents: false` are also now unconditional:
+     both of fcose's grouping passes throw or degrade on this project's own
+     sample fixture's compound structure, a real upstream `cose-base` bug
+     independent of node count.
+  Even with both fixes, and even though only 13 nodes are ever laid out,
+  first paint still fails at 5,000 total files. The bench's own printed
+  numbers show why: `constructLayout` itself (creating 5,000 Cytoscape
+  node/edge objects and applying the stylesheet to all of them, not just
+  the 13 that stay visible) is `≈ 700–900 ms` at 1,000 nodes but `≈ 4,000–
+  4,500 ms` at 5,000 — it scales with the TOTAL element count, not the
+  visible one, and dominates the budget on its own before any layout or
+  paint happens. Pan p95 shows the same shape (233 ms at 5,000 nodes vs.
+  50 ms at 1,000, despite an identical 13 visible nodes in both cases),
+  suggesting Cytoscape's per-frame work is not fully skipping
+  collapsed-and-hidden elements either. This is flagged here rather than
+  patched hastily: the honest fix is architectural (materialize a
+  collapsed directory's descendants into the Cytoscape model lazily, on
+  expand, instead of creating and immediately hiding all of them up front)
+  and deserves its own test coverage rather than a rushed change at the end
+  of this phase. Left as an explicit open item for whoever next touches
+  `DependencyGraph` performance — likely surfaced again by Phase 11's
+  `bun run bench` against the same budgets in the real Tauri webview.
 - **Phase 8 — `DependencyGraph` is code-split via `React.lazy` +
   `Suspense` and reached through a small Overview/Dependency-graph tab
   switcher added to `App.tsx`.** Neither is named in Section 9 Phase 8's
