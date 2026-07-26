@@ -4,6 +4,7 @@ import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { buildGraphStylesheet } from './graph-style';
+import { fileNodeId } from './graph-model';
 import type { GraphElements } from './graph-model';
 import {
   GRAPH_AUTO_COLLAPSE_THRESHOLD,
@@ -194,6 +195,42 @@ export function clearHighlight(cy: cytoscape.Core | null): void {
   cy?.elements().removeClass('dimmed selected-node highlighted-dependency highlighted-dependent');
 }
 
+const ROUTE_EDGE_ID_PREFIX = 'route:';
+
+/**
+ * Draws the "start here" roadmap's reading-order route as an overlay
+ * (Section 9 Phase 9: "highlighted route through the graph"). These are
+ * synthetic edges — the roadmap's order is a BFS-layered reading path, not
+ * necessarily real import edges — so they are added to (and, on every
+ * call, first removed from) the Cytoscape model rather than toggling
+ * classes on existing edges. Always exactly `paths.length - 1` segments,
+ * one per consecutive pair, skipping only a pair whose endpoint isn't in
+ * the graph (defensive; every roadmap step's path is always an indexed
+ * file in practice).
+ */
+export function applyRouteOverlay(cy: cytoscape.Core | null, paths: readonly string[]): void {
+  if (cy === null) {
+    return;
+  }
+  cy.remove(`.route-edge`);
+  for (let index = 0; index < paths.length - 1; index += 1) {
+    const fromPath = paths[index];
+    const toPath = paths[index + 1];
+    if (fromPath === undefined || toPath === undefined) {
+      continue;
+    }
+    const source = fileNodeId(fromPath);
+    const target = fileNodeId(toPath);
+    if (cy.getElementById(source).empty() || cy.getElementById(target).empty()) {
+      continue;
+    }
+    cy.add({
+      data: { id: `${ROUTE_EDGE_ID_PREFIX}${index}`, source, target },
+      classes: 'route-edge',
+    });
+  }
+}
+
 /** The graph's own quick filter (Phase 8: "focus search"). Section 10's full "where is X?" search arrives in Phase 10. */
 export function applySearchFilter(cy: cytoscape.Core | null, query: string): void {
   if (cy === null) {
@@ -224,8 +261,18 @@ export interface UseCytoscapeApi {
   highlightNeighborhood: (id: string) => void;
   clearHighlight: () => void;
   applySearchFilter: (query: string) => void;
+  applyRouteOverlay: (paths: readonly string[]) => void;
   expandAll: () => void;
   collapseAll: () => void;
+  /**
+   * Escape hatch onto the live `cytoscape.Core`, `null` until `isReady`.
+   * Not used by production UI (every real interaction goes through the
+   * methods above) — it exists so integration tests can verify real
+   * Cytoscape state (pan/zoom/rendered positions) end-to-end, the same way
+   * `useCytoscape.test.ts`'s own unit tests already do against a
+   * standalone core.
+   */
+  getCore: () => cytoscape.Core | null;
 }
 
 /** Owns the one `cytoscape.Core` instance for the mounted `DependencyGraph` (Section 5). */
@@ -260,7 +307,9 @@ export function useCytoscape(options: UseCytoscapeOptions): UseCytoscapeApi {
     highlightNeighborhood: useCallback((id: string) => highlightNeighborhood(cyRef.current, id), []),
     clearHighlight: useCallback(() => clearHighlight(cyRef.current), []),
     applySearchFilter: useCallback((query: string) => applySearchFilter(cyRef.current, query), []),
+    applyRouteOverlay: useCallback((paths: readonly string[]) => applyRouteOverlay(cyRef.current, paths), []),
     expandAll: useCallback(() => apiRef.current?.expandAll(), []),
     collapseAll: useCallback(() => apiRef.current?.collapseAll(), []),
+    getCore: useCallback(() => cyRef.current, []),
   };
 }

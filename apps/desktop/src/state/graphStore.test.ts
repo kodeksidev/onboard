@@ -3,7 +3,13 @@ import { registerGraphFocusHandler, useGraphStore } from './graphStore';
 
 afterEach(() => {
   registerGraphFocusHandler(null);
-  useGraphStore.setState({ selectedPath: null, focusedPath: null, focusToken: 0, searchFocusToken: 0 });
+  useGraphStore.setState({
+    selectedPath: null,
+    focusedPath: null,
+    focusToken: 0,
+    searchFocusToken: 0,
+    routePaths: [],
+  });
 });
 
 describe('graphStore', () => {
@@ -54,5 +60,13 @@ describe('graphStore', () => {
     const state = useGraphStore.getState();
     expect(state.focusedPath).toBeNull();
     expect(state.selectedPath).toBe('src/a.ts');
+  });
+
+  test('setRoutePaths replaces the published roadmap route (Phase 9: the overlay DependencyGraph reads)', () => {
+    useGraphStore.getState().setRoutePaths(['a.ts', 'b.ts', 'c.ts']);
+    expect(useGraphStore.getState().routePaths).toEqual(['a.ts', 'b.ts', 'c.ts']);
+
+    useGraphStore.getState().setRoutePaths([]);
+    expect(useGraphStore.getState().routePaths).toEqual([]);
   });
 });
