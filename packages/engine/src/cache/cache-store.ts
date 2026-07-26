@@ -83,11 +83,15 @@ export interface CacheStore {
 
   replaceSymbolsForPath(path: string, rows: readonly SymbolRow[]): void;
   getSymbolsForPath(path: string): readonly SymbolRow[];
+  /** Every symbol whose `name_lower` contains `term` (Section 8.7 step 3) — repo-wide, not path-scoped. */
+  querySymbolsByTermSubstring(term: string): readonly SymbolRow[];
 
   replaceImportEdgesForPath(fromPath: string, rows: readonly ImportEdgeRow[]): void;
   getImportEdgesFromPath(fromPath: string): readonly ImportEdgeRow[];
 
   replaceTokensForPath(path: string, rows: readonly TokenIndexRow[]): void;
+  /** Every `token_index` row for an exact `token` match (Section 8.7 step 3). */
+  queryTokensByToken(token: string): readonly TokenIndexRow[];
 
   getAnalysisResult(): AnalysisResultRow | null;
   putAnalysisResult(row: AnalysisResultRow): void;

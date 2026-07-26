@@ -275,3 +275,92 @@ describe('SqliteCacheStore — analysis_result single-row table', () => {
     store.close();
   });
 });
+
+describe('SqliteCacheStore — search query methods (Section 8.7)', () => {
+  test('querySymbolsByTermSubstring finds a repo-wide substring match, case-insensitively via name_lower', () => {
+    const store = new SqliteCacheStore(dbFilePath);
+    store.open(EXPECTED);
+    store.upsertFileCache({
+      path: 'src/auth.ts',
+      contentHash: 'a'.repeat(64),
+      sizeBytes: 1,
+      lineCount: 1,
+      language: 'ts',
+      classification: 'service',
+      isParsed: true,
+      skipReason: null,
+      parsedJson: '{}',
+    });
+    store.replaceSymbolsForPath('src/auth.ts', [
+      {
+        id: 'sym-auth',
+        path: 'src/auth.ts',
+        name: 'authenticateUser',
+        nameLower: 'authenticateuser',
+        kind: 'function',
+        startLine: 1,
+        endLine: 2,
+        isExported: true,
+        container: null,
+        signature: null,
+      },
+    ]);
+    expect(store.querySymbolsByTermSubstring('auth')).toHaveLength(1);
+    expect(store.querySymbolsByTermSubstring('zzz')).toEqual([]);
+    store.close();
+  });
+
+  test('querySymbolsByTermSubstring escapes SQL LIKE wildcards in the term', () => {
+    const store = new SqliteCacheStore(dbFilePath);
+    store.open(EXPECTED);
+    store.upsertFileCache({
+      path: 'src/a.ts',
+      contentHash: 'a'.repeat(64),
+      sizeBytes: 1,
+      lineCount: 1,
+      language: 'ts',
+      classification: 'util',
+      isParsed: true,
+      skipReason: null,
+      parsedJson: '{}',
+    });
+    store.replaceSymbolsForPath('src/a.ts', [
+      {
+        id: 'sym-a',
+        path: 'src/a.ts',
+        name: 'getUser',
+        nameLower: 'getuser',
+        kind: 'function',
+        startLine: 1,
+        endLine: 1,
+        isExported: true,
+        container: null,
+        signature: null,
+      },
+    ]);
+    // A literal underscore in the search term must not act as a SQL LIKE
+    // single-character wildcard and spuriously match "getuser".
+    expect(store.querySymbolsByTermSubstring('get_user')).toEqual([]);
+    store.close();
+  });
+
+  test('queryTokensByToken returns an exact-match row', () => {
+    const store = new SqliteCacheStore(dbFilePath);
+    store.open(EXPECTED);
+    store.upsertFileCache({
+      path: 'src/a.ts',
+      contentHash: 'a'.repeat(64),
+      sizeBytes: 1,
+      lineCount: 1,
+      language: 'ts',
+      classification: 'util',
+      isParsed: true,
+      skipReason: null,
+      parsedJson: '{}',
+    });
+    store.replaceTokensForPath('src/a.ts', [{ token: 'auth', path: 'src/a.ts', count: 2, linesJson: '[1,4]' }]);
+    expect(store.queryTokensByToken('auth')).toEqual([{ token: 'auth', path: 'src/a.ts', count: 2, linesJson: '[1,4]' }]);
+    expect(store.queryTokensByToken('nope')).toEqual([]);
+    store.close();
+  });
+});

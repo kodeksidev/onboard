@@ -6,7 +6,7 @@
  * plain `CacheStore` row types.
  */
 import { Database } from 'bun:sqlite';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import type {
   AnalysisResultRow,
   CacheOpenOutcome,
@@ -18,11 +18,17 @@ import type {
   TokenIndexRow,
 } from './cache-store';
 import { decideCacheInvalidation } from './invalidation';
+// `with { type: 'text' }` (not `readFileSync(new URL(...))`) is required so
+// `bun build --compile` actually embeds this file in the standalone sidecar
+// binary — the URL+readFileSync pattern resolves to a virtual `~BUN/root/`
+// path at runtime inside a compiled executable and throws ENOENT (discovered
+// while driving `scripts/test-rpc.ts` against the built binary; see
+// `docs/DECISIONS.md`).
+import SCHEMA_SQL from './schema.sql' with { type: 'text' };
 
-const SCHEMA_SQL_URL = new URL('./schema.sql', import.meta.url);
-
-function readSchemaSql(): string {
-  return readFileSync(SCHEMA_SQL_URL, 'utf8');
+/** Escapes `%`, `_`, and the escape character itself for a SQLite `LIKE ... ESCAPE '\'` pattern. */
+function escapeLikePattern(term: string): string {
+  return term.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 interface RawFileCacheRow {
@@ -99,6 +105,17 @@ function fromRawImportEdge(row: RawImportEdgeRow): ImportEdgeRow {
     kind: row.kind,
     isTypeOnly: row.is_type_only !== 0,
   };
+}
+
+interface RawTokenIndexRow {
+  readonly token: string;
+  readonly path: string;
+  readonly count: number;
+  readonly lines_json: string;
+}
+
+function fromRawTokenIndex(row: RawTokenIndexRow): TokenIndexRow {
+  return { token: row.token, path: row.path, count: row.count, linesJson: row.lines_json };
 }
 
 interface ProbeResult {
@@ -199,7 +216,7 @@ export class SqliteCacheStore implements CacheStore {
   private recreate(expected: CacheSchemaMeta): void {
     deleteDatabaseFiles(this.dbFilePath);
     const db = new Database(this.dbFilePath);
-    db.exec(readSchemaSql());
+    db.exec(SCHEMA_SQL);
     const metaSql = 'INSERT INTO schema_meta (key, value) VALUES (?, ?)';
     db.run(metaSql, ['cacheSchemaVersion', String(expected.cacheSchemaVersion)]);
     db.run(metaSql, ['engineVersion', expected.engineVersion]);
@@ -302,6 +319,15 @@ export class SqliteCacheStore implements CacheStore {
       .map(fromRawSymbol);
   }
 
+  querySymbolsByTermSubstring(term: string): readonly SymbolRow[] {
+    return this.requireDb()
+      .query<RawSymbolRow, [string]>(
+        "SELECT * FROM symbol WHERE name_lower LIKE ? ESCAPE '\\' ORDER BY path ASC, start_line ASC",
+      )
+      .all(`%${escapeLikePattern(term)}%`)
+      .map(fromRawSymbol);
+  }
+
   replaceImportEdgesForPath(fromPath: string, rows: readonly ImportEdgeRow[]): void {
     const db = this.requireDb();
     db.run('DELETE FROM import_edge WHERE from_path = ?', [fromPath]);
@@ -336,6 +362,13 @@ export class SqliteCacheStore implements CacheStore {
     } finally {
       insert.finalize();
     }
+  }
+
+  queryTokensByToken(token: string): readonly TokenIndexRow[] {
+    return this.requireDb()
+      .query<RawTokenIndexRow, [string]>('SELECT * FROM token_index WHERE token = ? ORDER BY path ASC')
+      .all(token)
+      .map(fromRawTokenIndex);
   }
 
   getAnalysisResult(): AnalysisResultRow | null {

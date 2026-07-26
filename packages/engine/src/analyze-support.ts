@@ -22,6 +22,7 @@ import { posixExtLower } from './util/posix-path';
 import { byteCompare } from './util/sort';
 import type { CacheStore } from './cache/cache-store';
 import { buildSymbolRows } from './index/symbol-index';
+import { buildTokenIndexRows } from './index/token-index';
 
 export type LanguageValue = AnalysisResultValue['files'][number]['language'];
 export type DiagnosticValue = AnalysisResultValue['diagnostics'][number];
@@ -137,6 +138,8 @@ export function processOneFile(repoRootAbs: string, path: string, sizeBytes: num
 export interface ParsePhaseResult {
   readonly parsedByPath: ReadonlyMap<string, ParsedFile>;
   readonly diagnostics: readonly DiagnosticValue[];
+  /** Count of parseable files served from the cache (content hash matched) this run. */
+  readonly cacheHitCount: number;
 }
 
 interface CachedRow {
@@ -232,7 +235,7 @@ export async function runParsePhase(
   });
   const parseDiagnostics = buildParseDiagnostics(allEntries, allResults);
 
-  return { parsedByPath, diagnostics: parseDiagnostics };
+  return { parsedByPath, diagnostics: parseDiagnostics, cacheHitCount: cacheHit.size };
 }
 
 export interface ResolutionOutput {
@@ -305,6 +308,64 @@ export function resolveAllImports(
     unresolvedImports,
     externalImportedByPaths: externalImportsByKey,
   };
+}
+
+const NON_TOKENIZABLE_SKIP_REASONS: ReadonlySet<FileSkipReason> = new Set(['binary', 'too-large', 'minified', 'unreadable']);
+
+const EMPTY_PARSED_JSON = JSON.stringify({ imports: [], symbols: [], hasSyntaxError: false });
+
+/**
+ * `token_index.path` (and `symbol.path`, `import_edge.from_path`) all carry a
+ * `REFERENCES file_cache(path)` foreign key (Section 6.1's schema). `symbol`/
+ * `import_edge` rows are always preceded by an `upsertFileCache` call in
+ * `persistParsedFile`, but a file that is never parsed (README.md, JSON,
+ * a skipped/too-large file) never goes through that path — so a bare
+ * `replaceTokensForPath` call for it would violate the FK on a cold cache.
+ * This guarantees a `file_cache` row exists for every file before token rows
+ * are written for it, without disturbing the row a freshly-parsed file
+ * already got from `persistParsedFile` (the upsert is idempotent).
+ */
+function ensureFileCacheRow(cacheStore: CacheStore, f: ProcessedFile, parsedByPath: ReadonlyMap<string, ParsedFile>): void {
+  const parsed = parsedByPath.get(f.path);
+  cacheStore.upsertFileCache({
+    path: f.path,
+    contentHash: f.contentHash,
+    sizeBytes: f.sizeBytes,
+    lineCount: f.lineCount,
+    language: f.language,
+    classification: 'unknown', // not yet known at this stage; analyze.ts owns the authoritative FileNode
+    isParsed: f.isParsed,
+    skipReason: f.skipReason,
+    parsedJson: parsed === undefined ? EMPTY_PARSED_JSON : JSON.stringify(parsed),
+  });
+}
+
+/**
+ * Persists the Section 6.1 `token_index` rows every "where is X?" content
+ * match (Section 8.7 step 3) is drawn from. Tokenization is language-agnostic
+ * (Section: `index/token-index.ts`'s doc comment) — it runs over every
+ * readable, reasonably-sized file, not just the four parsed grammars, so a
+ * hit can land in a README or a config file. Unlike `persistParsedFile`,
+ * this is not yet incremental-cache-gated by content hash: it rebuilds every
+ * `analyze()` run. That is a performance opportunity for a later phase, not
+ * a correctness or determinism issue — `buildTokenIndexRows` is a pure
+ * function of `(path, text)`, so re-running it always yields the same rows.
+ */
+export function persistTokenIndex(
+  files: readonly ProcessedFile[],
+  parsedByPath: ReadonlyMap<string, ParsedFile>,
+  cacheStore: CacheStore | undefined,
+): void {
+  if (cacheStore === undefined) {
+    return;
+  }
+  files.forEach((f) => {
+    if (f.skipReason !== null && NON_TOKENIZABLE_SKIP_REASONS.has(f.skipReason)) {
+      return;
+    }
+    ensureFileCacheRow(cacheStore, f, parsedByPath);
+    cacheStore.replaceTokensForPath(f.path, buildTokenIndexRows(f.path, f.text));
+  });
 }
 
 export function assertHexLength(value: string): string {

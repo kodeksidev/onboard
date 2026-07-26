@@ -88,6 +88,14 @@ export const HARD_IGNORE_GLOBS: readonly string[] = [
 /** A file above this size is skipped as `too-large` and never opened for parsing. */
 export const MAX_PARSE_BYTES = 1_572_864;
 
+/**
+ * Section 10's "File > 2 MB opened in the viewer" edge case (`E_FILE_TOO_LARGE`).
+ * Deliberately separate from `MAX_PARSE_BYTES`: this gates `engine.readFile`'s
+ * file-viewer path, not parsing/indexing, and the copy table's "2 MB" is a
+ * distinct, larger threshold than the 1.5 MB parse-skip limit.
+ */
+export const MAX_VIEWER_FILE_BYTES = 2 * 1024 * 1024;
+
 /** Number of leading bytes inspected for a NUL byte to detect a `binary` file. */
 export const BINARY_CHECK_BYTES = 8192;
 
@@ -300,3 +308,30 @@ export const REPO_ID_HEX_LENGTH = 16;
 
 /** Length of a full lowercase-hex sha256 digest. */
 export const SHA256_HEX_LENGTH = 64;
+
+// ---------------------------------------------------------------------------
+// Section 8.7 — "where is X?" search and ranking
+// ---------------------------------------------------------------------------
+
+export const MIN_SEARCH_TERM_LENGTH = 3;
+export const EXPANSION_DECAY = 0.6;
+export const MAX_SEARCH_CANDIDATES = 2000;
+
+export const W_SYMBOL_EXACT = 100;
+export const W_SYMBOL_PREFIX = 60;
+export const W_SYMBOL_SUBSTRING = 30;
+export const W_FILENAME_EXACT = 45;
+export const W_FILENAME_SUBSTR = 20;
+export const W_PATH_SEGMENT = 15;
+export const W_CONTENT_CAP = 24;
+export const W_EXPORTED_BONUS = 8;
+export const W_IMPORTANCE = 25;
+export const P_TEST = -20;
+export const P_GENERATED = -30;
+export const P_FIXTURE = -15;
+
+export const SEARCH_SCORE_PRECISION = 3;
+/** Max `lineHits` per `SearchHit` (Section 8.7 step 6). */
+export const MAX_LINE_HITS = 5;
+/** Max characters of a `lineHits[].preview` (Section 8.7 step 6). */
+export const LINE_HIT_PREVIEW_MAX_CHARS = 200;
