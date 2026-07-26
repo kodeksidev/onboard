@@ -37,12 +37,12 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readLines } from '../src/rpc/server';
+import { BARE_NETWORK_SPECIFIERS, findNetworkSpecifiers } from '../src/guard/scan-bundle';
 
 const ENTRYPOINT = join(import.meta.dir, '..', 'src', 'main.ts');
 const SCAN_OUT_DIR = join(import.meta.dir, '..', 'dist', 'no-network-scan');
 const GUARD_MARKER = '// src/guard/no-network.ts';
 const NEXT_MODULE_MARKER = /\n\/\/ src\//;
-const BARE_NETWORK_SPECIFIERS = ['net', 'http', 'https', 'tls', 'dgram', 'dns'] as const;
 
 async function buildScanBundle(): Promise<string> {
   const result = await Bun.build({ entrypoints: [ENTRYPOINT], target: 'bun', outdir: SCAN_OUT_DIR });
@@ -83,19 +83,29 @@ function reportLiteralSubstrings(bundleText: string): void {
   });
 }
 
+/**
+ * Scans for ALL THREE emitted forms — dynamic `import("net")`, static
+ * `from "net"`, and CJS `require("net")` — via `findNetworkSpecifiers`.
+ *
+ * The static form was previously unmatched, and a privacy audit proved the
+ * gate reported PASS with a live `import { connect } from 'node:net'` and a
+ * real `connect(443, ...)` call in the bundle. `test/guard/scan-bundle.test.ts`
+ * is the regression: it builds a bundle containing exactly that and asserts a
+ * violation is found.
+ */
 function checkBareSpecifiersOutsideGuard(bundleText: string): boolean {
   const outsideGuard = textOutsideGuardModule(bundleText);
-  console.log('\n--- bare Node network-module import specifiers OUTSIDE guard/no-network.ts ---');
-  let anyLeak = false;
-  BARE_NETWORK_SPECIFIERS.forEach((specifier) => {
-    const pattern = `import("${specifier}")`;
-    const count = countOccurrences(outsideGuard, pattern);
-    console.log(`  ${pattern}: ${String(count)} occurrence(s) outside the guard module`);
-    if (count > 0) {
-      anyLeak = true;
-    }
-  });
-  return anyLeak;
+  console.log('\n--- Node network-module references OUTSIDE guard/no-network.ts ---');
+  console.log(`    (forms checked per specifier: import("x"), from "x", require("x"))`);
+  const findings = findNetworkSpecifiers(outsideGuard);
+  if (findings.length === 0) {
+    console.log(`  none, across all ${String(BARE_NETWORK_SPECIFIERS.length)} specifiers`);
+    return false;
+  }
+  for (const finding of findings) {
+    console.log(`  LEAK  ${finding.form}: ${String(finding.count)} occurrence(s)`);
+  }
+  return true;
 }
 
 /**
