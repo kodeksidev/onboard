@@ -638,3 +638,57 @@ decided; it only records choices the spec left open.
   itself, so the module remains a single logical composition root split
   across files for size reasons only, not a change to its public surface
   (`analyze()` is still the only export anything outside this cluster calls).
+- **Phase 9 — `RoadmapStep.section` labels are the react-ui team's own
+  copy, added to `ROADMAP_COPY.sectionLabels` in `src/copy/messages.ts`.**
+  Section 10 doesn't name literal strings for the five `RoadmapStep.section`
+  values; Section 9 Phase 9 only requires each render "distinguishably".
+  Chose short, conventional labels ("Entry point", "Core", "Supporting",
+  "Leaf utility", "Unreached") and paired every one with both a distinct
+  color AND the text label — never color alone — since a screen reader
+  user and a colorblind user both need the distinction Section 9 asks for.
+- **Phase 9 — the roadmap's graph overlay is drawn as synthetic edges
+  (class `route-edge`), not by re-styling real import edges.** The
+  roadmap's order is a BFS-layered reading path (Section 8.5), not
+  necessarily real import edges — consecutive steps are frequently not
+  directly connected in the dependency graph at all (e.g. the fixture's
+  leaf-utility and unreached steps). `useCytoscape.ts`'s `applyRouteOverlay`
+  therefore removes and re-adds a dedicated edge per consecutive step pair
+  on every call, giving exactly `steps.length - 1` segments regardless of
+  what the underlying import graph looks like, per Section 9 Phase 9's own
+  wording.
+- **Phase 9 — `UseCytoscapeApi.getCore()` and `DependencyGraph`'s
+  `onCytoscapeReady` prop are new, deliberately test-only escape hatches.**
+  Neither is called by any production code path (every real interaction
+  already goes through the existing `focusNodeById`/`highlightNeighborhood`/
+  etc. methods). They exist because Section 9 Phase 9's gate — "clicking
+  step n focuses and centers that node in the graph, asserted by a test" —
+  needs a way to verify REAL Cytoscape state (rendered position after
+  centering, actual overlay edge count) from an integration test that
+  mounts `RoadmapPanel` and `DependencyGraph` together, and Phase 8 never
+  built a hand-rolled Cytoscape test double to assert against (it uses the
+  real library headless throughout, deliberately — see Phase 8's entries
+  above). `getCore()` returns `null` until `isReady`, matching the rest of
+  the API's null-safety.
+- **Phase 9 — cross-component focus (`registerGraphFocusHandler`) now
+  triggers the same aria-live announcement an in-graph click or keyboard
+  move does.** Not explicitly requested, but Section 9 Phase 8's "every
+  focus change announced via aria-live" and criterion 20 (roadmap panel
+  accessibility) together imply a roadmap-driven focus shouldn't be a
+  second-class experience for screen reader users versus a mouse click on
+  the same node.
+- **Phase 9 — `RoadmapPanel` and `ModuleMap` are wired into `App.tsx` as two
+  more tabs ("Start here", "Module map"), not lazy-loaded.** Same "no dead
+  controls" reasoning as Phase 8's Dependency-graph tab — a built component
+  with no reachable path from `App.tsx` is dead code. Not lazy-loaded
+  because neither pulls in a heavyweight dependency the way `cytoscape` +
+  its two extensions did (Phase 8), so there is no bundle-size reason to
+  defer them.
+- **Phase 9 — Phase 8's flagged loose end is closed in `useCytoscape.ts`,
+  not in `DependencyGraph.tsx`'s JSX.** `useRecenterOnReadyEffect` reads
+  `useGraphStore.getState().focusedPath` (a one-time read, not a reactive
+  subscription) the moment `graph.isReady` flips true, and re-centers on it
+  if set. This covers exactly the flow described: clicking a roadmap step
+  while the graph tab is closed sets `focusedPath` with nothing mounted to
+  act on it; opening the tab afterward re-mounts `DependencyGraph`, which
+  then centers on whatever was already focused — verified by a dedicated
+  cross-tab integration test (`RoadmapPanel.graphIntegration.test.tsx`).

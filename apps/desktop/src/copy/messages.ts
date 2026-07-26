@@ -155,6 +155,31 @@ export const ANALYSIS_PROGRESS_COPY = {
   },
 } as const;
 
+/** Section 9 Phase 9: the roadmap's five `RoadmapStep.section` values must render distinguishably. */
+export const ROADMAP_COPY = {
+  title: 'Start here',
+  sectionLabels: {
+    entry: 'Entry point',
+    core: 'Core',
+    supporting: 'Supporting',
+    'leaf-utility': 'Leaf utility',
+    unreached: 'Unreached',
+  },
+  companionsLabel: 'Part of this step:',
+  dependsOnLabel: 'Depends on:',
+  dependedOnByLabel: (count: number): string => `Imported by ${count} file${count === 1 ? '' : 's'}`,
+  focusInGraphLabel: 'Focus in graph',
+  openFileLabel: 'Open file',
+} as const;
+
+export const MODULE_MAP_COPY = {
+  title: 'Module map',
+  keyFilesLabel: 'Key files',
+  dependsOnModulesLabel: 'Depends on',
+  dependedOnByModulesLabel: 'Used by',
+  fileCountLabel: (count: number): string => `${count} file${count === 1 ? '' : 's'}`,
+} as const;
+
 /**
  * Every literal title in Section 10 is static — none of them interpolate a
  * value, only the descriptions do. `AppError.message` (Section 7's error

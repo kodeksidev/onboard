@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
+import type cytoscape from 'cytoscape';
 import type { AnalysisResult } from '@onboard/contract';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { registerGraphFocusHandler, useGraphStore } from '@/state/graphStore';
@@ -14,6 +15,8 @@ import { GraphListFallback } from './GraphListFallback';
 export interface DependencyGraphProps {
   readonly result: AnalysisResult;
   readonly onOpenFile?: (path: string) => void;
+  /** Test-only escape hatch (see `UseCytoscapeApi.getCore`'s doc comment); never used by production UI. */
+  readonly onCytoscapeReady?: (cy: cytoscape.Core) => void;
 }
 
 const NOOP_OPEN_FILE = (): void => undefined;
@@ -107,11 +110,20 @@ function useGraphSideEffects(
   searchInputRef: RefObject<HTMLInputElement | null>,
   searchQuery: string,
   searchFocusToken: number,
+  result: AnalysisResult,
+  announce: (text: string) => void,
 ): void {
   useEffect(() => {
-    registerGraphFocusHandler((path) => graph.focusNodeById(fileNodeId(path)));
+    // A roadmap step click (or any other future caller of
+    // `graphStore.focusPath`) gets the same aria-live announcement as an
+    // in-graph keyboard move or click — cross-component focus changes are
+    // not a second-class experience for screen reader users.
+    registerGraphFocusHandler((path) => {
+      graph.focusNodeById(fileNodeId(path));
+      announce(describeFocusedFile(result, path));
+    });
     return () => registerGraphFocusHandler(null);
-  }, [graph.focusNodeById]);
+  }, [graph.focusNodeById, result, announce]);
 
   useEffect(() => {
     if (searchFocusToken > 0) {
@@ -124,6 +136,41 @@ function useGraphSideEffects(
   }, [searchQuery, graph.applySearchFilter]);
 }
 
+/**
+ * Section 9 Phase 9's "highlighted route through the graph": re-applies the
+ * roadmap's overlay whenever `routePaths` changes (e.g. a new analysis, or
+ * `RoadmapPanel` mounting/unmounting) and whenever the graph itself becomes
+ * ready (so the overlay survives a re-mount of `DependencyGraph`).
+ */
+function useRouteOverlayEffect(graph: UseCytoscapeApi, routePaths: readonly string[]): void {
+  useEffect(() => {
+    graph.applyRouteOverlay(routePaths);
+  }, [routePaths, graph.applyRouteOverlay, graph.isReady]);
+}
+
+/**
+ * Closes the Phase 8 handoff's flagged loose end: a roadmap click while the
+ * graph tab is closed sets `graphStore.focusedPath` but there is no mounted
+ * graph to center on it. Once the (re-)mounted graph finishes its layout,
+ * re-center on whatever was already focused — this is exactly the "start
+ * here" flow of clicking a roadmap step, then opening the graph tab.
+ */
+function useRecenterOnReadyEffect(graph: UseCytoscapeApi): void {
+  useEffect(() => {
+    if (!graph.isReady) {
+      return;
+    }
+    const existingFocusedPath = useGraphStore.getState().focusedPath;
+    if (existingFocusedPath !== null) {
+      graph.focusNodeById(fileNodeId(existingFocusedPath));
+    }
+    // Deliberately depends only on `graph.isReady`: this reads the current
+    // store value once per "graph became ready" transition, not as a
+    // reactive subscription (no react-hooks plugin in this project's
+    // eslint config, so no exhaustive-deps suppression comment is needed).
+  }, [graph.isReady]);
+}
+
 interface DependencyGraphController {
   readonly containerRef: RefObject<HTMLDivElement | null>;
   readonly searchInputRef: RefObject<HTMLInputElement | null>;
@@ -134,10 +181,23 @@ interface DependencyGraphController {
   readonly handleKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
 }
 
+function useCytoscapeReadyEffect(graph: UseCytoscapeApi, onCytoscapeReady: ((cy: cytoscape.Core) => void) | undefined): void {
+  useEffect(() => {
+    if (!graph.isReady || onCytoscapeReady === undefined) {
+      return;
+    }
+    const core = graph.getCore();
+    if (core !== null) {
+      onCytoscapeReady(core);
+    }
+  }, [graph.isReady, graph.getCore, onCytoscapeReady]);
+}
+
 /** Everything `DependencyGraph`'s JSX needs, assembled in one hook so the component itself stays render-only. */
 function useDependencyGraphController(
   result: AnalysisResult,
   onOpenFile: (path: string) => void,
+  onCytoscapeReady: ((cy: cytoscape.Core) => void) | undefined,
 ): DependencyGraphController {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -153,6 +213,7 @@ function useDependencyGraphController(
   const selectPath = useGraphStore((state) => state.selectPath);
   const requestSearchFocus = useGraphStore((state) => state.requestSearchFocus);
   const searchFocusToken = useGraphStore((state) => state.searchFocusToken);
+  const routePaths = useGraphStore((state) => state.routePaths);
 
   const graph = useCytoscape({
     containerRef,
@@ -161,7 +222,10 @@ function useDependencyGraphController(
     onNodeTap: (id) => handleNodeTap({ result, selectPath, graph, announce: setAnnouncement }, id),
   });
 
-  useGraphSideEffects(graph, searchInputRef, searchQuery, searchFocusToken);
+  useGraphSideEffects(graph, searchInputRef, searchQuery, searchFocusToken, result, setAnnouncement);
+  useRouteOverlayEffect(graph, routePaths);
+  useCytoscapeReadyEffect(graph, onCytoscapeReady);
+  useRecenterOnReadyEffect(graph);
 
   const handleKeyDown = createKeyDownHandler({
     result,
@@ -185,9 +249,13 @@ function useDependencyGraphController(
  * Phase 8). `useGraphStore` is the seam Phase 9's roadmap uses to focus and
  * center a step's file without knowing a `cytoscape.Core` exists.
  */
-export function DependencyGraph({ result, onOpenFile = NOOP_OPEN_FILE }: DependencyGraphProps): JSX.Element {
+export function DependencyGraph({
+  result,
+  onOpenFile = NOOP_OPEN_FILE,
+  onCytoscapeReady,
+}: DependencyGraphProps): JSX.Element {
   const { containerRef, searchInputRef, searchQuery, setSearchQuery, announcement, graph, handleKeyDown } =
-    useDependencyGraphController(result, onOpenFile);
+    useDependencyGraphController(result, onOpenFile, onCytoscapeReady);
 
   return (
     <section aria-labelledby="dependency-graph-title" className="flex flex-1 flex-col">

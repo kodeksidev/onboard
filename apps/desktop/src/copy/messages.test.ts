@@ -3,6 +3,8 @@ import {
   EMPTY_STATE_NO_REPO,
   ERRORS,
   MODE_INDICATOR,
+  MODULE_MAP_COPY,
+  ROADMAP_COPY,
   SEARCH_COPY,
   resolveErrorCopy,
 } from './messages';
@@ -99,5 +101,25 @@ describe('resolveErrorCopy', () => {
     expect(resolved.title).toBe('Something went wrong');
     expect(resolved.description).toBe('Something specific.');
     expect(resolved.actionLabel).toBeNull();
+  });
+});
+
+describe('ROADMAP_COPY', () => {
+  test('every RoadmapStep.section value has a distinct, human-readable label', () => {
+    const labels = Object.values(ROADMAP_COPY.sectionLabels);
+    expect(labels).toHaveLength(5);
+    expect(new Set(labels).size).toBe(5); // all distinct
+  });
+
+  test('dependedOnByLabel pluralizes correctly', () => {
+    expect(ROADMAP_COPY.dependedOnByLabel(1)).toBe('Imported by 1 file');
+    expect(ROADMAP_COPY.dependedOnByLabel(4)).toBe('Imported by 4 files');
+  });
+});
+
+describe('MODULE_MAP_COPY', () => {
+  test('fileCountLabel pluralizes correctly', () => {
+    expect(MODULE_MAP_COPY.fileCountLabel(1)).toBe('1 file');
+    expect(MODULE_MAP_COPY.fileCountLabel(2)).toBe('2 files');
   });
 });

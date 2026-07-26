@@ -63,6 +63,22 @@ function buildEdgeStyles(): cytoscape.StylesheetJson {
         opacity: 0.6,
       },
     },
+    {
+      // Section 9 Phase 9: the roadmap's reading-order route, overlaid on
+      // top of (and visually distinct from) real import edges.
+      selector: 'edge.route-edge',
+      style: {
+        width: 3,
+        'line-color': '#7c3aed',
+        'target-arrow-color': '#7c3aed',
+        'target-arrow-shape': 'triangle',
+        'arrow-scale': 1,
+        'line-style': 'dashed',
+        'curve-style': 'bezier',
+        opacity: 0.9,
+        'z-index': 10,
+      },
+    },
   ];
 }
 

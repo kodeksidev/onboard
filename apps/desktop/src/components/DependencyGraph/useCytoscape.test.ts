@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'vitest';
 import cytoscape from 'cytoscape';
 import {
+  applyRouteOverlay,
   applySearchFilter,
   clearHighlight,
   focusNodeById,
   highlightNeighborhood,
   supportsCanvasRendering,
 } from './useCytoscape';
+import { fileNodeId } from './graph-model';
 
 /**
  * `focusNodeById` / `highlightNeighborhood` / `clearHighlight` are plain
@@ -131,5 +133,72 @@ describe('applySearchFilter', () => {
 
   test('is a no-op when cy is null', () => {
     expect(() => applySearchFilter(null, 'auth')).not.toThrow();
+  });
+});
+
+/** Builds a headless graph whose node ids are real `fileNodeId(path)` values, matching production. */
+function buildFileGraph(paths: readonly string[]): cytoscape.Core {
+  return cytoscape({
+    headless: true,
+    styleEnabled: false,
+    elements: paths.map((path) => ({ data: { id: fileNodeId(path), path }, classes: 'file-node' })),
+  });
+}
+
+describe('applyRouteOverlay', () => {
+  const paths = ['a.ts', 'b.ts', 'c.ts', 'd.ts'];
+
+  test('renders exactly steps.length - 1 connector segments for the roadmap route', () => {
+    const cy = buildFileGraph(paths);
+
+    applyRouteOverlay(cy, paths);
+
+    expect(cy.edges('.route-edge').length).toBe(paths.length - 1);
+    cy.destroy();
+  });
+
+  test('each connector joins consecutive route paths in order', () => {
+    const cy = buildFileGraph(paths);
+
+    applyRouteOverlay(cy, paths);
+
+    const routeEdges = cy.edges('.route-edge');
+    expect(routeEdges.map((edge) => edge.source().id())).toEqual(paths.slice(0, -1).map(fileNodeId));
+    expect(routeEdges.map((edge) => edge.target().id())).toEqual(paths.slice(1).map(fileNodeId));
+    cy.destroy();
+  });
+
+  test('a single-step (or empty) route renders zero connectors', () => {
+    const cy = buildFileGraph(paths);
+
+    applyRouteOverlay(cy, ['a.ts']);
+    expect(cy.edges('.route-edge').length).toBe(0);
+
+    applyRouteOverlay(cy, []);
+    expect(cy.edges('.route-edge').length).toBe(0);
+    cy.destroy();
+  });
+
+  test('calling it again replaces the previous overlay rather than accumulating', () => {
+    const cy = buildFileGraph(paths);
+
+    applyRouteOverlay(cy, paths);
+    applyRouteOverlay(cy, ['a.ts', 'b.ts']);
+
+    expect(cy.edges('.route-edge').length).toBe(1);
+    cy.destroy();
+  });
+
+  test('skips a pair whose endpoint is not in the graph rather than throwing', () => {
+    const cy = buildFileGraph(['a.ts', 'b.ts']);
+
+    expect(() => applyRouteOverlay(cy, ['a.ts', 'missing.ts', 'b.ts'])).not.toThrow();
+    expect(cy.edges('.route-edge').length).toBe(0); // both pairs touch the missing node
+
+    cy.destroy();
+  });
+
+  test('is a no-op when cy is null', () => {
+    expect(() => applyRouteOverlay(null, paths)).not.toThrow();
   });
 });

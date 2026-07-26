@@ -30,10 +30,19 @@ export interface GraphState {
   readonly focusToken: number;
   /** Increments on every `requestSearchFocus` call, so the toolbar's search input can react by focusing itself. */
   readonly searchFocusToken: number;
+  /**
+   * The "start here" roadmap's reading-order route (Section 9 Phase 9):
+   * `steps.map((step) => step.path)`, published by `RoadmapPanel`'s
+   * `useRoadmapRoute` so `DependencyGraph` can render the overlay whenever
+   * it happens to be mounted — neither component needs to know about the
+   * other, or about whether the other is even mounted right now.
+   */
+  readonly routePaths: readonly string[];
   selectPath: (path: string | null) => void;
   focusPath: (path: string) => void;
   clearFocus: () => void;
   requestSearchFocus: () => void;
+  setRoutePaths: (paths: readonly string[]) => void;
 }
 
 export const useGraphStore = create<GraphState>((set) => ({
@@ -41,6 +50,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   focusedPath: null,
   focusToken: 0,
   searchFocusToken: 0,
+  routePaths: [],
 
   selectPath: (path) => set({ selectedPath: path }),
 
@@ -52,4 +62,6 @@ export const useGraphStore = create<GraphState>((set) => ({
   clearFocus: () => set({ focusedPath: null }),
 
   requestSearchFocus: () => set((state) => ({ searchFocusToken: state.searchFocusToken + 1 })),
+
+  setRoutePaths: (paths) => set({ routePaths: paths }),
 }));
