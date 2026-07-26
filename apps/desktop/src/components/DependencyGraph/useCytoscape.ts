@@ -5,7 +5,12 @@ import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { buildGraphStylesheet } from './graph-style';
 import type { GraphElements } from './graph-model';
-import { autoCollapseIfNeeded, createNoopExpandCollapseApi, getExpandCollapseApi } from './collapse';
+import {
+  GRAPH_AUTO_COLLAPSE_THRESHOLD,
+  autoCollapseIfNeeded,
+  createNoopExpandCollapseApi,
+  getExpandCollapseApi,
+} from './collapse';
 import type { ExpandCollapseApi } from './collapse';
 
 /** A11's pixel-ratio and label-visibility performance rules (Phase 8's paragraph). */
@@ -38,7 +43,12 @@ export function supportsCanvasRendering(): boolean {
   return document.createElement('canvas').getContext('2d') !== null;
 }
 
-function createCore(elements: GraphElements, container: HTMLDivElement | null, canRender: boolean): cytoscape.Core {
+/** Exported so `bench/graph`'s browser harness constructs the core identically to production. */
+export function createCore(
+  elements: GraphElements,
+  container: HTMLDivElement | null,
+  canRender: boolean,
+): cytoscape.Core {
   return cytoscape({
     container: canRender ? container : null,
     headless: !canRender,
@@ -50,7 +60,23 @@ function createCore(elements: GraphElements, container: HTMLDivElement | null, c
   });
 }
 
-function buildLayoutOptions(isReducedMotion: boolean, canRender: boolean): cytoscape.LayoutOptions {
+/**
+ * `visibleNodeCount` is measured AFTER auto-collapse (Section 9 Phase 8's
+ * ">600 nodes" rule), not the raw element count: `initializeGraph` collapses
+ * deep directories before ever calling this, so fcose only ever lays out
+ * what will actually be visible. `quality: 'draft'` is the remaining safety
+ * net for repo shapes the depth->=2 rule can't shrink (e.g. thousands of
+ * files directly under one shallow directory) — it skips fcose's iterative
+ * incremental phase entirely in favor of one spectral pass, trading layout
+ * refinement for bounded cost on graphs this large (see docs/DECISIONS.md
+ * for the measurements that motivated this).
+ */
+/** Exported so `bench/graph`'s harness lays out the exact same options production uses — no parallel copy to drift. */
+export function buildLayoutOptions(
+  isReducedMotion: boolean,
+  canRender: boolean,
+  visibleNodeCount: number,
+): cytoscape.LayoutOptions {
   if (!canRender) {
     // fcose/cose-base's spring-embedder grid-repulsion pass indexes by
     // `container.width()/height()`, which are 0 with no real container
@@ -60,16 +86,19 @@ function buildLayoutOptions(isReducedMotion: boolean, canRender: boolean): cytos
     // exercisable without papering over a real production code path.
     return { name: 'grid', fit: true } as cytoscape.LayoutOptions;
   }
+  const isLargeVisibleGraph = visibleNodeCount > GRAPH_AUTO_COLLAPSE_THRESHOLD;
   return {
     name: 'fcose',
-    animate: !isReducedMotion,
+    animate: !isReducedMotion && !isLargeVisibleGraph,
     randomize: true,
     fit: true,
-    // fcose's default node-tiling pass (grouping disconnected/orphan
-    // nodes) throws on some small compound graphs (a real upstream
-    // cose-base bug, reproduced by this project's own fixture). Directories
-    // already give the layout explicit structure, so tiling buys nothing.
+    // fcose's default node-tiling and component-packing passes throw or
+    // degrade on some compound graphs (a real upstream cose-base bug,
+    // reproduced by this project's own sample fixture). Directories already
+    // give the layout explicit structure, so neither buys anything here.
     tile: false,
+    packComponents: false,
+    quality: isLargeVisibleGraph ? 'draft' : 'default',
   } as cytoscape.LayoutOptions;
 }
 
@@ -77,10 +106,11 @@ function runInitialLayout(
   cy: cytoscape.Core,
   isReducedMotion: boolean,
   canRender: boolean,
+  visibleNodeCount: number,
   onStop: () => void,
 ): void {
   cy.one('layoutstop', onStop);
-  cy.layout(buildLayoutOptions(isReducedMotion, canRender)).run();
+  cy.layout(buildLayoutOptions(isReducedMotion, canRender, visibleNodeCount)).run();
 }
 
 function attachLabelVisibility(cy: cytoscape.Core): void {
@@ -110,10 +140,15 @@ function initializeGraph(
     ? getExpandCollapseApi(cy, { animate: !isReducedMotion, undoable: false, cueEnabled: true })
     : createNoopExpandCollapseApi();
 
-  runInitialLayout(cy, isReducedMotion, canRender, () => {
-    autoCollapseIfNeeded(cy, api, elements.nodes.length);
-    onReady();
-  });
+  // Collapse BEFORE laying out, not after: cytoscape-expand-collapse removes
+  // a collapsed node's descendants from layout participation entirely, so a
+  // repo whose directory structure trips the >600-node auto-collapse rule
+  // never asks fcose to position the hidden nodes at all (see
+  // docs/DECISIONS.md for the measurements this fixed).
+  autoCollapseIfNeeded(cy, api, elements.nodes.length);
+  const visibleNodeCount = cy.nodes(':visible').length;
+
+  runInitialLayout(cy, isReducedMotion, canRender, visibleNodeCount, onReady);
   attachLabelVisibility(cy);
   if (onNodeTap !== undefined) {
     cy.on('tap', 'node.file-node', (event) => onNodeTap(event.target.id()));
