@@ -1,7 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AnalysisResult } from '@onboard/contract';
-import { analyze } from '../../src/analyze';
+import { analyze, analyzeWithTimings } from '../../src/analyze';
+import { SqliteCacheStore } from '../../src/cache/sqlite-cache-store';
 
 const GRAMMARS_DIR = join(import.meta.dir, '..', '..', 'grammars');
 const FIXTURES_DIR = join(import.meta.dir, '..', '..', 'fixtures');
@@ -84,5 +87,110 @@ describe('analyze — kitchen-sink fixture (cycles, skip-rules, broken file)', (
     const paths = result.files.map((f) => f.path);
     expect(paths).toContain('src/sub/nested/important.log');
     expect(paths).not.toContain('src/sub/nested/other.log');
+  });
+});
+
+/**
+ * Windows can hold a newly-closed WAL-mode SQLite file's `-shm` mapping open
+ * for a short window after `Database.close()` returns (same quirk documented
+ * in `test/cache/sqlite-cache-store.test.ts`, A22) — a bounded retry absorbs
+ * it rather than weakening the schema's WAL mode.
+ */
+async function removeDirWithRetry(path: string): Promise<void> {
+  const maxAttempts = 10;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
+describe('analyze — token_index persistence (Section 6.1, search infra)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'onboard-analyze-cache-'));
+  });
+
+  afterEach(async () => {
+    await removeDirWithRetry(dir);
+  });
+
+  test('a cold analyze() with a cache store does not throw on an unparsed file (package.json has no file_cache row from persistParsedFile, only from the token-index FK guard)', async () => {
+    const cacheStore = new SqliteCacheStore(join(dir, 'cache.sqlite'));
+    await expect(
+      analyze({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore }),
+    ).resolves.toBeDefined();
+    expect(cacheStore.queryTokensByToken('express').some((row) => row.path === 'package.json')).toBe(true);
+    cacheStore.close();
+  });
+
+  test('token_index rows exist for a parsed file too, and survive a warm re-run unchanged', async () => {
+    const cacheStore = new SqliteCacheStore(join(dir, 'cache.sqlite'));
+    await analyze({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore });
+    cacheStore.close();
+    const warmCacheStore = new SqliteCacheStore(join(dir, 'cache.sqlite'));
+    await analyze({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: warmCacheStore });
+    const rows = warmCacheStore.queryTokensByToken('router');
+    expect(rows.length).toBeGreaterThan(0);
+    warmCacheStore.close();
+  });
+});
+
+describe('analyzeWithTimings', () => {
+  test('returns the same AnalysisResult as analyze(), plus a non-negative timings breakdown', async () => {
+    const { result, timings } = await analyzeWithTimings({
+      repoRootAbs: join(FIXTURES_DIR, 'node-express'),
+      grammarsDir: GRAMMARS_DIR,
+      engineVersion: '0.0.0-test',
+    });
+    expect(() => AnalysisResult.parse(result)).not.toThrow();
+    expect(timings.walkMs).toBeGreaterThanOrEqual(0);
+    expect(timings.parseMs).toBeGreaterThanOrEqual(0);
+    expect(timings.resolveMs).toBeGreaterThanOrEqual(0);
+    expect(timings.graphMs).toBe(0);
+    expect(timings.totalMs).toBeGreaterThanOrEqual(timings.walkMs + timings.parseMs + timings.resolveMs);
+    expect(timings.cacheHitCount).toBe(0);
+  });
+
+  test('reports a non-zero cacheHitCount on a warm re-run with an unchanged cache', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'onboard-timings-cache-'));
+    try {
+      const cold = new SqliteCacheStore(join(dir, 'cache.sqlite'));
+      await analyzeWithTimings({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: cold });
+      cold.close();
+      const warm = new SqliteCacheStore(join(dir, 'cache.sqlite'));
+      const { timings } = await analyzeWithTimings({ repoRootAbs: join(FIXTURES_DIR, 'node-express'), grammarsDir: GRAMMARS_DIR, engineVersion: '0.0.0-test', cacheStore: warm });
+      warm.close();
+      expect(timings.cacheHitCount).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('emits onProgress at each phase-transition boundary, in order, with matching processed/total pairs', async () => {
+    const phases: string[] = [];
+    await analyzeWithTimings({
+      repoRootAbs: join(FIXTURES_DIR, 'node-express'),
+      grammarsDir: GRAMMARS_DIR,
+      engineVersion: '0.0.0-test',
+      onProgress: (p) => phases.push(`${p.phase}:${String(p.processed)}/${String(p.total)}`),
+    });
+    const phaseNames = phases.map((p) => p.split(':')[0]);
+    expect(phaseNames).toEqual(['walk', 'walk', 'parse', 'parse', 'resolve', 'resolve', 'persist', 'persist']);
+    // Every phase's second (completion) notification reports processed === total.
+    phases
+      .filter((_, index) => index % 2 === 1)
+      .forEach((entry) => {
+        const [, counts] = entry.split(':');
+        const [processed, total] = (counts ?? '').split('/');
+        expect(processed).toBe(total);
+      });
   });
 });

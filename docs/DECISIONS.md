@@ -811,3 +811,175 @@ decided; it only records choices the spec left open.
   already derives; importing the existing pure function (already unit
   tested in `graph-model.test.ts`) keeps there being exactly one place that
   interprets `AnalysisResult.edges` this way.
+- **Phase 5 — the JSON-RPC domain-error convention (`error.data` = a fully
+  serialized `AppError`) is implemented exactly as rust-tauri already
+  committed it in Phase 6, per the coordinator's sign-off request, with one
+  clarification made explicit in `src/rpc/server.ts`: `error.data` is
+  populated ONLY when a method throws the engine's own `DomainError` (a
+  recognized domain failure — `E_REPO_TOO_LARGE`, `E_PATH_NOT_FOUND`,
+  `E_NO_SUPPORTED_FILES`, etc.).** Pure JSON-RPC protocol failures — malformed
+  JSON (`-32700`), an unknown method (`-32601`), or params a zod schema
+  rejects (`-32602`) — deliberately leave `data` absent, relying on the Rust
+  side's own documented fallback ("if `data` is absent... falls back to a
+  generic `E_ENGINE_CRASHED` and puts the raw remote string in `detail`").
+  Forcing an `AppErrorCode` onto a protocol-level failure would mean
+  inventing a code that doesn't semantically fit (the closed `AppErrorCode`
+  enum has nothing for "your JSON was malformed"); leaving `data` absent and
+  letting Rust's already-designed fallback handle it is more faithful to the
+  frozen convention than guessing. An unrecognized *thrown* `Error` (a bug,
+  not a modeled domain failure) is treated the same way — no invented
+  `data`, `error.message` carries the raw text, and Rust's fallback puts it
+  in `detail` rather than a user-facing string.
+- **Phase 5 — three `AppErrorCode`s the engine can throw have no literal
+  Section 10 copy: `E_NOT_A_DIRECTORY`, `E_PATH_ESCAPES_REPO`,
+  `E_NO_ANALYSIS`.** Section 10's table gives verbatim strings for
+  `E_PATH_NOT_FOUND`, `E_PERMISSION_DENIED`, `E_NO_SUPPORTED_FILES`,
+  `E_REPO_TOO_LARGE`, and `E_FILE_TOO_LARGE` — those are transcribed
+  byte-for-byte in `src/rpc/error-copy.ts`. The three above are real,
+  reachable failures (`repoPath` pointing at a file; `readFile`/`snippets`
+  rejecting a `..`/symlink-escape path; `search`/`readFile`/`snippets`
+  called before any `engine.analyze` for that `repoId`) that Section 10
+  simply doesn't name copy for. `error-copy.ts` ships clearly-labeled
+  placeholder `message`/`detail` text for these three, flagged in that
+  file's own doc comment as pending confirmation from the UI copy owner
+  (`src/copy/messages.ts`) rather than presented as settled Section 10 text.
+- **Phase 5 — `<appConfigDir>/onboard/keywords.json`'s path is derived from
+  `appDataDir`, the only directory `EngineAnalyzeParams` actually carries.**
+  Section 8.7 says users extend `KEYWORD_MAP` via `<appConfigDir>/onboard/
+  keywords.json`, but the frozen `EngineAnalyzeParams`/`EngineSearchParams`
+  schemas (Section 7.3) have no separate app-config-dir field — only
+  `appDataDir`. Rather than inventing a new RPC param (a contract change),
+  `src/rpc/analyze-method.ts` resolves the keywords file at
+  `<appDataDir>/onboard/keywords.json` and merges it into the session's
+  keyword map once per `engine.analyze` call. This is flagged for
+  rust-tauri to confirm: if the Tauri app-config directory is genuinely
+  different from the app-data directory on some target OS, either the two
+  need to be reconciled at the Rust layer before spawning, or a future
+  contract revision adds an explicit field — this is a documented
+  simplification, not a silent assumption.
+- **Phase 5 — `token_index` persistence (Section 6.1) runs over every
+  readable, reasonably-sized file (not just the four parsed grammars), and
+  is NOT yet incremental-cache-gated by content hash — it rebuilds every
+  `analyze()` run when a `cacheStore` is provided.** `buildTokenIndexRows`
+  is a pure function of `(path, text)`, so always rebuilding is a
+  performance simplification, never a correctness or determinism issue.
+  Skipping this for unchanged files (mirroring the parse-cache's
+  content-hash short-circuit) is a reasonable follow-up for a later phase,
+  not a Phase 5 blocker — the gate is about search/RPC correctness, not
+  warm-run speed for token indexing specifically.
+- **Phase 5 — every `token_index`/`symbol`/`import_edge` row requires a
+  preceding `file_cache` row (Section 6.1's `REFERENCES file_cache(path) ON
+  DELETE CASCADE` foreign keys, enforced on a cold cache via `PRAGMA
+  foreign_keys = ON` in `schema.sql`).** `persistParsedFile` already
+  satisfied this for parsed files, but a file that is never parsed
+  (`README.md`, `package.json`, anything with `languageId === null`) never
+  went through that path — so Phase 5's new `persistTokenIndex` needed its
+  own `ensureFileCacheRow` guard (idempotent `upsertFileCache`, using an
+  empty-`ParsedFile` placeholder JSON when no real parse result exists)
+  before writing a token row for it. Caught by a new `analyze.test.ts` case
+  that runs a cold `analyze()` with a real `SqliteCacheStore` against a
+  fixture with an unparsed file (`node-express`'s `package.json`) — without
+  the guard this throws a real SQLite FK-violation error, not a silent bug.
+- **Phase 5 — `engine.analyze`'s `AnalysisEnvelope.timings` is produced by a
+  new `analyzeWithTimings()` sibling of `analyze()` in `analyze.ts`, not by
+  changing `analyze()`'s own signature.** `analyze()` is exercised by ~20
+  already-verified Phase 4 tests and two scripts expecting a bare
+  `AnalysisResult`; wrapping its return in an envelope would have touched
+  already-committed, already-gated code for no reason. `analyzeWithTimings`
+  reuses the exact same phase functions with `performance.now()`
+  instrumentation wrapped around each; `analyze()` itself is now a one-line
+  wrapper (`(await analyzeInternal(options)).result`) with unchanged
+  behavior. `resolveMs` also covers graph-building and ranking time
+  (`computeGraphAndRanking` bundles resolve/graph/rank into one function by
+  Phase 4 design) — `graphMs` is reported as `0` rather than an invented
+  split; splitting it for real would mean touching Phase 4's
+  `analyze-rank-phase.ts` internals, out of scope for this phase.
+- **Phase 5 — `engine.progress` notifications are emitted at phase-
+  transition boundaries (`walk`/`parse`/`resolve`/`persist`, each with a
+  "starting" and "complete" pair), not per-file.** True per-file progress
+  (`processed`/`total`/`currentPath` advancing file-by-file) would require
+  threading a callback through `walk.ts`, `parser-pool.ts`, and the
+  graph/rank modules — all already-verified Phase 2-4 code untouched until
+  now. The `EngineProgress` zod schema constrains the *shape* of an emitted
+  notification, not that every one of its six enumerated phases must appear
+  at least once per analysis; `'graph'` and `'rank'` are valid enum values
+  that this phase's coarser instrumentation never happens to emit (they are
+  folded into the single `'resolve'` boundary), which is a granularity
+  choice, not a contract violation. Throttling itself
+  (`src/rpc/progress.ts`, "at most every 100 ms," Section 7.3) is
+  independent of this and fully implemented with an injectable clock for
+  deterministic tests.
+- **Phase 5 — `engine.readFile` enforces two different size limits, not
+  one.** Section 10's copy table says a file over 2 MB is rejected outright
+  with `E_FILE_TOO_LARGE` ("File too large to display"); Section 12's
+  security-boundary table separately caps `read_repo_file` at "size ≤ 2 MB."
+  Both clearly describe a hard viewer ceiling, distinct from
+  `MAX_PARSE_BYTES` (1.5 MiB, the walk/parse-skip threshold, Section 8.1) —
+  so a new `MAX_VIEWER_FILE_BYTES` (2 MiB) constant was added rather than
+  reusing `MAX_PARSE_BYTES`. Separately, `EngineReadFileParams.maxBytes` is
+  honored as a caller-supplied truncation cap (`isTruncated: true`, content
+  cut to `maxBytes`) for files under the hard ceiling — reconciling why the
+  RPC contract carries both a `maxBytes` parameter and a fixed "2 MB" copy
+  string: the hard ceiling is an absolute rejection threshold; `maxBytes` is
+  a separate, caller-chosen preview/truncation cap beneath it.
+- **Phase 5 — `engine.snippets` silently omits a path that escapes the repo,
+  no longer exists, or can't be read from the returned `snippets` array,
+  rather than failing the whole batch.** Section 7.3 does not specify
+  partial-failure behavior for this method, and its params accept an
+  arbitrary list of caller-supplied paths (the AI-picking layer's own
+  index, which the engine has no way to know is stale). Failing every
+  snippet in the batch over one bad path seemed like the wrong default;
+  documented as an interpretive choice in `snippets-method.ts`'s own doc
+  comment, flagged here for the AI-path owner to confirm or override.
+- **Phase 5 — `EngineAnalyzeParams.isForceRefresh: true` deletes the
+  repo's cache db file (plus its `-wal`/`-shm` siblings) before `open()`,
+  rather than adding a new `CacheStore` method.** `SqliteCacheStore.open()`
+  already has a "keep vs. recreate" decision built on `schema_meta`
+  comparison (Section 6.1); forcing a full re-parse just means guaranteeing
+  that decision always lands on "recreate" by removing the file first,
+  which `analyze-method.ts` (a module this phase owns) can do without
+  touching the already-verified `SqliteCacheStore` invalidation logic at
+  all.
+- **Phase 5 — `cache/sqlite-cache-store.ts` loads `schema.sql` via `import
+  SCHEMA_SQL from './schema.sql' with { type: 'text' }`, not
+  `readFileSync(new URL('./schema.sql', import.meta.url))`.** The original
+  Phase 2 pattern works under `bun run`/`bun test` but breaks inside a
+  `bun build --compile` standalone binary: the `new URL(...)` resolves to a
+  virtual `~BUN/root/schema.sql` path at runtime that doesn't exist, so
+  `SqliteCacheStore.open()` throws `ENOENT` — and because
+  `analyze-method.ts`'s catch-all mapped ANY caught error by inspecting its
+  `.code` field, that unrelated `ENOENT` was misreported as `E_PATH_NOT_FOUND`
+  against the *repo* path, not the real cause. Caught only by
+  `scripts/test-rpc.ts` driving the actual compiled binary (Phase 5's gate
+  item 2) — every prior test ran the uncompiled source, so this bug was
+  invisible until the real-binary gate. Bun's text-import attribute is the
+  documented, bundler-aware way to embed a non-JS asset in a compiled
+  executable; a new ambient module declaration (`src/sql-module.d.ts`)
+  teaches TypeScript about `*.sql` imports. Flagged for Phase 11: any other
+  module that reads a same-package file via `new URL(..., import.meta.url)`
+  (there are none currently, confirmed by grep) would need the same fix
+  before compiling.
+- **Phase 5 — `verify:no-network`'s static bundle scan checks bare Node
+  built-in specifiers (`import("net")`, `import("http")`, etc.) OUTSIDE
+  `src/guard/no-network.ts`, not the literal substrings `node:http`/
+  `node:net` the Phase 5 instructions named.** Bun's bundler strips the
+  `node:` prefix from built-in import specifiers in its output
+  (`import('node:net')` becomes `import("net")`), so those exact literal
+  substrings are trivially absent from ANY Bun-bundled file regardless of
+  what it actually imports — checking for their absence would prove
+  nothing. The script reports both: the named literal substrings (for
+  transparency, always 0 as expected) and the actual meaningful check (no
+  bare network-module import specifier anywhere outside the guard module,
+  located via a source-comment marker Bun's non-minified bundler output
+  preserves). Separately, the literal substring `fetch(` DOES appear 4
+  times in the bundle — inside `web-tree-sitter`'s browser-only WASM-fetch
+  fallback, which resolves the *global* `fetch` at call time, well after
+  `guard/no-network.ts` has already poisoned it; this is proven
+  behaviorally (not just statically) by `test/guard/no-network.test.ts`,
+  which spawns a real subprocess and asserts the actual `fetch()` throws
+  `EngineNetworkBlockedError`. The Linux `unshare -rn` sandboxed half of
+  this gate (a full fixture analysis run through the built Linux binary
+  with network namespaces unshared) IS implemented in
+  `scripts/verify-no-network.ts`, gated on `process.platform === 'linux'`
+  so it runs for real in CI and prints a clear `SKIPPED` line (not a false
+  pass) on this Windows dev machine, where `unshare` doesn't exist.

@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test",
     "verify:determinism": "bun run scripts/verify-determinism.ts",
-    "snapshots:generate": "bun run scripts/generate-snapshots.ts"
+    "snapshots:generate": "bun run scripts/generate-snapshots.ts",
+    "build:sidecar": "bun run scripts/build-sidecar.ts",
+    "test:rpc": "bun run scripts/test-rpc.ts",
+    "verify:no-network": "bun run scripts/verify-no-network.ts"
   },
   "dependencies": {
     "@onboard/contract": "workspace:*",

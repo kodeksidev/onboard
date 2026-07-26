@@ -11,7 +11,7 @@
  */
 import { realpathSync } from 'node:fs';
 import { AnalysisResult, SCHEMA_VERSION } from '@onboard/contract';
-import type { AnalysisResult as AnalysisResultValue } from '@onboard/contract';
+import type { AnalysisResult as AnalysisResultValue, EngineProgress } from '@onboard/contract';
 import { walk, type WalkFs } from './walk/walk';
 import { classifyFile } from './classify/classify-file';
 import { discoverWorkspacePackages, type WorkspacePackage } from './resolve/workspaces';
@@ -24,7 +24,7 @@ import { detectManifests, type DependencyInfoValue, type ManifestInfoValue } fro
 import { detectEntryPoints, type EntryPointValue } from './stack/entry-points';
 import { computeRepoId } from './util/hash';
 import type { CacheStore } from './cache/cache-store';
-import { processOneFile, readFileText, runParsePhase, type DiagnosticValue, type ProcessedFile } from './analyze-support';
+import { processOneFile, readFileText, runParsePhase, persistTokenIndex, type DiagnosticValue, type ProcessedFile } from './analyze-support';
 import { computeGraphAndRanking, type ComputedAnalysis } from './analyze-rank-phase';
 import { assembleAnalysisResult } from './analyze-assemble';
 
@@ -40,6 +40,17 @@ export interface AnalyzeOptions {
    * Never set by the sidecar in normal operation.
    */
   readonly walkFs?: Partial<WalkFs>;
+  /**
+   * Section 7.3's `engine.progress` notification sink. Emitted at
+   * phase-transition boundaries only (walk/parse/resolve+graph+rank/persist),
+   * not per-file: `computeGraphAndRanking` bundles resolve, graph, and rank
+   * into one function by Phase 4 design, so there is no interior boundary to
+   * report 'graph' and 'rank' as separate notifications without touching
+   * already-verified Phase 4 internals. The `EngineProgress` schema does not
+   * require every phase to be emitted, only that emitted payloads match its
+   * shape — this is a documented granularity choice, not a contract gap.
+   */
+  readonly onProgress?: (progress: EngineProgress) => void;
 }
 
 export type ClassificationValue = AnalysisResultValue['files'][number]['classification'];
@@ -165,17 +176,84 @@ function prepareAnalysis(options: AnalyzeOptions): PreparedAnalysis {
   };
 }
 
-/** Runs the full walk -> parse -> resolve -> graph -> rank pipeline, returning a validated `AnalysisResult`. */
-export async function analyze(options: AnalyzeOptions): Promise<AnalysisResultValue> {
+/**
+ * Per-phase wall-clock timings for `AnalysisEnvelope.timings` (Section 7.3's
+ * `engine.analyze` result). `resolveMs` also covers graph-building and
+ * ranking: `analyze-rank-phase.ts`'s `computeGraphAndRanking` bundles
+ * resolve/graph/rank into one function by Phase 4 design (see
+ * `docs/DECISIONS.md`), so `graphMs` is reported as `0` rather than an
+ * invented split. This affects only the diagnostic timings breakdown, never
+ * `AnalysisResult` itself or determinism.
+ */
+export interface AnalyzeTimings {
+  readonly walkMs: number;
+  readonly parseMs: number;
+  readonly resolveMs: number;
+  readonly graphMs: number;
+  readonly totalMs: number;
+  readonly cacheHitCount: number;
+}
+
+export interface AnalyzeWithTimingsResult {
+  readonly result: AnalysisResultValue;
+  readonly timings: AnalyzeTimings;
+}
+
+function emitProgress(
+  onProgress: AnalyzeOptions['onProgress'],
+  phase: EngineProgress['phase'],
+  processed: number,
+  total: number,
+): void {
+  onProgress?.({ phase, processed, total, currentPath: null });
+}
+
+async function analyzeInternal(options: AnalyzeOptions): Promise<AnalyzeWithTimingsResult> {
+  const totalStart = performance.now();
+  const onProgress = options.onProgress;
+
+  emitProgress(onProgress, 'walk', 0, 0);
+  const walkStart = performance.now();
   const prepared = prepareAnalysis(options);
-  const { parsedByPath, diagnostics: parseDiagnostics } = await runParsePhase(
+  const walkMs = performance.now() - walkStart;
+  const fileCount = prepared.processedFiles.length;
+  emitProgress(onProgress, 'walk', fileCount, fileCount);
+
+  emitProgress(onProgress, 'parse', 0, fileCount);
+  const parseStart = performance.now();
+  const { parsedByPath, diagnostics: parseDiagnostics, cacheHitCount } = await runParsePhase(
     prepared.processedFiles,
     options.grammarsDir,
     options.engineVersion,
     SCHEMA_VERSION,
     options.cacheStore,
   );
+  const parseMs = performance.now() - parseStart;
+  emitProgress(onProgress, 'parse', fileCount, fileCount);
+
+  persistTokenIndex(prepared.processedFiles, parsedByPath, options.cacheStore);
+
+  emitProgress(onProgress, 'resolve', 0, fileCount);
+  const resolveStart = performance.now();
   const computed: ComputedAnalysis = computeGraphAndRanking(prepared, parsedByPath);
+  const resolveMs = performance.now() - resolveStart;
+  emitProgress(onProgress, 'resolve', fileCount, fileCount);
+
+  emitProgress(onProgress, 'persist', 0, fileCount);
   const finalResult = assembleAnalysisResult(prepared, computed, parsedByPath, parseDiagnostics);
-  return AnalysisResult.parse(finalResult);
+  const result = AnalysisResult.parse(finalResult);
+  const totalMs = performance.now() - totalStart;
+  emitProgress(onProgress, 'persist', fileCount, fileCount);
+
+  return { result, timings: { walkMs, parseMs, resolveMs, graphMs: 0, totalMs, cacheHitCount } };
+}
+
+/** Runs the full walk -> parse -> resolve -> graph -> rank pipeline, returning a validated `AnalysisResult`. */
+export async function analyze(options: AnalyzeOptions): Promise<AnalysisResultValue> {
+  return (await analyzeInternal(options)).result;
+}
+
+/** Same pipeline as `analyze()`, additionally returning the per-phase timings the RPC envelope needs. */
+export async function analyzeWithTimings(options: AnalyzeOptions): Promise<AnalyzeWithTimingsResult> {
+  return analyzeInternal(options);
 }
