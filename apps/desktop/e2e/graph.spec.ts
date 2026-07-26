@@ -1,4 +1,8 @@
-import { analyzeFixtureRepo, waitForAnalysisToSettle } from './support/repo';
+import {
+  analyzeFixtureRepo,
+  assertEngineActuallyParsed,
+  waitForAnalysisToSettle,
+} from './support/repo';
 
 /**
  * Section 11: "pick a fixture repo → graph renders → click a node → file
@@ -16,6 +20,9 @@ describe('dependency graph', () => {
     if (status !== 'ready') {
       throw new Error(`fixture analysis did not reach ready (status: ${status})`);
     }
+    // A graph with no edges is not a graph. `ready` alone does not prove the
+    // engine parsed anything, so refuse an empty analysis outright.
+    await assertEngineActuallyParsed();
     await $('[role="tablist"][aria-label="Repository views"]').then((tabList) =>
       tabList.waitForDisplayed({ timeout: 15_000 }),
     );

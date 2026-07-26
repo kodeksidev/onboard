@@ -140,6 +140,15 @@ export interface ParsePhaseResult {
   readonly diagnostics: readonly DiagnosticValue[];
   /** Count of parseable files served from the cache (content hash matched) this run. */
   readonly cacheHitCount: number;
+  /**
+   * Every file's `file_cache.content_hash` as it stood BEFORE this run wrote
+   * anything — captured once, up front, so `persistTokenIndex` can tell a
+   * genuinely unchanged file (skip re-tokenizing) apart from a file this
+   * same run just parsed and upserted (whose `file_cache` row now already
+   * matches its current hash, which would otherwise look identical to
+   * "unchanged" if read again afterward).
+   */
+  readonly previousContentHashByPath: ReadonlyMap<string, string>;
 }
 
 interface CachedRow {
@@ -162,6 +171,21 @@ function openCacheIfProvided(
     grammarFingerprint: computeGrammarFingerprint(grammarsDir),
     contractSchemaVersion,
   });
+}
+
+/** Reads every file's currently-cached content hash BEFORE this run writes anything (see `ParsePhaseResult`'s doc comment). */
+function snapshotContentHashes(files: readonly ProcessedFile[], cacheStore: CacheStore | undefined): ReadonlyMap<string, string> {
+  const snapshot = new Map<string, string>();
+  if (cacheStore === undefined) {
+    return snapshot;
+  }
+  files.forEach((f) => {
+    const cached = cacheStore.getFileCache(f.path);
+    if (cached !== null) {
+      snapshot.set(f.path, cached.contentHash);
+    }
+  });
+  return snapshot;
 }
 
 function partitionByCacheHit(
@@ -207,21 +231,33 @@ export async function runParsePhase(
   cacheStore: CacheStore | undefined,
 ): Promise<ParsePhaseResult> {
   openCacheIfProvided(cacheStore, grammarsDir, engineVersion, contractSchemaVersion);
+  const previousContentHashByPath = snapshotContentHashes(files, cacheStore);
   const { cacheHit, toParse } = partitionByCacheHit(files, cacheStore);
 
   const entries: ParsePoolEntry[] = toParse.map((f) => ({ path: f.path, languageId: f.languageId!, sourceText: f.text }));
   const getParser = createLanguageParserFactory(grammarsDir);
   const results: readonly ParsePoolResult[] = await parseFiles(entries, getParser);
 
+  // One transaction for the whole batch, not one auto-committed write per
+  // file: N individual commits was the dominant cost behind the warm/
+  // incremental-analysis regression measured in Section 11's bench (see
+  // `docs/DECISIONS.md`) — `toParse` is empty on a fully-warm run, but a
+  // partially-changed (incremental) or cold run still pays this per-file
+  // otherwise.
   const parsedByPath = new Map<string, ParsedFile>(cacheHit);
-  toParse.forEach((f, index) => {
+  const persistOneParsedFile = (f: ProcessedFile, index: number): void => {
     const result = results[index];
     const parsed: ParsedFile = result?.status === 'ok' ? result.parsed : { imports: [], symbols: [], hasSyntaxError: true };
     parsedByPath.set(f.path, parsed);
     if (cacheStore !== undefined) {
       persistParsedFile(cacheStore, f, parsed);
     }
-  });
+  };
+  if (cacheStore !== undefined) {
+    cacheStore.withTransaction(() => toParse.forEach(persistOneParsedFile));
+  } else {
+    toParse.forEach(persistOneParsedFile);
+  }
 
   // Diagnostics must cover EVERY parsed file (cache hits included), not just
   // this run's freshly-parsed subset — otherwise a cached file's syntax-error
@@ -235,7 +271,7 @@ export async function runParsePhase(
   });
   const parseDiagnostics = buildParseDiagnostics(allEntries, allResults);
 
-  return { parsedByPath, diagnostics: parseDiagnostics, cacheHitCount: cacheHit.size };
+  return { parsedByPath, diagnostics: parseDiagnostics, cacheHitCount: cacheHit.size, previousContentHashByPath };
 }
 
 export interface ResolutionOutput {
@@ -345,26 +381,39 @@ function ensureFileCacheRow(cacheStore: CacheStore, f: ProcessedFile, parsedByPa
  * match (Section 8.7 step 3) is drawn from. Tokenization is language-agnostic
  * (Section: `index/token-index.ts`'s doc comment) — it runs over every
  * readable, reasonably-sized file, not just the four parsed grammars, so a
- * hit can land in a README or a config file. Unlike `persistParsedFile`,
- * this is not yet incremental-cache-gated by content hash: it rebuilds every
- * `analyze()` run. That is a performance opportunity for a later phase, not
- * a correctness or determinism issue — `buildTokenIndexRows` is a pure
- * function of `(path, text)`, so re-running it always yields the same rows.
+ * hit can land in a README or a config file.
+ *
+ * Incremental-cache-gated by content hash (`previousContentHashByPath`, a
+ * snapshot taken before this run wrote anything — see `ParsePhaseResult`'s
+ * doc comment): a file whose hash is unchanged already has correct token
+ * rows from whichever earlier run last wrote that exact content, so
+ * `buildTokenIndexRows` (a pure function of `(path, text)`) does not need
+ * to re-run for it. This — plus wrapping the whole batch in one
+ * transaction instead of one auto-committed write per file — is what fixes
+ * the warm/incremental-analysis regression measured in Section 11's bench
+ * (previously every file was unconditionally re-tokenized and rewritten on
+ * every single run, warm included; see `docs/DECISIONS.md`).
  */
 export function persistTokenIndex(
   files: readonly ProcessedFile[],
   parsedByPath: ReadonlyMap<string, ParsedFile>,
+  previousContentHashByPath: ReadonlyMap<string, string>,
   cacheStore: CacheStore | undefined,
 ): void {
   if (cacheStore === undefined) {
     return;
   }
-  files.forEach((f) => {
-    if (f.skipReason !== null && NON_TOKENIZABLE_SKIP_REASONS.has(f.skipReason)) {
-      return;
-    }
-    ensureFileCacheRow(cacheStore, f, parsedByPath);
-    cacheStore.replaceTokensForPath(f.path, buildTokenIndexRows(f.path, f.text));
+  cacheStore.withTransaction(() => {
+    files.forEach((f) => {
+      if (f.skipReason !== null && NON_TOKENIZABLE_SKIP_REASONS.has(f.skipReason)) {
+        return;
+      }
+      if (previousContentHashByPath.get(f.path) === f.contentHash) {
+        return; // unchanged since a prior run already tokenized this exact content
+      }
+      ensureFileCacheRow(cacheStore, f, parsedByPath);
+      cacheStore.replaceTokensForPath(f.path, buildTokenIndexRows(f.path, f.text));
+    });
   });
 }
 

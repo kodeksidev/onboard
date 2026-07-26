@@ -1,4 +1,8 @@
-import { analyzeFixtureRepo, waitForAnalysisToSettle } from './support/repo';
+import {
+  analyzeFixtureRepo,
+  assertEngineActuallyParsed,
+  waitForAnalysisToSettle,
+} from './support/repo';
 
 /**
  * Section 11: "search 'auth' → click a hit → viewer scrolls to the hit
@@ -15,6 +19,11 @@ describe('where is X search', () => {
     if (status !== 'ready') {
       throw new Error(`fixture analysis did not reach ready (status: ${status})`);
     }
+    // Reaching `ready` proves the round trip completed, NOT that anything was
+    // parsed — a sidecar that fails to load its WASM still reaches `ready`
+    // with 0 symbols. Everything below asserts on parsed output, so refuse to
+    // proceed on an empty analysis rather than pass vacuously.
+    await assertEngineActuallyParsed();
     await $('[role="tablist"][aria-label="Repository views"]').then((tabList) =>
       tabList.waitForDisplayed({ timeout: 15_000 }),
     );
@@ -32,7 +41,21 @@ describe('where is X search', () => {
     const firstOption = await $('[role="option"]');
     await firstOption.waitForDisplayed({ timeout: 15_000 });
 
+    // The hit must be a SYMBOL match, not a filename match. `greet` also
+    // matches `greeter.ts` by basename (Section 8.7 W_FILENAME_SUBSTR), so
+    // without this the test passes on an engine that extracted no symbols at
+    // all — which is exactly how it passed against a broken sidecar once.
+    const rowText = await firstOption.getText();
+    expect(rowText).toMatch(/symbol-(exact|prefix|substring)/);
+    // SearchResultRow renders the symbol's kind and name only when
+    // `hit.symbol !== null`, so this asserts the engine really resolved one.
+    expect(rowText).toContain('greet');
+
+    // The open action's accessible name carries the resolved hit line, so
+    // asserting on it proves a line was resolved rather than defaulted.
     const openAction = await firstOption.$('[role="button"]');
+    const openLabel = await openAction.getAttribute('aria-label');
+    expect(openLabel).toMatch(/line \d+/);
     await openAction.click();
 
     const fileViewerTab = await $('[role="tab"]=File viewer');

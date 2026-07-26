@@ -11,6 +11,17 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Language, Parser } from 'web-tree-sitter';
+// `type: 'file'` (not a bare specifier + the library's own internal
+// `new URL('tree-sitter.wasm', import.meta.url)` lookup) is required so
+// `bun build --compile` actually embeds this asset: inside a compiled
+// binary, `web-tree-sitter`'s own runtime-WASM lookup resolves to a virtual
+// `B:\~BUN\root\tree-sitter.wasm` path that plain `node:fs`/`fetch` cannot
+// read, so `Parser.init()` fails with ENOENT on every call — silently
+// degrading every parse to `PARSE_FAILED` rather than throwing (see
+// `docs/DECISIONS.md`). `Bun.file(path).arrayBuffer()` IS able to read the
+// embedded asset back out; handing those bytes to `Parser.init({
+// wasmBinary })` bypasses the library's own broken file lookup entirely.
+import TREE_SITTER_WASM_PATH from 'web-tree-sitter/tree-sitter.wasm' with { type: 'file' };
 import { sha256Hex } from '../util/hash';
 import type { SupportedLanguageId } from './language-parser';
 
@@ -77,7 +88,9 @@ export function createGrammarLoader(grammarsDir: string): GrammarLoader {
   const cache = new Map<SupportedLanguageId, Promise<Language>>();
 
   async function ensureInitialized(): Promise<void> {
-    initPromise ??= Parser.init();
+    initPromise ??= Bun.file(TREE_SITTER_WASM_PATH)
+      .arrayBuffer()
+      .then((wasmBinary) => Parser.init({ wasmBinary }));
     await initPromise;
   }
 
