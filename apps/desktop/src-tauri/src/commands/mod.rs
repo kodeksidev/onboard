@@ -3,8 +3,12 @@ pub mod read_file;
 pub mod search;
 pub mod settings;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -24,6 +28,38 @@ fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
         .app_config_dir()
         .map(|dir| dir.join("onboard").join("settings.json"))
         .map_err(|_| AppError::invalid_settings("Could not resolve the app config directory."))
+}
+
+/// `engine.progress` notification fan-out (Section 7.3/7.4): mirrored to the
+/// webview as `onboard://analysis-progress` while `engine.analyze` is in
+/// flight. Polls `SidecarSupervisor::progress_rx` on a plain thread — this
+/// crate's RPC layer (`sidecar::rpc`) is synchronous by design, so a thread
+/// with a short poll timeout (rather than an async task) is what lets it
+/// notice the stop signal promptly once the blocking analyze call returns.
+const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const ANALYSIS_PROGRESS_EVENT: &str = "onboard://analysis-progress";
+
+fn spawn_progress_forwarder(app: AppHandle) -> impl FnOnce() {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_thread = stop.clone();
+    let handle = std::thread::spawn(move || {
+        while !stop_for_thread.load(Ordering::Relaxed) {
+            let received = {
+                let state = app.state::<AppState>();
+                let rx = state.supervisor.progress_rx.lock().expect("progress_rx poisoned");
+                rx.recv_timeout(PROGRESS_POLL_INTERVAL)
+            };
+            if let Ok((method, params)) = received {
+                if method == "engine.progress" {
+                    let _ = app.emit(ANALYSIS_PROGRESS_EVENT, params);
+                }
+            }
+        }
+    });
+    move || {
+        stop.store(true, Ordering::Relaxed);
+        let _ = handle.join();
+    }
 }
 
 /// Section 7.4: `pick_repo_folder` returns `{ path: string | null }`, not a
@@ -62,7 +98,8 @@ pub fn analyze_repo(
         .map_err(|_| AppError::invalid_settings("Could not resolve the app data directory."))?;
     let settings = get_settings_core(&settings_path(&app)?, &state.ai_keys);
 
-    analyze_repo_core(
+    let stop_progress_forwarder = spawn_progress_forwarder(app.clone());
+    let result = analyze_repo_core(
         &state,
         AnalyzeRepoRequest {
             path,
@@ -72,7 +109,9 @@ pub fn analyze_repo(
             app_data_dir: app_data_dir.to_string_lossy().to_string(),
             exclude_globs: settings.exclude_globs,
         },
-    )
+    );
+    stop_progress_forwarder();
+    result
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Hand-authored static blocks for `fixtures/sample-analysis.json`.
  *
  * Split out of `build-fixture.ts` purely to keep both files under the

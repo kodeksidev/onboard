@@ -9,8 +9,15 @@ describe('resolveIpcMode', () => {
 
 describe('createIpc', () => {
   test('an explicit mode overrides the environment-derived default', async () => {
+    // Phase 11 wired `createTauriIpc()` to real `@tauri-apps/api` `invoke()`
+    // calls. Under jsdom (no `window.__TAURI_INTERNALS__`, no real Tauri
+    // runtime) that call itself fails, and `tauri-ipc.ts`'s `toAppError`
+    // normalizes anything that isn't already a well-formed `AppError` into
+    // `E_UNEXPECTED` (Section 12: never let a raw error escape unnormalized)
+    // — this is what proves `createIpc('tauri')` really did select the
+    // Tauri implementation rather than the mock one, which always resolves.
     const tauri = createIpc('tauri');
-    await expect(tauri.pickRepoFolder()).rejects.toMatchObject({ code: 'E_NOT_WIRED' });
+    await expect(tauri.pickRepoFolder()).rejects.toMatchObject({ code: 'E_UNEXPECTED' });
   });
 });
 

@@ -12,6 +12,17 @@ export interface RepoState {
   readonly progress: EngineProgress | null;
   readonly error: AppError | null;
   pickFolder: () => Promise<void>;
+  /**
+   * Runs analysis for an already-known path, skipping the native folder
+   * dialog `pickFolder` opens first. `pickFolder` itself uses this once the
+   * user has chosen a path (Section 10's picker flow is unchanged) — it is
+   * exposed as its own store action so Phase 11's E2E suite can drive a
+   * real `analyze_repo` → real sidecar → rendered-UI round trip against a
+   * fixture directory without needing to automate the OS-native dialog
+   * (out of reach for WebDriver/`tauri-driver`, same as any Electron/Tauri
+   * app — see `e2e/picker.spec.ts`).
+   */
+  analyzePath: (path: string) => Promise<void>;
   retry: () => Promise<void>;
   reset: () => void;
 }
@@ -55,6 +66,10 @@ export const useRepoStore = create<RepoState>((set, get) => ({
       set({ status: 'empty' });
       return;
     }
+    await get().analyzePath(path);
+  },
+
+  analyzePath: async (path: string) => {
     await runAnalysis(path, set);
   },
 

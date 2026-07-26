@@ -44,19 +44,48 @@ fn target_triple() -> &'static str {
 }
 
 /// Resolves the sidecar binary directory: `resource_dir()/binaries` for a
-/// packaged app, falling back to the directory next to the running
-/// executable in dev (`src-tauri/binaries/`, Section 14).
+/// packaged app (Section 14's `externalBin`, copied there by Tauri's own
+/// bundler). A plain `cargo build` (dev, Phase 11's E2E/bench) never gets
+/// that copy — `tauri build` is the only thing that performs it — so this
+/// falls back to the compile-time source location
+/// (`apps/desktop/src-tauri/binaries/`) the coordinator stages real
+/// sidecars into, and only as a last resort to a directory next to the
+/// running executable.
 fn resolve_binaries_dir(app: &tauri::App) -> std::path::PathBuf {
-    app.path()
-        .resource_dir()
-        .map(|dir| dir.join("binaries"))
-        .unwrap_or_else(|_| {
-            std::env::current_exe()
-                .expect("current_exe must resolve")
-                .parent()
-                .expect("executable must have a parent directory")
-                .join("binaries")
-        })
+    if let Ok(dir) = app.path().resource_dir() {
+        let candidate = dir.join("binaries");
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    let dev_binaries_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    if dev_binaries_dir.is_dir() {
+        return dev_binaries_dir;
+    }
+    std::env::current_exe()
+        .expect("current_exe must resolve")
+        .parent()
+        .expect("executable must have a parent directory")
+        .join("binaries")
+}
+
+/// Resolves the tree-sitter grammar WASM directory the same way (Section
+/// 14 "known hard part" #1: the grammar loader takes a path argument and
+/// has no hardcoded fallback). Declared `resources` (unlike `externalBin`)
+/// ARE copied next to the dev executable by `tauri-build` itself, so
+/// `resource_dir()/resources/grammars` already works in both dev and a
+/// packaged build; the compile-time fallback exists only for the case this
+/// crate is built without ever having run through `tauri-build` at all.
+fn resolve_grammars_dir(app: &tauri::App) -> std::path::PathBuf {
+    if let Ok(dir) = app.path().resource_dir() {
+        let candidate = dir.join("resources").join("grammars");
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("grammars")
 }
 
 /// Builds the log path/handle, resolves the sidecar program, and assembles
@@ -74,10 +103,11 @@ fn build_app_state(app: &tauri::App) -> AppState {
     let binaries_dir = resolve_binaries_dir(app);
     let program = sidecar::spawn::resolve_sidecar_path(&binaries_dir, target_triple())
         .unwrap_or_else(|| binaries_dir.join("onboard-engine"));
+    let grammars_dir = resolve_grammars_dir(app);
 
     let supervisor = SidecarSupervisor::new(SidecarConfig {
         program,
-        args: vec![],
+        args: vec!["--grammars-dir".to_string(), grammars_dir.to_string_lossy().to_string()],
         log_path: log_path.to_string_lossy().to_string(),
         max_restarts: constants::SIDECAR_MAX_RESTARTS,
     });
