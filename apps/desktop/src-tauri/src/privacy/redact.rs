@@ -120,7 +120,8 @@ pub struct RedactedPayload {
 /// crate converts a `RequestSnippet` (or any collection of them) back into
 /// a `RedactedPayload` — there is no `From`/`TryFrom` impl in either
 /// direction, so holding these grants no way to fabricate a new payload.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RequestSnippet {
     pub path: String,
     pub start_line: u32,

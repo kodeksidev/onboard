@@ -46,7 +46,11 @@ fn spawn_progress_forwarder(app: AppHandle) -> impl FnOnce() {
         while !stop_for_thread.load(Ordering::Relaxed) {
             let received = {
                 let state = app.state::<AppState>();
-                let rx = state.supervisor.progress_rx.lock().expect("progress_rx poisoned");
+                let rx = state
+                    .supervisor
+                    .progress_rx
+                    .lock()
+                    .expect("progress_rx poisoned");
                 rx.recv_timeout(PROGRESS_POLL_INTERVAL)
             };
             if let Ok((method, params)) = received {

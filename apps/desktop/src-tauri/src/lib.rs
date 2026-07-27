@@ -3,6 +3,7 @@
 //! registers every Section 7.4 command Phase 6 owns (everything except the
 //! `ai_*` family — Phase 12).
 
+pub mod ai;
 pub mod commands;
 pub mod constants;
 pub mod contract;

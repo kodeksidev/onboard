@@ -42,6 +42,20 @@ pub enum AppErrorCode {
     /// pass — the request is aborted outright rather than sending a
     /// partially-redacted payload.
     EAiPayloadUnsafe,
+    /// Phase 12 step 2 (Section 12): `settings.ai.isEnabled !== true`, or no
+    /// key is retrievable — checked before any other AI work, including
+    /// before an `EgressPermit` can even be constructed (`ai::permit`).
+    EAiDisabled,
+    /// Phase 12 step 2: a transport-level failure (DNS, connection refused,
+    /// TLS, timeout) or an HTTP response `ai::http::send` doesn't have a
+    /// more specific code for.
+    EAiNetwork,
+    /// Phase 12 step 2: the provider responded 401.
+    EAiKeyInvalid,
+    /// Phase 12 step 2: the provider responded 429.
+    EAiRateLimited,
+    /// Phase 12 step 2: the provider responded 404 for the configured model.
+    EAiModelNotFound,
 }
 
 impl AppErrorCode {
@@ -62,6 +76,11 @@ impl AppErrorCode {
             AppErrorCode::EInvalidSettings => "E_INVALID_SETTINGS",
             AppErrorCode::EKeychainUnavailable => "E_KEYCHAIN_UNAVAILABLE",
             AppErrorCode::EAiPayloadUnsafe => "E_AI_PAYLOAD_UNSAFE",
+            AppErrorCode::EAiDisabled => "E_AI_DISABLED",
+            AppErrorCode::EAiNetwork => "E_AI_NETWORK",
+            AppErrorCode::EAiKeyInvalid => "E_AI_KEY_INVALID",
+            AppErrorCode::EAiRateLimited => "E_AI_RATE_LIMITED",
+            AppErrorCode::EAiModelNotFound => "E_AI_MODEL_NOT_FOUND",
         }
     }
 }
@@ -224,6 +243,74 @@ impl AppError {
             AppErrorCode::EAiPayloadUnsafe,
             "Onboard found what still looks like a secret after redacting this content, so nothing was sent. Exclude the affected file or remove the secret, then try again.",
         )
+    }
+
+    /// Section 12: "`settings.ai.isEnabled === true` **and** a key is
+    /// retrievable; otherwise `E_AI_DISABLED` before any other work." No
+    /// literal Section 10 copy exists for this exact string (only the
+    /// behavior is specified) — conventional phrasing, logged in
+    /// `docs/DECISIONS.md`.
+    pub fn ai_disabled() -> Self {
+        Self::new(
+            AppErrorCode::EAiDisabled,
+            "Turn on AI in Settings and store a working API key to use this feature. Static mode still works fully without it.",
+        )
+    }
+
+    /// `detail` carries the raw transport failure text (Section 12: never
+    /// in `message`). `is_timeout` distinguishes the one case Section 12
+    /// asks be told apart in copy ("the request... timed out" vs "could not
+    /// reach").
+    pub fn ai_network(is_timeout: bool, raw_detail: impl Into<String>) -> Self {
+        let message = if is_timeout {
+            "The request to the AI provider timed out."
+        } else {
+            "Onboard could not reach the AI provider. Check your network connection and try again."
+        };
+        Self::new(AppErrorCode::EAiNetwork, message).with_detail(raw_detail.into())
+    }
+
+    /// Section 10: "{provider} returned 401. Check the key, then test
+    /// again. AI stays off until a key passes." `provider` is a plain
+    /// string here (not the `AiProvider` enum) — this module does not
+    /// depend on `commands::settings` for a single interpolated name.
+    pub fn ai_key_invalid(provider: &str, raw_detail: impl Into<String>) -> Self {
+        Self::new(
+            AppErrorCode::EAiKeyInvalid,
+            format!("{provider} returned 401. Check the key, then test again. AI stays off until a key passes."),
+        )
+        .with_detail(raw_detail.into())
+    }
+
+    /// Section 10: "Wait {n}s and try again. Nothing was sent twice." — no
+    /// automatic retry (Section 12), so "sent twice" never applies here;
+    /// `retry_after_seconds` is `None` when the provider didn't send one.
+    pub fn ai_rate_limited(
+        provider: &str,
+        retry_after_seconds: Option<u64>,
+        raw_detail: impl Into<String>,
+    ) -> Self {
+        let wait_clause = match retry_after_seconds {
+            Some(seconds) => format!("Wait {seconds}s and try again."),
+            None => "Wait a moment and try again.".to_string(),
+        };
+        Self::new(
+            AppErrorCode::EAiRateLimited,
+            format!("{provider} is rate-limiting Onboard. {wait_clause} Nothing was sent twice."),
+        )
+        .with_detail(raw_detail.into())
+    }
+
+    /// No literal Section 10 copy exists for this exact string (the row
+    /// documents `E_AI_MODEL_NOT_FOUND` only in Section 7.4's error-code
+    /// column, not in Section 10's table) — conventional phrasing, logged
+    /// in `docs/DECISIONS.md`.
+    pub fn ai_model_not_found(provider: &str, model: &str, raw_detail: impl Into<String>) -> Self {
+        Self::new(
+            AppErrorCode::EAiModelNotFound,
+            format!("{provider} doesn't have a model named \"{model}\". Check the model name in Settings."),
+        )
+        .with_detail(raw_detail.into())
     }
 }
 
