@@ -1,7 +1,8 @@
 //! `ai/http.rs` — Section 5: "THE ONLY `reqwest` CLIENT IN THE REPOSITORY."
 //!
 //! [`send`] is the single function in this entire crate allowed to reach
-//! the network. Its two structural guarantees:
+//! the network. Its three structural guarantees (the WHAT/WHETHER/WHERE
+//! triad — see `ai/endpoint.rs`'s doc comment for the full picture):
 //!
 //! 1. **Cannot be called without proof AI is on.** The first parameter is
 //!    `&EgressPermit` ([`crate::ai::permit`]), which has no public
@@ -13,6 +14,11 @@
 //!    does and does not guarantee. There is no second `send`-like function,
 //!    no `#[cfg(test)]`-only bypass, no "internal" raw-text path anywhere
 //!    in this module.
+//! 3. **Cannot be pointed at an arbitrary host.** The endpoint parameter is
+//!    [`crate::ai::endpoint::ResolvedEndpoint`], not `&str`/`String` — see
+//!    that module's doc comment. `tests/ai_endpoint_compile_fail.rs` proves
+//!    both that a caller cannot construct one by hand and that the old
+//!    `&str` call shape no longer compiles.
 //!
 //! Section 12 error hygiene: a response body, a provider error string, or
 //! an OS/transport error string is NEVER placed in `AppError.message` —
@@ -29,6 +35,7 @@ use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 
+use crate::ai::endpoint::ResolvedEndpoint;
 use crate::ai::permit::EgressPermit;
 use crate::error::AppError;
 use crate::privacy::redact::RedactedPayload;
@@ -57,25 +64,24 @@ pub struct AiResponse {
 
 /// The only function in this crate that sends bytes over the network.
 ///
-/// `_permit` proves AI is on (Section 12); `endpoint` is the fully-formed
-/// target URL a caller supplies (no provider host allowlist lives here yet
-/// — until Phase 12 step 3 adds real provider adapters, NOTHING in this
-/// crate's production code calls `send` at all, so `endpoint` is inert;
-/// the two allowed hosts, `api.anthropic.com` and the configured Ollama
-/// `base_url`, become the ONLY values step 3's adapters ever pass here).
-/// `headers`/`json_body` are plain, already-built request data — neither
-/// parameter can carry raw repo content on its own; `payload` is what
-/// proves the body actually came from a real `RedactedPayload`.
+/// The three parameters are the WHAT/WHETHER/WHERE triad
+/// (`ai/endpoint.rs`'s doc comment): `_permit` proves AI is on (Section
+/// 12); `endpoint` is a [`ResolvedEndpoint`] — obtainable only from
+/// [`crate::ai::endpoint::resolve`], which reads it from the real settings
+/// store, never a caller argument — not `&str`/`String`, so there is no way
+/// to point this function at an arbitrary host; `payload` proves the body
+/// actually came from a real `RedactedPayload`. `headers` are plain,
+/// already-built request data (auth header etc. — step 3's concern).
 pub fn send(
     _permit: &EgressPermit,
-    endpoint: &str,
+    endpoint: &ResolvedEndpoint,
     headers: reqwest::header::HeaderMap,
     payload: &RedactedPayload,
 ) -> Result<AiResponse, AppError> {
     let body = serde_json::json!({ "snippets": payload.to_request_snippets() });
 
     let response = HTTP_CLIENT
-        .post(endpoint)
+        .post(endpoint.url())
         .headers(headers)
         .json(&body)
         .send()
