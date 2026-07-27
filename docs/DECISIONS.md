@@ -1741,3 +1741,41 @@ decided; it only records choices the spec left open.
   Section 12 names (a second HTTP client being added; `reqwest` being
   silently swapped for another), without failing on `reqwest`'s own
   unavoidable transitive dependencies.
+- **Phase 14 (deferred) — transitive-dependency pinning for the egress
+  chokepoint.** Product-owner decision, recorded here per Phase 12 step 2's
+  follow-up: `check_egress_chokepoint`'s direct-dependency check (see the
+  entry immediately above) only constrains `Cargo.toml`'s `[dependencies]`
+  table, not the resolved/transitive tree — `reqwest`'s own transitive
+  dependencies (`hyper`, `rustls`, etc.) are unconstrained beyond "not a
+  direct dependency." A stricter Requirement-3-style check would pin the
+  EXPECTED transitive HTTP/TLS crate set (e.g. from `cargo tree` or
+  `Cargo.lock`) so that a NEW, unexpected transitive network crate showing
+  up (a supply-chain compromise, a `reqwest` feature-flag change pulling in
+  something unexpected, a dependency swapping its own HTTP client)  also
+  fails the check, not just a new *direct* one. Explicitly out of scope for
+  Phase 12 step 2 — deferred to Phase 14 as a supply-chain hardening item.
+- **Phase 12 step 2 (endpoint follow-up) — `ai::http::send`'s endpoint
+  parameter changed from `endpoint: &str` to `&ResolvedEndpoint`, closing
+  the gap flagged in step 2's report.** A free `&str` let any caller point
+  the one HTTP client in the crate at an arbitrary host; `EgressPermit`
+  only proved AI was *on*, not that the target was legitimate.
+  `ai::endpoint::ResolvedEndpoint` (`src/ai/endpoint.rs`) closes this the
+  same structural way as `RedactedPayload`/`EgressPermit`: private field,
+  no public constructor (no `new`, no `Default`, no `Deserialize`, no
+  `From<String>`/`From<&str>`) — the only place `ResolvedEndpoint { .. }`
+  is written is inside `resolve`. Critically, `resolve` takes
+  `&StoredAiSettings` (a new type in `commands/settings.rs`), not
+  `&AiSettings` — `AiSettings` is a `Deserialize`-deriving DTO any module
+  can hand-build (e.g. claiming `ollama_base_url: "https://evil.example.com"`),
+  so accepting it directly would make the guarantee worthless.
+  `StoredAiSettings` has a private tuple field and no public constructor
+  except `load_stored_ai_settings`, which reads fresh from the real
+  settings file — a caller holding a hand-built `AiSettings` has no route
+  to a `StoredAiSettings` (proven in `tests/ai_endpoint_compile_fail.rs`:
+  tuple-struct-literal is `E0603`, `From<AiSettings>` is `E0277`) and
+  therefore no route to `resolve` at all. Anthropic's URL is a fixed
+  constant (not user-configurable); Ollama's is
+  `{stored ollama_base_url}/api/chat`, read only from the store. A future
+  `openai-compatible` provider variant (not added here — no provider code
+  in this step) would follow the same pattern with its own stored
+  `base_url` field.

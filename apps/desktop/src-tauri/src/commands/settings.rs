@@ -135,6 +135,35 @@ pub fn get_settings_core(settings_path: &Path, ai_keys: &AiKeyStore) -> Settings
     settings
 }
 
+/// A proof that the `AiSettings` inside came from the real, on-disk
+/// settings store — not from a value a caller assembled in memory. `Debug`
+/// and `Clone` are safe to derive (inspection and copying, not
+/// construction); there is deliberately no `Deserialize`, no `Default`, no
+/// `From<AiSettings>`, and the wrapped field is private, so the only way to
+/// produce one anywhere in this crate is [`load_stored_ai_settings`] below.
+///
+/// This exists because `ai::endpoint::resolve` must never be callable with
+/// a hand-built `AiSettings { ollama_base_url: "https://evil.example.com",
+/// .. }` — see that module's doc comment for the full "WHERE it goes"
+/// guarantee this type anchors. `tests/ai_endpoint_compile_fail.rs` proves
+/// the struct-literal and `From`/`Into` routes are both compile errors.
+#[derive(Debug, Clone)]
+pub struct StoredAiSettings(AiSettings);
+
+impl StoredAiSettings {
+    pub fn ai(&self) -> &AiSettings {
+        &self.0
+    }
+}
+
+/// The ONLY function in this crate that produces a [`StoredAiSettings`].
+/// Reads fresh from the real settings file via [`get_settings_core`] (which
+/// also recomputes `hasStoredKey` from the real keychain) — never from a
+/// caller-supplied `AiSettings`.
+pub fn load_stored_ai_settings(settings_path: &Path, ai_keys: &AiKeyStore) -> StoredAiSettings {
+    StoredAiSettings(get_settings_core(settings_path, ai_keys).ai)
+}
+
 fn apply_patch(current: Settings, patch: SettingsPatch) -> Settings {
     Settings {
         settings_version: SETTINGS_VERSION,

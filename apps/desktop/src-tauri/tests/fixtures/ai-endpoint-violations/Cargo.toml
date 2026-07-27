@@ -1,0 +1,14 @@
+[package]
+name = "ai-endpoint-violations-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately NOT part of any [workspace] — mirrors
+# tests/fixtures/redaction-violations/ and
+# tests/fixtures/egress-permit-violations/. Every binary here is meant to
+# fail to compile; see tests/ai_endpoint_compile_fail.rs.
+
+[dependencies]
+onboard = { path = "../../.." }
+serde_json = "1"
