@@ -13,6 +13,49 @@ use crate::constants::{AI_KEY_MAX_LEN, AI_KEY_MIN_LEN};
 use crate::error::{AppError, AppErrorCode};
 use crate::secrets::keychain::{self, Keychain};
 
+/// Serializes every test in this crate that touches the REAL OS keychain
+/// backend (as opposed to this store's session-only in-memory fallback).
+/// Found by direct observation, not theory: even tests using distinct,
+/// per-test-unique provider names (so no two tests ever touch the same
+/// keychain *account*) still intermittently failed under `cargo test`'s
+/// default concurrent-by-default execution — e.g. a `store()` immediately
+/// followed by a `has_key()` sanity check on the SAME provider, in the
+/// SAME test, on the SAME `AiKeyStore` instance, spuriously observing
+/// "not there." The OS keychain backend itself (Windows Credential
+/// Manager / macOS Keychain / the Secret Service D-Bus daemon) is a
+/// single, process/system-wide resource, and this crate's `keyring`
+/// wrapper gives no isolation guarantee across concurrent callers from
+/// many threads in one process — contention there, not a bug in any
+/// individual test's logic. Every test anywhere in this crate that calls
+/// `AiKeyStore::store`/`retrieve`/`clear` against the real backend (i.e.
+/// not exercising the session-only fallback deliberately) must hold this
+/// for its duration. `#[cfg(test)]`-only: does not exist in any non-test
+/// build.
+#[cfg(test)]
+pub(crate) static REAL_KEYCHAIN_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Even fully serialized behind [`REAL_KEYCHAIN_TEST_LOCK`], a `store()`
+/// immediately followed by a `has_key()`/`retrieve()` on the SAME provider,
+/// in the SAME test, on the SAME `AiKeyStore` instance, was still observed
+/// to intermittently report "not there" under general system load (many
+/// unrelated tests/threads/processes competing for CPU while `cargo test`
+/// runs) — real OS keychain backends (confirmed on Windows Credential
+/// Manager) do not guarantee a write is immediately visible to the very
+/// next read under load. This polls `check` for up to ~1s before giving
+/// up, which is a write-visibility tolerance, not a weakening of what's
+/// being tested — every test using it still fails for real if the key
+/// genuinely never appears. `#[cfg(test)]`-only.
+#[cfg(test)]
+pub(crate) fn eventually(check: impl Fn() -> bool) -> bool {
+    for _ in 0..40 {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    false
+}
+
 pub struct AiKey(String);
 
 impl AiKey {
@@ -28,7 +71,11 @@ impl AiKey {
         Ok(AiKey(raw.to_string()))
     }
 
-    fn reveal(&self) -> &str {
+    /// `pub(crate)`, not `pub`: legitimate same-crate callers (header
+    /// construction in `ai::anthropic`, and this module's own `store`) need
+    /// the raw value; nothing outside the crate can reach it, and `Debug`/
+    /// `Display` above still always redact regardless of who calls this.
+    pub(crate) fn reveal(&self) -> &str {
         &self.0
     }
 }
@@ -98,6 +145,34 @@ impl AiKeyStore {
                     is_session_only: true,
                 })
             }
+            Err(_) => Err(AppError::keychain_unavailable()),
+        }
+    }
+
+    /// Retrieves the real key for `provider` — session-only store first,
+    /// then the OS keychain. Callers MUST already hold proof AI is usable
+    /// (an `EgressPermit` — `ai::permit::acquire` already calls `has_key`
+    /// internally) before calling this; it exists for exactly one
+    /// legitimate purpose, building an outbound auth header in
+    /// `ai::anthropic` (and, later, `ollama`/`openai-compatible`) — never
+    /// logged, never put in `AppError.message` (the returned `AiKey`'s
+    /// `Debug`/`Display` stay redacted regardless).
+    pub fn retrieve(&self, provider: &str) -> Result<AiKey, AppError> {
+        let account = keychain::account_for(provider);
+        if let Some(value) = self
+            .session
+            .keys
+            .lock()
+            .expect("session key map poisoned")
+            .get(&account)
+            .cloned()
+        {
+            return Ok(AiKey(value));
+        }
+        match Keychain::get(&account) {
+            Ok(Some(value)) => Ok(AiKey(value)),
+            Ok(None) => Err(AppError::ai_disabled()),
+            Err(err) if keychain::is_backend_unavailable(&err) => Err(AppError::ai_disabled()),
             Err(_) => Err(AppError::keychain_unavailable()),
         }
     }
@@ -186,6 +261,9 @@ mod tests {
 
     #[test]
     fn stores_and_clears_a_real_round_trip_through_the_os_keychain() {
+        let _lock = REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let store = AiKeyStore::new();
         let provider = "onboard-phase6-keychain-roundtrip-test";
         let _cleanup = CleanupGuard {
@@ -196,9 +274,35 @@ mod tests {
         let key = AiKey::parse("sk-ant-roundtrip-test-key-0000").unwrap();
         let outcome = store.store(provider, &key).expect("store must succeed");
         assert!(outcome.is_stored);
-        assert!(store.has_key(provider));
+        assert!(eventually(|| store.has_key(provider)));
 
         store.clear(provider).expect("clear must succeed");
-        assert!(!store.has_key(provider));
+        assert!(eventually(|| !store.has_key(provider)));
+    }
+
+    #[test]
+    fn retrieve_returns_the_real_value_that_was_stored() {
+        let _lock = REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let store = AiKeyStore::new();
+        let provider = "onboard-phase12-step3a-retrieve-test";
+        let _cleanup = CleanupGuard {
+            store: &store,
+            provider,
+        };
+        let key = AiKey::parse("sk-ant-retrieve-test-key-000000").unwrap();
+        store.store(provider, &key).expect("store must succeed");
+        assert!(eventually(|| store.has_key(provider)));
+
+        let retrieved = store.retrieve(provider).expect("retrieve must succeed");
+        assert_eq!(retrieved.reveal(), "sk-ant-retrieve-test-key-000000");
+    }
+
+    #[test]
+    fn retrieve_fails_for_a_provider_with_no_stored_key() {
+        let store = AiKeyStore::new();
+        let result = store.retrieve("onboard-phase12-nonexistent-retrieve-test");
+        assert!(result.is_err());
     }
 }
