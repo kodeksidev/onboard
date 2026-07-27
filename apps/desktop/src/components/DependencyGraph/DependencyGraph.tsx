@@ -3,6 +3,8 @@ import type { JSX, KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react'
 import type cytoscape from 'cytoscape';
 import type { AnalysisResult } from '@onboard/contract';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { GRAPH_COPY } from '@/copy/messages';
+import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { registerGraphFocusHandler, useGraphStore } from '@/state/graphStore';
 import { buildAdjacency, fileNodeId, orderPathsByImportance, pathFromNodeId } from './graph-model';
 import type { GraphKeyboardModel } from './keyboard-nav';
@@ -255,6 +257,17 @@ export function DependencyGraph({
 }: DependencyGraphProps): JSX.Element {
   const { containerRef, searchInputRef, searchQuery, setSearchQuery, announcement, graph, handleKeyDown } =
     useDependencyGraphController(result, onOpenFile, onCytoscapeReady);
+
+  if (result.files.length === 0) {
+    return (
+      <section aria-labelledby="dependency-graph-title" className="flex flex-1 flex-col">
+        <h2 id="dependency-graph-title" className="sr-only">
+          Dependency graph
+        </h2>
+        <EmptyState title={GRAPH_COPY.empty.title} description={GRAPH_COPY.empty.description} />
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="dependency-graph-title" className="flex flex-1 flex-col">

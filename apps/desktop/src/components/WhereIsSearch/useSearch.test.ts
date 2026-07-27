@@ -85,6 +85,21 @@ describe('useSearch', () => {
     expect(result.current.response).toBeNull();
   });
 
+  test('a rejected search populates error and clears isLoading, leaving response untouched', async () => {
+    const appError = { code: 'E_NO_ANALYSIS', message: 'No analysis is loaded for this repo.', detail: null, path: null };
+    vi.spyOn(ipc, 'searchRepo').mockRejectedValueOnce(appError);
+    const { result } = renderHook(() => useSearch(REPO_ID));
+
+    act(() => {
+      result.current.setQuery('authenticate');
+    });
+
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.error).toEqual(appError);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.response).toBeNull();
+  });
+
   test('an in-flight query is discarded if a newer one starts (stale-response guard)', async () => {
     const { result } = renderHook(() => useSearch(REPO_ID));
 

@@ -103,6 +103,16 @@ export const ERRORS = {
     title: "That path isn't part of this repository",
     description: 'Onboard only opens files inside the folder it analyzed. Re-run analysis if this looks wrong.',
   }),
+  /**
+   * Gap: Section 10 doesn't give literal copy for E_NO_ANALYSIS
+   * (`search_repo` called with no completed analysis for the repo).
+   * Filled with the most conventional phrasing consistent with the other
+   * AppError strings; see docs/DECISIONS.md.
+   */
+  noAnalysisForSearch: (): TitledCopy => ({
+    title: 'Search is not ready yet',
+    description: 'This repository has not finished analysing, so there is nothing to search yet.',
+  }),
   aiKeyInvalid: (provider: string): TitledCopy => ({
     title: 'That key was rejected',
     description: `${provider} returned 401. Check the key, then test again. AI stays off until a key passes.`,
@@ -153,6 +163,37 @@ export const SEARCH_COPY = {
   }),
 } as const;
 
+/**
+ * Empty states for the Overview tab's four sub-lists (Section 9's "analysed
+ * fine, nothing qualified" bucket — `OverviewPanel` only ever mounts once a
+ * real `AnalysisResult` exists, so "no analysis"/"analysis failed" cannot
+ * reach these). Each names the actual rule that produced zero results
+ * rather than showing a blank heading.
+ */
+export const OVERVIEW_COPY = {
+  noEntryPoints: {
+    title: 'No entry points detected',
+    description:
+      "Onboard looks for package.json's main, bin, or scripts.start; a conventional index file; or Python's __main__.py file or module guard. None of those were found in this repo.",
+  },
+  noImportantFiles: {
+    title: 'No files to rank',
+    description: 'Onboard ranks files by importance once they are parsed. No files in this repo were parsed successfully.',
+  },
+  noLanguages: {
+    title: 'No languages detected',
+    description: 'Onboard detects languages from parsed files. No files in this repo were parsed successfully.',
+  },
+  noManifests: {
+    title: 'No package manifest found',
+    description: 'Onboard looks for files such as package.json, pyproject.toml, or requirements.txt. None were found in this repo.',
+  },
+  noRuntimeDependencies: {
+    title: 'No runtime dependencies declared',
+    description: 'The manifest(s) Onboard found in this repo declare no runtime dependencies.',
+  },
+} as const;
+
 export const ANALYSIS_PROGRESS_COPY = {
   title: 'Mapping the repository',
   phaseLabels: {
@@ -180,6 +221,17 @@ export const ROADMAP_COPY = {
   dependedOnByLabel: (count: number): string => `Imported by ${count} file${count === 1 ? '' : 's'}`,
   focusInGraphLabel: 'Focus in graph',
   openFileLabel: 'Open file',
+  /**
+   * "Analysed fine, nothing qualified": every parsed file becomes at least
+   * one roadmap step (Section 8.5), so zero steps only happens when nothing
+   * was parsed at all (`RoadmapPanel` only ever mounts once a real
+   * `AnalysisResult` exists, so "no analysis"/"analysis failed" cannot
+   * reach it either).
+   */
+  empty: {
+    title: 'No roadmap yet',
+    description: 'Onboard builds a reading order from parsed files. No files in this repo were parsed successfully.',
+  },
 } as const;
 
 export const MODULE_MAP_COPY = {
@@ -188,6 +240,37 @@ export const MODULE_MAP_COPY = {
   dependsOnModulesLabel: 'Depends on',
   dependedOnByModulesLabel: 'Used by',
   fileCountLabel: (count: number): string => `${count} file${count === 1 ? '' : 's'}`,
+  /**
+   * "Analysed fine, nothing qualified" (never "no analysis"/"analysis
+   * failed" — `ModuleMap` only ever mounts once a real `AnalysisResult`
+   * exists). Names the actual rule (Section 8.6's `MODULE_MIN_FILES`) and
+   * the actual largest candidate directory, derived from real file data by
+   * `findLargestCandidateDirectory` — never a hardcoded "3" or a generic
+   * "nothing here".
+   */
+  emptyWithCandidate: (minFiles: number, dirPath: string, fileCount: number): TitledCopy => ({
+    title: 'No modules found',
+    description: `Modules are directories with at least ${minFiles} analysed files. This repo's largest is ${dirPath} with ${fileCount}.`,
+  }),
+  /** No directory below any source root has even one analysed file to count. */
+  emptyNoCandidate: (minFiles: number): TitledCopy => ({
+    title: 'No modules found',
+    description: `Modules are directories with at least ${minFiles} analysed files. No directory in this repo has any analysed files yet.`,
+  }),
+} as const;
+
+/**
+ * "Analysed fine, nothing qualified": `DependencyGraph` only ever mounts
+ * once a real `AnalysisResult` exists with at least one parsed file in
+ * practice (Section 10's `E_NO_SUPPORTED_FILES` gates that above it), but
+ * the component itself does not assume that invariant — an empty `files`
+ * array gets a real explanation instead of an empty toolbar and canvas.
+ */
+export const GRAPH_COPY = {
+  empty: {
+    title: 'Nothing to graph',
+    description: 'This repo has no parsed files to show a dependency graph for.',
+  },
 } as const;
 
 /** Section 9 Phase 10: "the everyday feature" — make it fast and keyboard-first. */
@@ -229,6 +312,7 @@ export const ERROR_TITLES: Readonly<Record<string, string>> = {
   E_ANALYSIS_IN_PROGRESS: ERRORS.analysisInProgress().title,
   E_FILE_TOO_LARGE: ERRORS.fileTooLarge('', '').title,
   E_PATH_ESCAPES_REPO: ERRORS.pathEscapesRepo().title,
+  E_NO_ANALYSIS: ERRORS.noAnalysisForSearch().title,
 };
 
 const DEFAULT_ERROR_TITLE = 'Something went wrong';
