@@ -56,6 +56,12 @@ pub enum AppErrorCode {
     EAiRateLimited,
     /// Phase 12 step 2: the provider responded 404 for the configured model.
     EAiModelNotFound,
+    /// Phase 12 step 6 (Section 8.10): the model's answer cited a path that
+    /// is not in the index, cited a line that does not exist in a file that
+    /// IS in the index, or cited nothing verifiable at all. The WHOLE
+    /// answer is withheld — Section 8.10 step 3: "Never show a partially
+    /// verified answer."
+    EAiCitationRejected,
     /// Phase 12 step 5: Ollama specifically (never Anthropic/openai-compatible)
     /// could not be reached at all — reclassified from a generic
     /// `E_AI_NETWORK` transport failure by `ai::ollama`, since for a
@@ -88,6 +94,7 @@ impl AppErrorCode {
             AppErrorCode::EAiKeyInvalid => "E_AI_KEY_INVALID",
             AppErrorCode::EAiRateLimited => "E_AI_RATE_LIMITED",
             AppErrorCode::EAiModelNotFound => "E_AI_MODEL_NOT_FOUND",
+            AppErrorCode::EAiCitationRejected => "E_AI_CITATION_REJECTED",
             AppErrorCode::EAiOllamaUnreachable => "E_AI_OLLAMA_UNREACHABLE",
         }
     }
@@ -319,6 +326,49 @@ impl AppError {
             format!("{provider} doesn't have a model named \"{model}\". Check the model name in Settings."),
         )
         .with_detail(raw_detail.into())
+    }
+
+    /// Section 10's literal copy for "Model cites a path not in the index",
+    /// verbatim, with the offending path interpolated exactly as
+    /// `apps/desktop/src/copy/messages.ts`'s `ERRORS.aiCitationRejected`
+    /// does. `.path` carries the same offending path so the UI can show it
+    /// without re-parsing `message` (acceptance criterion 18).
+    pub fn ai_citation_rejected(offending_path: &str) -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            format!(
+                "The model referenced {offending_path}, which is not in the index. Onboard never shows paths it can't verify. Try a narrower question."
+            ),
+        )
+        .with_path(offending_path.to_string())
+    }
+
+    /// The deliberate strengthening of Section 8.10 step 3 (logged in
+    /// `docs/DECISIONS.md`): a path that IS in the index but carries a line
+    /// number the file does not have is a citation that resolves to
+    /// nothing, which is exactly the plausible-but-unresolvable case a bare
+    /// membership check waves through. `.path` is the full offending
+    /// citation (`path:line`), not just the path — the line is the part
+    /// that failed, so hiding it would make the message unactionable.
+    pub fn ai_citation_line_out_of_range(path: &str, line: u64, real_line_count: u64) -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            format!(
+                "The model referenced {path}:{line}, but that file has {real_line_count} lines. Onboard never shows citations it can't resolve. Try a narrower question."
+            ),
+        )
+        .with_path(format!("{path}:{line}"))
+    }
+
+    /// Section 8.10's non-vacuousness case: "every citation resolves" is
+    /// trivially true of an answer containing no citations at all, so an
+    /// uncited answer is withheld rather than reported as verified. No
+    /// offending path exists here, so `.path` stays `None`.
+    pub fn ai_answer_uncited() -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            "The model's answer pointed at no files, so none of it could be checked against the index. Onboard only shows answers whose claims resolve to real code. Try a narrower question.",
+        )
     }
 
     /// Section 10's literal copy for "Ollama not running":
