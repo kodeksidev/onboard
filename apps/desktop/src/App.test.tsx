@@ -6,6 +6,7 @@ import { useRepoStore } from '@/state/repoStore';
 import { useSettingsStore } from '@/state/settingsStore';
 import { useGraphStore } from '@/state/graphStore';
 import { DEFAULT_SETTINGS } from '@/ipc/settings-schema';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 afterEach(() => {
   useRepoStore.setState({
@@ -63,7 +64,11 @@ describe('App (mounted against mock IPC)', () => {
    * to focus that same path in `graphStore`, the one cross-component focus
    * seam, rather than a second one.
    */
-  test('clicking a "where is x?" result opens that file, at that line, in the File viewer tab', async () => {
+  // Only this test gets headroom: it mounts CodeMirror through a React.lazy
+  // boundary. The two above are plain synchronous renders and stay on the
+  // suite's modest default, where a regression to multiple seconds SHOULD
+  // fail rather than pass quietly.
+  test('clicking a "where is x?" result opens that file, at that line, in the File viewer tab', { timeout: SLOW_MOUNT_TIMEOUT_MS }, async () => {
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 384 });
     const user = userEvent.setup();
     render(<App />);

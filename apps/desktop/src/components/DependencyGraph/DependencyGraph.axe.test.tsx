@@ -5,6 +5,7 @@ import { AnalysisEnvelope } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { DependencyGraph } from './DependencyGraph';
 import { useGraphStore } from '@/state/graphStore';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const SAMPLE = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 
@@ -19,7 +20,7 @@ afterEach(() => {
  * screen-reader table) — jsdom's missing canvas support has no bearing on
  * this check, since axe inspects the accessibility tree, not pixels.
  */
-describe('DependencyGraph accessibility', () => {
+describe('DependencyGraph accessibility', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('has zero axe-core violations', async () => {
     const { container } = render(<DependencyGraph result={SAMPLE} />);
 

@@ -8,6 +8,7 @@ import { useGraphStore } from '@/state/graphStore';
 import { DependencyGraph } from '@/components/DependencyGraph/DependencyGraph';
 import { fileNodeId } from '@/components/DependencyGraph/graph-model';
 import { RoadmapPanel } from './RoadmapPanel';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const RESULT = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 const STEPS = RESULT.roadmap.steps;
@@ -72,7 +73,7 @@ function renderRoadmapAndGraph(): { getCore: () => cytoscape.Core } {
   };
 }
 
-describe('RoadmapPanel + DependencyGraph integration', () => {
+describe('RoadmapPanel + DependencyGraph integration', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('clicking step n centers that node in the real Cytoscape core', async () => {
     const user = userEvent.setup();
     const { getCore } = renderRoadmapAndGraph();

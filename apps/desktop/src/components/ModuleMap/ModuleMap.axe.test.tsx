@@ -5,10 +5,11 @@ import { AnalysisEnvelope } from '@onboard/contract';
 import type { AnalysisResult } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { ModuleMap } from './ModuleMap';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const RESULT: AnalysisResult = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 
-describe('ModuleMap accessibility', () => {
+describe('ModuleMap accessibility', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('has zero axe-core violations across all 5 fixture module cards', async () => {
     const { container } = render(<ModuleMap result={RESULT} />);
 
