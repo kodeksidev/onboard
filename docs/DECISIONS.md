@@ -1686,3 +1686,58 @@ decided; it only records choices the spec left open.
   `target/` directory (`--target-dir`) so `onboard_lib` and its
   dependencies compile once (~25s) and every subsequent fixture build
   reuses the cache (<1s each) rather than a full dependency rebuild per case.
+- **Phase 12 step 2 — `reqwest::blocking::Client`, not the async client.**
+  Section 4 doesn't say which reqwest client mode to use. `ai/http.rs` is
+  the only egress in the tree; making it async would force `tokio` (or
+  another async runtime) onto the whole crate's dependency graph as a
+  direct dependency just to await one function, which every other Tauri
+  command in this crate would then need to thread through even though none
+  of them do I/O that benefits from it. `reqwest`'s `blocking` feature runs
+  its own private internal runtime scoped to the client, so `ai::http::send`
+  can stay a plain synchronous function and nothing outside `ai/http.rs`
+  becomes async. Revisit if a future phase needs concurrent in-flight AI
+  requests, which the blocking client can't do.
+- **Phase 12 step 2 — `EgressPermit::acquire` takes `&AiSettings` and
+  `&AiKeyStore`, not plain `bool`s.** A first draft took
+  `(is_ai_enabled: bool, has_stored_key: bool)` for easy unit testing, but
+  that reduces the guarantee to "a caller who passes `(true, true)` gets a
+  permit" — a check by convention, not by construction, which is exactly
+  the failure mode `RedactedPayload` (step 1) was built to close. `acquire`
+  now takes the real `&AiSettings` and `&AiKeyStore` and calls
+  `ai_keys.has_key(...)` itself against the actual keychain/session state,
+  so the key-presence half of the check is unfakeable by a same-crate
+  caller. The toggle-enabled half has the same residual gap `EngineSnippet`
+  documented in step 1 (a same-crate caller could construct a fabricated
+  `AiSettings { is_enabled: true, .. }`, since its fields must stay `pub`
+  for JSON round-tripping) — mitigated, not eliminated, and covered by
+  `acquire_ignores_a_fabricated_enabled_flag_without_a_real_key`, which
+  proves a fabricated `true` alone is still insufficient without a real
+  stored key. Consistent with Section 12's threat model (accidental
+  exfiltration, not a malicious insider rewriting the same crate).
+- **Phase 12 step 2 — `ai::http::send`'s `endpoint: &str` has no host
+  allowlist in this module.** Step 2 is scoped to "no provider code"; which
+  hosts are legitimate AI endpoints is a step-3 (provider adapter) concern,
+  not something `http.rs` can decide without knowing which providers exist
+  yet. Flagged for explicit confirmation in step 3: either `http::send`
+  gains an allowlist parameter, or each provider adapter is trusted to only
+  ever pass its own known endpoint constant — the latter would leave the
+  chokepoint's transport layer accepting an arbitrary caller-supplied URL,
+  which is weaker than "the only door" implies and should be tightened.
+- **Phase 12 step 2c — the banned-crate check's literal wording is
+  unsatisfiable; implemented the strongest coherent version instead.**
+  Read literally, "assert `hyper, ureq, curl, isahc, surf, attohttpc,
+  rustls, native-tls, openssl, tungstenite` appear nowhere" fails
+  permanently the moment `reqwest` exists: `reqwest` depends on `hyper`,
+  and its `rustls-tls` feature depends on `rustls`, both unavoidably present
+  in `Cargo.lock`/`cargo tree`. `check_egress_chokepoint`
+  (`src-tauri/src/bin/check_egress_chokepoint.rs`) instead checks two
+  narrower, coherent things: (1) `Cargo.toml`'s `[dependencies]` table
+  (never `Cargo.lock`/the resolved tree) has exactly one HTTP client key
+  (`reqwest`) and zero of the other nine names, including `hyper`/`rustls`
+  — which may exist only transitively, never as a direct dependency line;
+  (2) this crate's own `.rs` source files under `src/` contain the
+  `reqwest::` path-syntax substring in exactly one file and every other
+  banned name's `::` form in zero files. This still catches both threats
+  Section 12 names (a second HTTP client being added; `reqwest` being
+  silently swapped for another), without failing on `reqwest`'s own
+  unavoidable transitive dependencies.

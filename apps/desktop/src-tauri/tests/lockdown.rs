@@ -96,13 +96,20 @@ fn shell_execute_is_scoped_to_the_onboard_engine_binary_only() {
     let args = args
         .as_array()
         .expect("shell scope args must be an explicit allow-list");
-    assert_eq!(args.len(), 2, "the engine takes exactly one flag and one value");
+    assert_eq!(
+        args.len(),
+        2,
+        "the engine takes exactly one flag and one value"
+    );
     assert_eq!(
         args[0], "--grammars-dir",
         "the only literal argument the shell may pass"
     );
     assert!(
-        args[1].get("validator").and_then(serde_json::Value::as_str).is_some(),
+        args[1]
+            .get("validator")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
         "the grammars-dir VALUE must be constrained by a validator, not free-form"
     );
 }
