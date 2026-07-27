@@ -100,7 +100,7 @@ function ReadyViewPanel({ view, result, openFile, onOpenFile }: ReadyViewPanelPr
     return <RoadmapPanel steps={result.roadmap.steps} onOpenFile={onOpenFile} />;
   }
   if (view === 'modules') {
-    return <ModuleMap modules={result.modules} onOpenFile={onOpenFile} />;
+    return <ModuleMap result={result} onOpenFile={onOpenFile} />;
   }
   if (view === 'search') {
     return <WhereIsSearch repoId={result.repo.id} onOpenFile={onOpenFile} />;

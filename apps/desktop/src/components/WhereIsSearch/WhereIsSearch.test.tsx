@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { SearchResponse } from '@onboard/contract';
+import { ipc } from '@/ipc/ipc';
 import { WhereIsSearch } from './WhereIsSearch';
 
 const REPO_ID = '9f3c1a7b2e5d4086';
@@ -90,5 +92,51 @@ describe('WhereIsSearch', () => {
     await waitFor(() => {
       expect(screen.getByText("Ignored: 'db' (min 3 characters)")).toBeInTheDocument();
     });
+  });
+
+  /**
+   * Section 9's audit: `useSearch` already carried an `error` field, but
+   * `WhereIsSearch` never rendered it — a failed search looked identical to
+   * "still typing" or briefly like "no results". Confirmed and fixed here.
+   */
+  test('a failed search shows an error state, distinct from "no results" and from loading', async () => {
+    const appError = {
+      code: 'E_NO_ANALYSIS',
+      message: 'This repository has not finished analysing, so there is nothing to search yet.',
+      detail: null,
+      path: null,
+    };
+    vi.spyOn(ipc, 'searchRepo').mockRejectedValueOnce(appError);
+    const user = userEvent.setup();
+    render(<WhereIsSearch repoId={REPO_ID} />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Where is X?' }), 'authenticate');
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Search is not ready yet' })).toBeInTheDocument();
+    expect(
+      screen.getByText('This repository has not finished analysing, so there is nothing to search yet.'),
+    ).toBeInTheDocument();
+    // Not the zero-hit copy, and not still showing the (now stale) loading text.
+    expect(screen.queryByText(/^Nothing matched/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Searching…')).not.toBeInTheDocument();
+  });
+
+  test('the loading label is shown while a query is in flight', async () => {
+    let resolveSearch!: (value: SearchResponse) => void;
+    vi.spyOn(ipc, 'searchRepo').mockReturnValueOnce(
+      new Promise<SearchResponse>((resolve) => {
+        resolveSearch = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(<WhereIsSearch repoId={REPO_ID} />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Where is X?' }), 'authenticate');
+
+    expect(await screen.findByText('Searching…')).toBeInTheDocument();
+
+    resolveSearch({ query: 'authenticate', hits: [], expandedTerms: [], droppedTerms: [], totalCandidateCount: 0 });
+    await waitFor(() => expect(screen.queryByText('Searching…')).not.toBeInTheDocument());
   });
 });

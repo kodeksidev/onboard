@@ -1,5 +1,6 @@
 import type { JSX } from 'react';
 import type { AnalysisResult } from '@onboard/contract';
+import { OVERVIEW_COPY } from '@/copy/messages';
 
 export interface TopFilesListProps {
   readonly importantFilePaths: AnalysisResult['importantFilePaths'];
@@ -19,27 +20,31 @@ export function TopFilesList({ importantFilePaths, files, onOpenFile }: TopFiles
       <h3 id="top-files-title" className="mb-3 text-sm font-semibold">
         Most important files
       </h3>
-      <ol className="space-y-1 text-sm">
-        {importantFilePaths.map((path) => {
-          const file = fileByPath.get(path);
-          return (
-            <li key={path} className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => onOpenFile(path)}
-                className="truncate text-left font-mono text-xs underline-offset-2 hover:underline"
-              >
-                {path}
-              </button>
-              {file !== undefined ? (
-                <span className="shrink-0 text-xs text-slate-500 dark:text-slate-500">
-                  {file.classification}
-                </span>
-              ) : null}
-            </li>
-          );
-        })}
-      </ol>
+      {importantFilePaths.length === 0 ? (
+        <p className="text-xs text-slate-500 dark:text-slate-500">{OVERVIEW_COPY.noImportantFiles.description}</p>
+      ) : (
+        <ol className="space-y-1 text-sm">
+          {importantFilePaths.map((path) => {
+            const file = fileByPath.get(path);
+            return (
+              <li key={path} className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenFile(path)}
+                  className="truncate text-left font-mono text-xs underline-offset-2 hover:underline"
+                >
+                  {path}
+                </button>
+                {file !== undefined ? (
+                  <span className="shrink-0 text-xs text-slate-500 dark:text-slate-500">
+                    {file.classification}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </section>
   );
 }

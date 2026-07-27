@@ -2001,3 +2001,82 @@ decided; it only records choices the spec left open.
   `"openai-compatible"` while leaving `Anthropic`/`Ollama`'s wire values
   unchanged (`"anthropic"`/`"ollama"` are single words, identical under
   either rule) — no existing settings file or test breaks.
+- **Post-Phase-10 defect fix — the "blank empty state" trap, audited across
+  every list-rendering tab component, not just `ModuleMap`.** The owner
+  found `ModuleMap` rendering only its heading on a small repo: `modules`
+  was genuinely empty (Section 8.6's `MODULE_MIN_FILES = 3` — the repo's
+  only candidate directory, `src`, had 2 parsed files) and `ModuleMap.tsx`
+  had no empty branch, so a correct, successful analysis looked identical
+  to a broken one. Fixed, and then audited every other component that maps
+  an array with no empty branch, since the same trap was "waiting for a
+  repo shaped the wrong way" everywhere, not just here:
+  - `ModuleMap.tsx` — new `EmptyModuleMap`, using a new
+    `apps/desktop/src/components/ModuleMap/module-empty-state.ts` utility.
+    `MODULE_MIN_FILES` is transcribed from `packages/engine/src/constants.ts`
+    (not importable — `apps/desktop/**` cannot depend on `packages/engine`,
+    and the contract does not expose the threshold as a field) and named
+    exactly once so it cannot silently drift from the engine's own value.
+    `findLargestCandidateDirectory` re-derives `packages/engine/src/rank/
+    modules.ts`'s `isAtDepth1Or2`/direct-parsed-file-count logic — read-only,
+    never imported, since `ModuleMap` still must not depend on
+    `packages/engine` — purely to name the actual largest candidate
+    directory and its actual file count in the empty-state copy ("This
+    repo's largest is src with 2"), never a hardcoded "3" or a generic
+    "nothing here". `ModuleMapProps` changed from `modules` to `result:
+    AnalysisResult` (it now needs `files` and `repo.sourceRoots` too),
+    matching `OverviewPanel`/`DependencyGraph`'s established "needs more
+    than one slice" pattern; `App.tsx`'s call site updated.
+  - `EntryPointList.tsx`, `TopFilesList.tsx` (Overview tab) — empty
+    branches naming the actual entry-point heuristics
+    (`package.json#main`/`#bin`/`#scripts.start`, a conventional index
+    file, Python's `__main__.py`/module guard) and the actual reason
+    nothing could be ranked (nothing parsed), rather than a blank list
+    under a heading.
+  - `StackCard.tsx` — three independent sub-lists (languages, manifests,
+    runtime dependencies) can each be empty independently of the others
+    (e.g. a manifest exists but declares no runtime deps, vs. no manifest
+    at all); each now has its own distinct copy so those two cases are not
+    collapsed into one message.
+  - `RoadmapPanel.tsx` — every parsed file becomes at least one roadmap
+    step (Section 8.5), so zero steps only happens when nothing was
+    parsed; empty branch added and worded accordingly.
+  - `DependencyGraph.tsx` — defensive empty branch for zero parsed files.
+    In practice `E_NO_SUPPORTED_FILES` already gates this above
+    `DependencyGraph` (Section 10), so it is not reachable through normal
+    use today, but the component itself did not assume that invariant, and
+    Section 9's audit asked for every list-mapping component to be
+    checked, not just the ones with an obviously reachable empty case.
+    `GraphListFallback` needed no change of its own: `DependencyGraph` now
+    never mounts it when `files` is empty, so its own `files.map(...)`
+    (also unguarded) is provably unreachable with zero rows.
+  - `WhereIsSearch.tsx` — a REAL, previously-unnoticed bug, not a
+    defensive addition: `useSearch`'s `error` field has existed since
+    Phase 10 but was never read by `WhereIsSearch`, and
+    `WHERE_IS_SEARCH_COPY.loadingLabel` ("Searching…") was defined but
+    never rendered anywhere. A failed search silently showed either a
+    stale previous result list or nothing, indistinguishable from "still
+    typing" — exactly the three-states-collapsed-into-one problem Section
+    9 describes, just not caused by an empty array this time. Fixed by
+    adding a `ResultsArea` sub-component that branches on `error` (now
+    `ErrorState`, reusing `resolveErrorCopy` the same way `FileViewer`
+    already does) before `isLoading` (now the previously-dead
+    `loadingLabel`) before the existing zero-hits branch. Added a new
+    `E_NO_ANALYSIS` entry to `ERRORS`/`ERROR_TITLES` (Section 7.4 lists it
+    as a real `search_repo` error code with no literal Section 10 copy).
+  - Reviewed and left unchanged, with reasoning: `SymbolOutline.tsx` and
+    `ImportsPanel.tsx` (already had empty branches since Phase 10 — "No
+    symbols found" / "None"); `ExpandedTerms.tsx` and `RoadmapStepCard.tsx`'s
+    `CompanionsSection`/`DependsOnSection` (return `null` when empty, which
+    is correct here — these are optional decoration, not primary content,
+    the same pattern `OverviewPanel`'s `SkippedFilesDisclosure` already
+    uses); `ModuleCardView.tsx`'s `ModuleNameList` (already handled, prints
+    "none"); `ModuleCardView.tsx`'s `KeyFileList` (structurally cannot be
+    empty — a module only exists in `modules` because it has >=
+    `MODULE_MIN_FILES` direct parsed files, so `keyFilesFor` always has at
+    least that many files to choose from); `FileViewer.tsx` (already
+    distinguished "no file open" / loading / error / loaded before this
+    defect was found — built with this discipline from the start).
+  - `GraphToolbar.tsx`, `RepoPicker.tsx`, `AnalysisProgress.tsx`,
+    `AppShell.tsx`, `ErrorState.tsx`, `EmptyState.tsx` audited and confirmed
+    to contain no array-mapping with an empty branch at risk (none of them
+    render a data-driven list at all).

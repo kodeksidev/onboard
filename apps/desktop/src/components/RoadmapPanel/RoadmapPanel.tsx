@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import type { AnalysisResult } from '@onboard/contract';
 import { ROADMAP_COPY } from '@/copy/messages';
+import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { useGraphStore } from '@/state/graphStore';
 import { RoadmapStepCard } from './RoadmapStepCard';
 import { useRoadmapRoute } from './useRoadmapRoute';
@@ -30,17 +31,21 @@ export function RoadmapPanel({ steps, onOpenFile = NOOP_OPEN_FILE }: RoadmapPane
       <h2 id="roadmap-panel-title" className="text-lg font-semibold">
         {ROADMAP_COPY.title}
       </h2>
-      <ol className="flex flex-col gap-2">
-        {steps.map((step) => (
-          <RoadmapStepCard
-            key={step.order}
-            step={step}
-            isFocused={focusedPath === step.path}
-            onFocus={() => focusPath(step.path)}
-            onOpenFile={onOpenFile}
-          />
-        ))}
-      </ol>
+      {steps.length === 0 ? (
+        <EmptyState title={ROADMAP_COPY.empty.title} description={ROADMAP_COPY.empty.description} />
+      ) : (
+        <ol className="flex flex-col gap-2">
+          {steps.map((step) => (
+            <RoadmapStepCard
+              key={step.order}
+              step={step}
+              isFocused={focusedPath === step.path}
+              onFocus={() => focusPath(step.path)}
+              onOpenFile={onOpenFile}
+            />
+          ))}
+        </ol>
+      )}
     </section>
   );
 }

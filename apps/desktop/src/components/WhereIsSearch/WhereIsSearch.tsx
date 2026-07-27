@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { SearchHit } from '@onboard/contract';
-import { SEARCH_COPY, WHERE_IS_SEARCH_COPY } from '@/copy/messages';
+import type { AppError, SearchHit } from '@onboard/contract';
+import { SEARCH_COPY, WHERE_IS_SEARCH_COPY, resolveErrorCopy } from '@/copy/messages';
 import { EmptyState } from '@/components/EmptyState/EmptyState';
+import { ErrorState } from '@/components/ErrorState/ErrorState';
 import { ExpandedTerms } from './ExpandedTerms';
 import { SearchResultRow } from './SearchResultRow';
 import { useSearch } from './useSearch';
@@ -109,6 +110,42 @@ function ResultsList({ hits, selectedIndex, onOpenFile }: ResultsListProps): JSX
   );
 }
 
+interface ResultsAreaProps {
+  readonly error: AppError | null;
+  readonly isLoading: boolean;
+  readonly showZeroHits: boolean;
+  readonly query: string;
+  readonly hits: readonly SearchHit[];
+  readonly selectedIndex: number;
+  readonly onOpenFile: (path: string, line?: number) => void;
+}
+
+/**
+ * Three states that must never look identical (Section 9's audit): a search
+ * that is still running (`isLoading`), a search that genuinely failed
+ * (`error` — previously silently swallowed, never rendered), and a search
+ * that succeeded but matched nothing (`showZeroHits`, Section 10's exact
+ * copy). Error takes priority over a stale loading flag or a stale response
+ * from before the failing request.
+ */
+function ResultsArea({ error, isLoading, showZeroHits, query, hits, selectedIndex, onOpenFile }: ResultsAreaProps): JSX.Element {
+  if (error !== null) {
+    const copy = resolveErrorCopy(error);
+    return <ErrorState title={copy.title} description={copy.description} detail={error.detail} />;
+  }
+  if (isLoading) {
+    return (
+      <p role="status" className="p-2 text-sm text-slate-500">
+        {WHERE_IS_SEARCH_COPY.loadingLabel}
+      </p>
+    );
+  }
+  if (showZeroHits) {
+    return <EmptyState title={SEARCH_COPY.noResults(query).title} description={SEARCH_COPY.noResults(query).description} />;
+  }
+  return <ResultsList hits={hits} selectedIndex={selectedIndex} onOpenFile={onOpenFile} />;
+}
+
 /**
  * "Where is X?" (Section 9 Phase 10 — "the everyday feature"). Debounced,
  * virtualized, fully keyboard-operable (↑/↓ move selection, Enter opens the
@@ -116,7 +153,7 @@ function ResultsList({ hits, selectedIndex, onOpenFile }: ResultsListProps): JSX
  * `droppedTerms` surfaced so ranking is explainable.
  */
 export function WhereIsSearch({ repoId, onOpenFile = NOOP_OPEN_FILE }: WhereIsSearchProps): JSX.Element {
-  const { query, setQuery, response } = useSearch(repoId);
+  const { query, setQuery, response, isLoading, error } = useSearch(repoId);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const hits = response?.hits ?? [];
 
@@ -151,11 +188,15 @@ export function WhereIsSearch({ repoId, onOpenFile = NOOP_OPEN_FILE }: WhereIsSe
       {response !== null ? (
         <ExpandedTerms expandedTerms={response.expandedTerms} droppedTerms={response.droppedTerms} />
       ) : null}
-      {showZeroHits ? (
-        <EmptyState title={SEARCH_COPY.noResults(query).title} description={SEARCH_COPY.noResults(query).description} />
-      ) : (
-        <ResultsList hits={hits} selectedIndex={selectedIndex} onOpenFile={onOpenFile} />
-      )}
+      <ResultsArea
+        error={error}
+        isLoading={isLoading}
+        showZeroHits={showZeroHits}
+        query={query}
+        hits={hits}
+        selectedIndex={selectedIndex}
+        onOpenFile={onOpenFile}
+      />
     </section>
   );
 }

@@ -64,4 +64,15 @@ describe('RoadmapPanel', () => {
     expect(onOpenFile).toHaveBeenCalledWith('src/index.ts');
     expect(useGraphStore.getState().focusedPath).toBeNull();
   });
+
+  /** "Analysed fine, nothing qualified" — matches Section 9's ModuleMap defect report, audited across every list-rendering tab. */
+  test('names why there is no roadmap when nothing was parsed, instead of a blank list', () => {
+    render(<RoadmapPanel steps={[]} />);
+
+    expect(screen.getByRole('heading', { name: 'No roadmap yet' })).toBeInTheDocument();
+    expect(
+      screen.getByText('Onboard builds a reading order from parsed files. No files in this repo were parsed successfully.'),
+    ).toBeInTheDocument();
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  });
 });

@@ -112,4 +112,14 @@ describe('DependencyGraph', () => {
     });
     expect(screen.getByText(/src\/mod0\/index\.ts, rank 1 of 630/)).toBeInTheDocument();
   });
+
+  /** "Analysed fine, nothing qualified" — defensive: `E_NO_SUPPORTED_FILES` already gates this above `DependencyGraph` in practice, but the component itself does not assume that invariant. */
+  test('explains there is nothing to graph instead of an empty toolbar and canvas', () => {
+    render(<DependencyGraph result={{ ...SAMPLE, files: [], edges: [] }} />);
+
+    expect(screen.getByRole('heading', { name: 'Nothing to graph' })).toBeInTheDocument();
+    expect(screen.getByText('This repo has no parsed files to show a dependency graph for.')).toBeInTheDocument();
+    expect(screen.queryByRole('application', { name: /dependency graph canvas/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
 });
