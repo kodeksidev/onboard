@@ -1,8 +1,8 @@
 //! `ai/http.rs` — Section 5: "THE ONLY `reqwest` CLIENT IN THE REPOSITORY."
 //!
 //! [`send`] is the single function in this entire crate allowed to reach
-//! the network. Its three structural guarantees (the WHAT/WHETHER/WHERE
-//! triad — see `ai/endpoint.rs`'s doc comment for the full picture):
+//! the network. Its structural guarantees (the WHAT/WHETHER/WHERE triad —
+//! see `ai/endpoint.rs`'s doc comment for the full picture):
 //!
 //! 1. **Cannot be called without proof AI is on.** The first parameter is
 //!    `&EgressPermit` ([`crate::ai::permit`]), which has no public
@@ -11,37 +11,37 @@
 //! 2. **Cannot be called with unredacted content.** The `payload` parameter
 //!    is [`crate::privacy::redact::RedactedPayload`], not `&str`/`String`/
 //!    `impl Into<String>` — see `redact.rs`'s doc comment for what that
-//!    does and does not guarantee. There is no second `send`-like function,
-//!    no `#[cfg(test)]`-only bypass, no "internal" raw-text path anywhere
-//!    in this module.
+//!    does and does not guarantee.
 //! 3. **Cannot be pointed at an arbitrary host.** The `endpoint` parameter
 //!    is [`crate::ai::endpoint::ResolvedEndpoint`], not `&str`/`String` —
-//!    see that module's doc comment. `tests/ai_endpoint_compile_fail.rs`
-//!    proves both that a caller cannot construct one by hand and that the
-//!    old `&str` call shape no longer compiles.
+//!    see that module's doc comment.
 //!
-//! ## `body`, and why `payload` is still required alongside it
+//! ## No free-form body — the owner's Phase 12 step 3A ruling
 //!
-//! Phase 12 step 3A (real provider adapters) needs this module to stay
-//! provider-agnostic — Anthropic, `ollama`, and `openai-compatible` each
-//! need a different top-level JSON shape (`messages`+`system` vs. whatever
-//! Ollama's `/api/chat` wants), and hardcoding one shape here would break
-//! that. So `send` takes the fully-built `body` from its caller (the
-//! provider adapter module) rather than building it internally the way an
-//! earlier version of this function did. That alone would make `payload`
-//! decorative — a caller could build `body` from anywhere and just hand
-//! `send` an unrelated `RedactedPayload` to satisfy the type signature —
-//! so [`verify_body_contains_the_redacted_payload`] enforces, at runtime,
-//! that every one of `payload`'s own (already-redacted) snippet contents
-//! actually appears in the serialized `body` before anything is sent,
-//! erroring with `E_AI_PAYLOAD_UNSAFE` otherwise. This is **not** a leak
-//! *prevention* guarantee — nothing stops an adapter from ALSO stuffing
-//! unrelated content into `body` alongside the payload's — that remains
-//! the same code-review-not-type-system residual gap `redact.rs`'s doc
-//! comment already names for this whole phase. What it DOES catch: `send`
-//! being called with a `body` that was never actually derived from the
-//! `payload` it claims to be sending (a wrong-variable bug, a stale/empty
-//! body, an adapter that forgot to include the redacted content at all).
+//! An earlier version of this module took a caller-built `body:
+//! &serde_json::Value`, with a runtime check that the payload's content
+//! appeared *somewhere* inside it. The owner ruled that incoherent: a
+//! free-form JSON channel is the same defect pattern as the three legs
+//! above — a caller-controlled path that can carry anything, including a
+//! second, unredacted copy of repo content that happens to also satisfy a
+//! substring check. There is no `body` parameter anymore, and nothing
+//! resembling one — `send` builds the request body itself, from
+//! [`ProviderShape`] (which shape of request — never adapter- or
+//! caller-supplied content) plus `model` (a plain string, from stored
+//! settings by the time an adapter calls this) plus `payload` (the only
+//! source of snippet content, always). An adapter cannot put anything into
+//! the outbound body beyond what [`build_body`] puts there, because no
+//! parameter exists through which it could — see
+//! `tests/ai_provider_body_compile_fail.rs`. §3 non-goal 2 caps v1 at
+//! exactly the three shapes in [`ProviderShape`], so this module knowing
+//! all three costs little and buys back the closed channel.
+//!
+//! `TASK_INSTRUCTIONS_PLACEHOLDER` is fixed, baked-in copy, not adapter- or
+//! caller-supplied — real prompt templates (project summary, module
+//! explanations, the user's actual question for Q&A) are `prompt.rs`'s job,
+//! a later, not-yet-reviewed Phase 12 sub-step; wiring real instructions
+//! through will be reviewed together with that work rather than smuggled in
+//! here as a free string parameter today.
 //!
 //! Section 12 error hygiene: a response body, a provider error string, or
 //! an OS/transport error string is NEVER placed in `AppError.message` —
@@ -54,15 +54,14 @@
 //! ## `RequestHeaders`, and why adapters never see `reqwest::header::HeaderMap`
 //!
 //! An early version of `send` took `reqwest::header::HeaderMap` directly
-//! from its caller — which meant every adapter module (`ai/anthropic.rs`
-//! and, later, `ollama`/`openai-compatible`) had to `use reqwest::header`
+//! from its caller — which meant every adapter module (`ai/anthropic.rs`,
+//! `ai/ollama.rs`, `ai/openai_compatible.rs`) had to `use reqwest::header`
 //! itself just to build an auth header, making `reqwest` a *second*
-//! consumer of the crate even though those adapters never touch the
-//! client or send anything themselves. [`RequestHeaders`] is plain,
-//! `reqwest`-free data; `send` is the only place it becomes a real
-//! `HeaderMap`. This is exactly what `check_egress_chokepoint`'s
-//! source-import check exists to catch, and it did — see
-//! `docs/DECISIONS.md`'s Phase 12 step 3A entry.
+//! consumer of the crate even though those adapters never touch the client
+//! or send anything themselves. [`RequestHeaders`] is plain, `reqwest`-free
+//! data; `send` is the only place it becomes a real `HeaderMap`. This is
+//! exactly what `check_egress_chokepoint`'s source-import check exists to
+//! catch, and it did — see `docs/DECISIONS.md`'s Phase 12 step 3A entry.
 
 use std::time::Duration;
 
@@ -108,6 +107,82 @@ fn build_header_map(
     Ok(map)
 }
 
+/// The exactly-three request-body shapes §3 non-goal 2 caps v1 at. Adapters
+/// name their shape; they never build or supply the body itself — see this
+/// module's doc comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderShape {
+    Anthropic,
+    OpenAiCompatible,
+    Ollama,
+}
+
+/// Fixed, baked-in placeholder task copy — see this module's doc comment
+/// for why this is not (yet) adapter- or caller-supplied.
+pub(crate) const TASK_INSTRUCTIONS_PLACEHOLDER: &str =
+    "Review the following code snippets and answer only about what they show.";
+
+const ANTHROPIC_MAX_TOKENS: u32 = 1024;
+
+/// Every redacted snippet becomes its own content block — `text` (the
+/// snippet's own already-redacted content, verbatim) is never concatenated
+/// with `TASK_INSTRUCTIONS_PLACEHOLDER` or any other string, so each JSON
+/// string leaf in the final body is either exactly one snippet's content,
+/// exactly one snippet's path, or a fixed scaffolding literal — nothing is
+/// ever glued together into a leaf that could hide extra content inside a
+/// larger string. (`tests::a_planted_secret_...` in `ai/anthropic.rs` and
+/// `ai/ollama.rs` walk every leaf of a real received body and assert
+/// exactly this.)
+fn build_content_blocks(payload: &RedactedPayload) -> Vec<serde_json::Value> {
+    payload
+        .to_request_snippets()
+        .into_iter()
+        .map(|snippet| {
+            serde_json::json!({
+                "type": "text",
+                "path": snippet.path,
+                "startLine": snippet.start_line,
+                "endLine": snippet.end_line,
+                "text": snippet.content,
+            })
+        })
+        .collect()
+}
+
+/// The only place any provider request body is built. `payload` is the
+/// only source of content; `shape`/`model` are plain, non-content
+/// scaffolding.
+pub(crate) fn build_body(
+    shape: ProviderShape,
+    model: &str,
+    payload: &RedactedPayload,
+) -> serde_json::Value {
+    let blocks = build_content_blocks(payload);
+    match shape {
+        ProviderShape::Anthropic => serde_json::json!({
+            "model": model,
+            "max_tokens": ANTHROPIC_MAX_TOKENS,
+            "system": TASK_INSTRUCTIONS_PLACEHOLDER,
+            "messages": [{ "role": "user", "content": blocks }],
+        }),
+        ProviderShape::OpenAiCompatible => serde_json::json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": TASK_INSTRUCTIONS_PLACEHOLDER },
+                { "role": "user", "content": blocks },
+            ],
+        }),
+        ProviderShape::Ollama => serde_json::json!({
+            "model": model,
+            "stream": false,
+            "messages": [
+                { "role": "system", "content": TASK_INSTRUCTIONS_PLACEHOLDER },
+                { "role": "user", "content": blocks },
+            ],
+        }),
+    }
+}
+
 /// Section 12: "per-request timeout 60s, no automatic retry on 429/5xx."
 pub const AI_REQUEST_TIMEOUT_SECS: u64 = 60;
 
@@ -124,39 +199,37 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
 });
 
 /// A successful response: the raw response body text, handed back for the
-/// (not-yet-written, Phase 12 step 3) caller to parse per-provider. This
-/// module does no provider-specific parsing — that is a later step.
+/// caller to parse per-provider. This module does no provider-specific
+/// *response* parsing — that stays in each adapter.
 pub struct AiResponse {
     pub body: String,
 }
 
 /// The only function in this crate that sends bytes over the network.
 ///
-/// The parameters are the WHAT/WHETHER/WHERE triad (`ai/endpoint.rs`'s doc
-/// comment) plus the provider-built envelope: `_permit` proves AI is on
-/// (Section 12); `endpoint` is a [`ResolvedEndpoint`] — obtainable only
-/// from [`crate::ai::endpoint::resolve`], which reads it from the real
-/// settings store, never a caller argument — not `&str`/`String`, so there
-/// is no way to point this function at an arbitrary host; `payload` proves
-/// (and, via [`verify_body_contains_the_redacted_payload`], is checked to
-/// actually back) the redacted content inside `body`. `headers`/`body` are
-/// the provider adapter's own already-built request shape — see this
-/// module's doc comment for why `body` is a plain `serde_json::Value`
-/// rather than something this module builds itself.
+/// `_permit` proves AI is on (Section 12); `endpoint` is a
+/// [`ResolvedEndpoint`] — obtainable only from
+/// [`crate::ai::endpoint::resolve`], never a caller argument; `headers` is
+/// plain, `reqwest`-free data (see this module's doc comment); `shape`/
+/// `model` select and parameterize the body `send` builds itself;
+/// `payload` is the only source of the body's content. There is no way to
+/// reach the network with content that did not come from `payload`,
+/// because `send` never accepts a body from its caller at all.
 pub fn send(
     _permit: &EgressPermit,
     endpoint: &ResolvedEndpoint,
     headers: &RequestHeaders,
-    body: &serde_json::Value,
+    shape: ProviderShape,
+    model: &str,
     payload: &RedactedPayload,
 ) -> Result<AiResponse, AppError> {
-    verify_body_contains_the_redacted_payload(body, payload)?;
+    let body = build_body(shape, model, payload);
     let header_map = build_header_map(headers, "the AI provider")?;
 
     let response = HTTP_CLIENT
         .post(endpoint.url())
         .headers(header_map)
-        .json(body)
+        .json(&body)
         .send()
         .map_err(map_transport_error)?;
 
@@ -167,25 +240,6 @@ pub fn send(
         return Err(map_http_error("the AI provider", status, &body_text));
     }
     Ok(AiResponse { body: body_text })
-}
-
-/// See this module's doc comment for exactly what this does and does not
-/// guarantee. Every non-empty redacted snippet content string must appear
-/// somewhere in `body`'s serialized JSON, or `send` refuses to issue the
-/// request at all.
-fn verify_body_contains_the_redacted_payload(
-    body: &serde_json::Value,
-    payload: &RedactedPayload,
-) -> Result<(), AppError> {
-    let body_text = body.to_string();
-    let missing = payload
-        .to_request_snippets()
-        .into_iter()
-        .any(|snippet| !snippet.content.is_empty() && !body_text.contains(&snippet.content));
-    if missing {
-        return Err(AppError::ai_payload_unsafe());
-    }
-    Ok(())
 }
 
 /// `reqwest::Error` has no public constructor, so no test can synthesize
@@ -283,14 +337,6 @@ mod tests {
         assert_eq!(AI_REQUEST_TIMEOUT_SECS, 60);
     }
 
-    fn empty_redacted_payload() -> RedactedPayload {
-        crate::privacy::redact::redact(
-            &crate::contract::EngineSnippetsResult { snippets: vec![] },
-            &[],
-        )
-        .expect("redacting zero snippets cannot fail")
-    }
-
     fn redacted_payload_from(path: &str, content: &str) -> RedactedPayload {
         crate::privacy::redact::redact(
             &crate::contract::EngineSnippetsResult {
@@ -307,26 +353,128 @@ mod tests {
     }
 
     #[test]
-    fn verify_body_containment_passes_when_the_body_embeds_every_snippet() {
+    fn build_body_never_concatenates_a_snippets_content_with_the_instructions() {
         let payload = redacted_payload_from("a.ts", "const x = 1;");
-        let body =
-            serde_json::json!({ "messages": [{ "role": "user", "content": "const x = 1;" }] });
-        assert!(verify_body_contains_the_redacted_payload(&body, &payload).is_ok());
+        let body = build_body(ProviderShape::Anthropic, "test-model", &payload);
+        let content_text = body["messages"][0]["content"][0]["text"]
+            .as_str()
+            .expect("content block must carry a plain text leaf");
+        assert_eq!(
+            content_text, "const x = 1;",
+            "the snippet's content must appear as its OWN leaf, not glued to instructions"
+        );
     }
 
     #[test]
-    fn verify_body_containment_passes_for_an_empty_payload_regardless_of_body() {
-        let payload = empty_redacted_payload();
-        let body = serde_json::json!({ "messages": [] });
-        assert!(verify_body_contains_the_redacted_payload(&body, &payload).is_ok());
+    fn build_body_produces_the_three_named_shapes_without_panicking() {
+        let payload = redacted_payload_from("a.ts", "const x = 1;");
+        for shape in [
+            ProviderShape::Anthropic,
+            ProviderShape::OpenAiCompatible,
+            ProviderShape::Ollama,
+        ] {
+            let body = build_body(shape, "test-model", &payload);
+            assert_eq!(body["model"], "test-model");
+        }
+    }
+}
+
+/// Shared by every adapter's own real-bytes redaction test
+/// (`ai::anthropic::tests`, `ai::ollama::tests`, `ai::openai_compatible::tests`)
+/// — `pub(crate)` so those sibling modules can use it, `#[cfg(test)]` so
+/// none of it exists in a non-test build.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::TASK_INSTRUCTIONS_PLACEHOLDER;
+    use crate::privacy::redact::RequestSnippet;
+    use std::collections::HashSet;
+
+    /// Fixed, non-content scaffolding literals that legitimately appear as
+    /// string leaves (or JSON object field names) in ANY of the three
+    /// shapes' outbound bodies. Deliberately does NOT include the model id
+    /// (varies per call) or any snippet path/content (varies per payload)
+    /// — [`assert_body_contains_nothing_beyond_scaffolding_and_snippets`]
+    /// adds those separately, from the real values a test actually used.
+    fn fixed_scaffolding_leaves() -> HashSet<&'static str> {
+        [
+            "model",
+            "max_tokens",
+            "system",
+            "messages",
+            "role",
+            "user",
+            "content",
+            "type",
+            "text",
+            "path",
+            "startLine",
+            "endLine",
+            "stream",
+            TASK_INSTRUCTIONS_PLACEHOLDER,
+        ]
+        .into_iter()
+        .collect()
     }
 
-    #[test]
-    fn verify_body_containment_rejects_a_body_missing_the_payloads_content() {
-        let payload = redacted_payload_from("a.ts", "const x = 1;");
-        let body =
-            serde_json::json!({ "messages": [{ "role": "user", "content": "unrelated text" }] });
-        let err = verify_body_contains_the_redacted_payload(&body, &payload).unwrap_err();
-        assert_eq!(err.code, "E_AI_PAYLOAD_UNSAFE");
+    /// Recursively collects every JSON string leaf AND every object field
+    /// name in `value` — field names count too (the owner's Phase 12 step
+    /// 3A ruling explicitly names "field names" as part of the allow-set
+    /// exercise, so a future body-shape change that adds an unexpected key
+    /// must fail this walk, not just an unexpected value).
+    fn collect_string_leaves(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => out.push(s.clone()),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    collect_string_leaves(item, out);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (key, val) in map {
+                    out.push(key.clone());
+                    collect_string_leaves(val, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The strengthened real-bytes assertion: every string leaf (and every
+    /// object field name) in a REAL received body must be either fixed
+    /// scaffolding, the model id actually used, or one of `expected_snippets`'
+    /// own `path`/`content` values — nothing else. A future body-shape
+    /// change that smuggles in an extra field or an unrelated string
+    /// breaks this test instead of passing quietly (the previous version
+    /// of this check only asserted the redacted content appeared
+    /// *somewhere*, which a body containing EXTRA unredacted material
+    /// alongside it would have passed).
+    pub(crate) fn assert_body_contains_nothing_beyond_scaffolding_and_snippets(
+        received_json: &serde_json::Value,
+        model: &str,
+        expected_snippets: &[RequestSnippet],
+    ) {
+        let mut leaves = Vec::new();
+        collect_string_leaves(received_json, &mut leaves);
+
+        let mut allowed = fixed_scaffolding_leaves();
+        allowed.insert(model);
+        let snippet_paths: HashSet<&str> =
+            expected_snippets.iter().map(|s| s.path.as_str()).collect();
+        let snippet_contents: HashSet<&str> = expected_snippets
+            .iter()
+            .map(|s| s.content.as_str())
+            .collect();
+
+        for leaf in &leaves {
+            let is_allowed = allowed.contains(leaf.as_str())
+                || snippet_paths.contains(leaf.as_str())
+                || snippet_contents.contains(leaf.as_str());
+            assert!(
+                is_allowed,
+                "unexpected string leaf in the outbound body: {leaf:?} — not fixed scaffolding, \
+                 not the model id ({model:?}), not a redacted snippet's own path/content. \
+                 Full body: {received_json}"
+            );
+        }
     }
 }

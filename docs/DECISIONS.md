@@ -1855,3 +1855,67 @@ decided; it only records choices the spec left open.
   actually being tested; every test still fails for real if the key
   genuinely never appears. Verified stable over 20+ consecutive full
   `cargo test` runs after the fix (was failing roughly 1 run in 3 before).
+- **Phase 12 step 3A Part A — the owner's ruling: `ai::http::send`'s
+  `body: &serde_json::Value` parameter is deleted, not deprecated.**
+  A free-form JSON channel was the same defect pattern as the WHAT/
+  WHETHER/WHERE legs already closed — a caller-controlled path that could
+  carry anything. `send` now takes `shape: ai::http::ProviderShape`
+  (`Anthropic | OpenAiCompatible | Ollama`) and `model: &str`; it builds
+  the request body itself from `payload` alone.
+  `verify_body_contains_the_redacted_payload` (the previous runtime
+  containment check) is gone — no longer needed, since the body can no
+  longer disagree with the payload; there is nothing left for it to check.
+  §3 non-goal 2 caps v1 at exactly these three shapes, so `http.rs` knowing
+  all three costs little.
+- **Phase 12 step 3A Part A — every redacted snippet becomes its own
+  content block (`{"type":"text","path":...,"startLine":...,"endLine":...,"text":...}`),
+  never concatenated into one prose string with instructions/path/line
+  markers.** The earlier design joined instructions + `"--- path (lines
+  a-b) ---"` + content into a single string, which made the strengthened
+  full-body test (walk every leaf, assert each is either fixed scaffolding
+  or a redacted snippet's own content) impossible to write cleanly — a
+  composite leaf can't cleanly match "is this exactly a snippet's content"
+  or "is this exactly a scaffolding literal." Keeping each snippet's
+  `path`/`content` as its own separate, unconcatenated JSON string makes
+  the leaf-classification exhaustive and exact, which is what the owner's
+  Part A test requirement actually needs. This body shape is provisional
+  (not verified byte-for-byte against any real provider's API, since no
+  live calls are made) — see the next entry for what remains deferred.
+- **Phase 12 step 3A Part A — `TASK_INSTRUCTIONS_PLACEHOLDER` is fixed,
+  baked-in copy inside `ai/http.rs`; `CompletionRequest.instructions` (the
+  trait-level field from step 3A) is not yet threaded into any outbound
+  request.** The owner's ruling was explicit: "adapters supply shape and
+  model only — never content." Real prompt construction (the project
+  summary template, module-explanation template, and — critically — the
+  user's own typed question for Q&A, which IS arbitrary user content) is
+  `prompt.rs`'s job, a later, not-yet-reviewed Phase 12 sub-step. Wiring
+  `instructions` through now, ahead of that review, would reopen exactly
+  the kind of caller-controlled content channel this Part A closed for the
+  body — so it stays inert (received by every adapter, forwarded nowhere)
+  until `prompt.rs` lands and can be reviewed together with how that
+  content is bounded/sanitized.
+- **Phase 12 step 3B — Ollama's adapter still requires a stored key even
+  though it never sends one.** `EgressPermit::acquire`'s gate ("AI
+  enabled" **and** "a key is retrievable") is frozen, already-reviewed
+  code from step 2b; this step does not touch it. Local Ollama installs
+  commonly run unauthenticated, so this is arguably stricter than
+  necessary — flagged explicitly for owner confirmation in the step 3A/B
+  report, per the instruction to say so rather than work around it, rather
+  than silently adding a provider-conditional gate (which would mean two
+  different "AI is on" checks in the same crate — exactly the kind of
+  asymmetry a bypass hides in).
+- **Phase 12 step 3B — `openai-compatible`'s REST path is
+  `{base_url}/chat/completions`, matching OpenAI/DeepSeek/Groq/OpenRouter/
+  Together's shared convention when `base_url` includes the provider's own
+  version segment (e.g. `https://api.openai.com/v1`).** Not verified
+  against any live API (no key required to run these tests, per
+  instruction); provisional like the rest of the body/response shapes in
+  this sub-step, pending real-world confirmation whenever an actual key is
+  available to test with.
+- **Phase 12 step 3B — `AiProvider`'s serde representation switched from
+  `rename_all = "lowercase"` to `"kebab-case"`.** Adding
+  `OpenAiCompatible` under `"lowercase"` would serialize as
+  `"openaicompatible"` (concatenated, illegible); `"kebab-case"` produces
+  `"openai-compatible"` while leaving `Anthropic`/`Ollama`'s wire values
+  unchanged (`"anthropic"`/`"ollama"` are single words, identical under
+  either rule) — no existing settings file or test breaks.

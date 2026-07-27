@@ -44,13 +44,13 @@
 //! ## Provider URLs
 //!
 //! Anthropic's endpoint is a fixed constant — Section 4 names it, and it is
-//! not user-configurable. Ollama's is `{ollama_base_url}/api/chat`, where
-//! `ollama_base_url` is user-configurable (Section 6.2) but only ever read
-//! from the stored settings, never a call-site argument. These are the only
-//! two `AiProvider` variants that exist today; a future `openai-compatible`
-//! variant (not added in this step — no provider code yet) would slot into
-//! the same `match` with its own stored `base_url` field, following this
-//! exact pattern.
+//! not user-configurable. Ollama's is `{ollama_base_url}/api/chat`, and
+//! `openai-compatible`'s is `{openai_compatible_base_url}/chat/completions`
+//! (the conventional REST path DeepSeek/OpenAI/Groq/OpenRouter/Together and
+//! similar all share) — both `base_url`s are user-configurable (Section
+//! 6.2) but only ever read from the stored settings, never a call-site
+//! argument, and both are validated the same way (non-empty, `http://`/
+//! `https://`) before use.
 
 use crate::commands::settings::{AiProvider, StoredAiSettings};
 use crate::error::AppError;
@@ -99,19 +99,34 @@ pub fn resolve(stored: &StoredAiSettings) -> Result<ResolvedEndpoint, AppError> 
             url: ANTHROPIC_MESSAGES_URL.to_string(),
         }),
         AiProvider::Ollama => {
-            let base = settings.ollama_base_url.trim();
-            let is_valid_http_url = base.starts_with("http://") || base.starts_with("https://");
-            if base.is_empty() || !is_valid_http_url {
-                return Err(AppError::invalid_settings(&format!(
-                    "The configured Ollama address '{base}' is not a valid http(s) URL."
-                )));
-            }
-            let base = base.trim_end_matches('/');
+            let base = validate_http_base_url(&settings.ollama_base_url, "Ollama")?;
             Ok(ResolvedEndpoint {
                 url: format!("{base}/api/chat"),
             })
         }
+        AiProvider::OpenAiCompatible => {
+            let base =
+                validate_http_base_url(&settings.openai_compatible_base_url, "openai-compatible")?;
+            Ok(ResolvedEndpoint {
+                url: format!("{base}/chat/completions"),
+            })
+        }
     }
+}
+
+/// Shared validation for every user-configurable `base_url` — non-empty,
+/// `http://`/`https://`, trailing slash trimmed. `label` names the setting
+/// in the error message (never the raw value's provenance — that's already
+/// clear from context).
+fn validate_http_base_url<'a>(base_url: &'a str, label: &str) -> Result<&'a str, AppError> {
+    let base = base_url.trim();
+    let is_valid_http_url = base.starts_with("http://") || base.starts_with("https://");
+    if base.is_empty() || !is_valid_http_url {
+        return Err(AppError::invalid_settings(&format!(
+            "The configured {label} address '{base}' is not a valid http(s) URL."
+        )));
+    }
+    Ok(base.trim_end_matches('/'))
 }
 
 #[cfg(test)]
@@ -193,6 +208,54 @@ mod tests {
         assert_eq!(result.unwrap_err().code, "E_INVALID_SETTINGS");
     }
 
+    #[test]
+    fn openai_compatible_resolves_from_the_real_stored_base_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let ai_keys = AiKeyStore::new();
+        update_settings_core(
+            &path,
+            &ai_keys,
+            SettingsPatch {
+                ai: Some(AiSettingsPatch {
+                    provider: Some(AiProvider::OpenAiCompatible),
+                    openai_compatible_base_url: Some("https://api.deepseek.com".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let stored = load_stored_ai_settings(&path, &ai_keys);
+        let resolved = resolve(&stored).unwrap();
+        assert_eq!(resolved.url(), "https://api.deepseek.com/chat/completions");
+    }
+
+    #[test]
+    fn a_malformed_stored_openai_compatible_base_url_is_rejected_not_silently_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let ai_keys = AiKeyStore::new();
+        update_settings_core(
+            &path,
+            &ai_keys,
+            SettingsPatch {
+                ai: Some(AiSettingsPatch {
+                    provider: Some(AiProvider::OpenAiCompatible),
+                    openai_compatible_base_url: Some(String::new()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let stored = load_stored_ai_settings(&path, &ai_keys);
+        let result = resolve(&stored);
+        assert_eq!(result.unwrap_err().code, "E_INVALID_SETTINGS");
+    }
+
     /// The runtime half of "a caller-fabricated `AiSettings` with an
     /// attacker-controlled `base_url` must not produce a `ResolvedEndpoint`
     /// pointing at that host." The compile-time half
@@ -226,6 +289,7 @@ mod tests {
             provider: AiProvider::Ollama,
             model: "x".to_string(),
             ollama_base_url: "https://evil.example.com".to_string(),
+            openai_compatible_base_url: String::new(),
             has_stored_key: false,
         };
 

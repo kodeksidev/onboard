@@ -82,6 +82,7 @@ mod tests {
             provider,
             model: "test-model".to_string(),
             ollama_base_url: "http://127.0.0.1:11434".to_string(),
+            openai_compatible_base_url: String::new(),
             has_stored_key: false, // never trusted by `acquire` — always recomputed live
         }
     }
