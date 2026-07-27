@@ -40,14 +40,21 @@ pub(crate) static REAL_KEYCHAIN_TEST_LOCK: Mutex<()> = Mutex::new(());
 /// to intermittently report "not there" under general system load (many
 /// unrelated tests/threads/processes competing for CPU while `cargo test`
 /// runs) — real OS keychain backends (confirmed on Windows Credential
-/// Manager) do not guarantee a write is immediately visible to the very
-/// next read under load. This polls `check` for up to ~1s before giving
-/// up, which is a write-visibility tolerance, not a weakening of what's
-/// being tested — every test using it still fails for real if the key
-/// genuinely never appears. `#[cfg(test)]`-only.
+/// Manager) do not guarantee a write (or a delete — the SAME class of
+/// delay was independently observed on the read-after-clear side, once
+/// this crate's real-keychain-touching test count grew enough under step
+/// 5's three-provider suite) is immediately visible to the very next read
+/// under load. Empirically, a 1s budget was NOT always enough under this
+/// phase's full parallel `cargo test` load (confirmed via a diagnostic
+/// probe: a real, still-present credential after the full 1s budget,
+/// which a longer budget then resolved) — this polls `check` for up to
+/// ~6s before giving up, which is a write/delete-visibility tolerance,
+/// not a weakening of what's being tested — every test using it still
+/// fails for real if the key genuinely never appears or never clears.
+/// `#[cfg(test)]`-only.
 #[cfg(test)]
 pub(crate) fn eventually(check: impl Fn() -> bool) -> bool {
-    for _ in 0..40 {
+    for _ in 0..240 {
         if check() {
             return true;
         }
@@ -107,8 +114,26 @@ struct SessionKeys {
     keys: Mutex<HashMap<String, String>>,
 }
 
+/// `Clone` is a cheap `Arc` clone sharing the SAME underlying session map —
+/// not a fresh, empty one. `AppState` holds one instance for the whole
+/// app's lifetime; the Phase 12 step 5 provider adapters
+/// (`ai::anthropic`/`ai::ollama`/`ai::openai_compatible`) each take an
+/// OWNED `AiKeyStore` in their constructor (so their tests can build
+/// throwaway instances freely), so `commands::ai::test_ai_key_core` needs
+/// to hand each one a `.clone()` of `state.ai_keys` — if that produced an
+/// independent, empty session map instead, a key stored earlier via the
+/// A18 session-only fallback (no OS keychain available) would silently
+/// stop being visible to `test_ai_key`.
 pub struct AiKeyStore {
-    session: SessionKeys,
+    session: std::sync::Arc<SessionKeys>,
+}
+
+impl Clone for AiKeyStore {
+    fn clone(&self) -> Self {
+        AiKeyStore {
+            session: self.session.clone(),
+        }
+    }
 }
 
 impl Default for AiKeyStore {
@@ -120,7 +145,7 @@ impl Default for AiKeyStore {
 impl AiKeyStore {
     pub fn new() -> Self {
         AiKeyStore {
-            session: SessionKeys::default(),
+            session: std::sync::Arc::new(SessionKeys::default()),
         }
     }
 
@@ -304,5 +329,36 @@ mod tests {
         let store = AiKeyStore::new();
         let result = store.retrieve("onboard-phase12-nonexistent-retrieve-test");
         assert!(result.is_err());
+    }
+
+    /// `commands::ai::test_ai_key_core`'s reason for existing:
+    /// `AiKeyStore::clone()` must be a cheap handle to the SAME underlying
+    /// state, not an independent, empty one — a key stored through one
+    /// handle must be visible through a clone of it. (This exercises
+    /// whichever backend `store` actually used on this machine — the real
+    /// OS keychain here, since it is available in this test environment —
+    /// so it does not, by itself, isolate the session-only-map-sharing
+    /// half of the guarantee from the keychain-is-shared-system-wide-
+    /// regardless-of-instance half; both are exercised together, which is
+    /// the behavior that actually matters at the call site.)
+    #[test]
+    fn clone_shares_the_same_underlying_store_not_an_independent_one() {
+        let _lock = REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let store = AiKeyStore::new();
+        let provider = "onboard-phase12-step5-clone-sharing-test";
+        let _cleanup = CleanupGuard {
+            store: &store,
+            provider,
+        };
+
+        let cloned = store.clone();
+        let key = AiKey::parse("sk-ant-clone-sharing-test-000000").unwrap();
+        store.store(provider, &key).expect("store must succeed");
+        assert!(eventually(|| cloned.has_key(provider)));
+
+        let retrieved = cloned.retrieve(provider).expect("retrieve must succeed");
+        assert_eq!(retrieved.reveal(), "sk-ant-clone-sharing-test-000000");
     }
 }

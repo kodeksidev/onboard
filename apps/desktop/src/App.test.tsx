@@ -79,9 +79,17 @@ describe('App (mounted against mock IPC)', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: 'File viewer', selected: true })).toBeInTheDocument();
     });
-    await waitFor(() => {
-      expect(document.querySelector('.cm-editor')).not.toBeNull();
-    });
+    // FileViewer is React.lazy'd, so this waits on a dynamic chunk import AND
+    // CodeMirror's own initialisation. waitFor defaults to 1s, which this
+    // exceeds whenever the suite runs in parallel on a loaded machine — the
+    // failure then reads "expected null not to be null", which looks like a
+    // logic bug rather than the clock running out. Give it room explicitly.
+    await waitFor(
+      () => {
+        expect(document.querySelector('.cm-editor')).not.toBeNull();
+      },
+      { timeout: 15_000 },
+    );
     expect(useGraphStore.getState().focusedPath).toBe('src/services/auth.service.ts');
   });
 });

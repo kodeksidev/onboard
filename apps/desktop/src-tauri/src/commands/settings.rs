@@ -41,6 +41,23 @@ impl AiProvider {
             AiProvider::OpenAiCompatible => "openai-compatible",
         }
     }
+
+    /// Whether THIS provider needs a stored credential at all before AI can
+    /// be considered "on" for it (Phase 12 step 5, owner's ruling). The
+    /// single, provider-aware answer `ai::permit::acquire` consults — not
+    /// "AI on + key always," but "AI on + the credentials THIS provider
+    /// requires." Anthropic and `openai-compatible` are cloud APIs and need
+    /// one; Ollama is local and unauthenticated by default, so gating it
+    /// behind a key that is never transmitted (see
+    /// `ai::ollama`'s doc comment) would be backwards. This is the ONE
+    /// place that answers the question — `acquire` has no second,
+    /// provider-conditional branch of its own; it just asks this.
+    pub fn requires_stored_key(self) -> bool {
+        match self {
+            AiProvider::Anthropic | AiProvider::OpenAiCompatible => true,
+            AiProvider::Ollama => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,8 +342,16 @@ mod tests {
         .unwrap();
 
         let ai_keys = AiKeyStore::new();
-        let settings = get_settings_core(&path, &ai_keys);
-        assert!(!settings.ai.has_stored_key);
+        // A DIFFERENT test's cleanup (a real keychain `clear()`, run when
+        // that test's own lock-holding guard drops) can still be settling
+        // on the OS side when this test acquires the lock immediately
+        // after — the delete-visibility mirror of the write-visibility
+        // race `eventually` already exists for; see that function's doc
+        // comment. A one-shot check here was observed to flake exactly
+        // this way once enough real-keychain-touching tests existed.
+        assert!(crate::secrets::ai_key::eventually(|| {
+            !get_settings_core(&path, &ai_keys).ai.has_stored_key
+        }));
     }
 
     #[test]
@@ -393,5 +418,63 @@ mod tests {
         let ai_keys = AiKeyStore::new();
         let result = store_ai_key_core(&ai_keys, "anthropic", "short");
         assert!(result.is_err());
+    }
+
+    /// The literal proof for "never plaintext config": store a REAL key
+    /// (via the real `store_ai_key_core` -> real keychain/session store),
+    /// write real settings to a real file on disk with AI enabled for
+    /// that provider, then read the RAW file BYTES back and assert the
+    /// actual secret value is not a substring anywhere in them — not
+    /// "the `AiSettings` struct has no key field" as a type-level
+    /// argument, but the actual file content.
+    #[test]
+    fn the_stored_key_value_never_appears_in_the_settings_json_file_on_disk() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let ai_keys = AiKeyStore::new();
+        let secret_value = "sk-ant-never-appear-in-settings-json-0000";
+        struct Cleanup<'a> {
+            store: &'a AiKeyStore,
+        }
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let _ = self.store.clear("anthropic");
+            }
+        }
+        let _cleanup = Cleanup { store: &ai_keys };
+
+        store_ai_key_core(&ai_keys, "anthropic", secret_value).expect("store must succeed");
+        assert!(crate::secrets::ai_key::eventually(
+            || ai_keys.has_key("anthropic")
+        ));
+
+        update_settings_core(
+            &path,
+            &ai_keys,
+            SettingsPatch {
+                ai: Some(AiSettingsPatch {
+                    is_enabled: Some(true),
+                    provider: Some(AiProvider::Anthropic),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .expect("update_settings_core must succeed");
+
+        let raw_file_bytes = std::fs::read_to_string(&path).expect("settings.json must exist");
+        assert!(
+            !raw_file_bytes.contains(secret_value),
+            "the raw secret value leaked into settings.json: {raw_file_bytes}"
+        );
+        // Sanity: the file DOES reflect that a key exists, just never the
+        // value itself. `to_string_pretty` inserts a space after `:`, so
+        // this checks the key name and `true` are both present rather
+        // than assuming exact compact-JSON spacing.
+        assert!(raw_file_bytes.contains("hasStoredKey"));
+        assert!(raw_file_bytes.contains("true"));
     }
 }

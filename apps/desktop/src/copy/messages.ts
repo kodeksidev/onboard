@@ -87,7 +87,8 @@ export const ERRORS = {
    */
   analysisInProgress: (): TitledCopy => ({
     title: 'Analysis already running',
-    description: 'Onboard is still mapping this repository. Wait for it to finish before starting another.',
+    description:
+      'Onboard is still mapping this repository. Wait for it to finish before starting another.',
   }),
   fileTooLarge: (name: string, size: string): TitledCopy => ({
     title: 'File too large to display',
@@ -101,7 +102,8 @@ export const ERRORS = {
    */
   pathEscapesRepo: (): TitledCopy => ({
     title: "That path isn't part of this repository",
-    description: 'Onboard only opens files inside the folder it analyzed. Re-run analysis if this looks wrong.',
+    description:
+      'Onboard only opens files inside the folder it analyzed. Re-run analysis if this looks wrong.',
   }),
   /**
    * Gap: Section 10 doesn't give literal copy for E_NO_ANALYSIS
@@ -178,15 +180,18 @@ export const OVERVIEW_COPY = {
   },
   noImportantFiles: {
     title: 'No files to rank',
-    description: 'Onboard ranks files by importance once they are parsed. No files in this repo were parsed successfully.',
+    description:
+      'Onboard ranks files by importance once they are parsed. No files in this repo were parsed successfully.',
   },
   noLanguages: {
     title: 'No languages detected',
-    description: 'Onboard detects languages from parsed files. No files in this repo were parsed successfully.',
+    description:
+      'Onboard detects languages from parsed files. No files in this repo were parsed successfully.',
   },
   noManifests: {
     title: 'No package manifest found',
-    description: 'Onboard looks for files such as package.json, pyproject.toml, or requirements.txt. None were found in this repo.',
+    description:
+      'Onboard looks for files such as package.json, pyproject.toml, or requirements.txt. None were found in this repo.',
   },
   noRuntimeDependencies: {
     title: 'No runtime dependencies declared',
@@ -218,7 +223,8 @@ export const ROADMAP_COPY = {
   },
   companionsLabel: 'Part of this step:',
   dependsOnLabel: 'Depends on:',
-  dependedOnByLabel: (count: number): string => `Imported by ${count} file${count === 1 ? '' : 's'}`,
+  dependedOnByLabel: (count: number): string =>
+    `Imported by ${count} file${count === 1 ? '' : 's'}`,
   focusInGraphLabel: 'Focus in graph',
   openFileLabel: 'Open file',
   /**
@@ -230,7 +236,8 @@ export const ROADMAP_COPY = {
    */
   empty: {
     title: 'No roadmap yet',
-    description: 'Onboard builds a reading order from parsed files. No files in this repo were parsed successfully.',
+    description:
+      'Onboard builds a reading order from parsed files. No files in this repo were parsed successfully.',
   },
 } as const;
 
@@ -295,6 +302,49 @@ export const FILE_VIEWER_COPY = {
 } as const;
 
 /**
+ * Section 9 Phase 12 step 5: the Settings dialog's "AI (optional)" section
+ * (Section 6.2). A20/A5: AI stays off by default; nothing here changes
+ * that — the master toggle still defaults to `false` (`DEFAULT_SETTINGS`
+ * in `ipc/settings-schema.ts`).
+ */
+export const SETTINGS_COPY = {
+  dialogTitle: 'Settings',
+  closeLabel: 'Close',
+  aiSectionTitle: 'AI (optional)',
+  aiSectionDescription:
+    'Off by default. Nothing leaves this machine unless you turn this on and a working provider is configured.',
+  enableToggleLabel: 'Enable AI features',
+  providerLabel: 'Provider',
+  providerOptionLabels: {
+    anthropic: 'Anthropic',
+    ollama: 'Ollama (local)',
+    'openai-compatible': 'OpenAI-compatible',
+  },
+  modelLabel: 'Model',
+  modelPlaceholder: 'e.g. claude-sonnet-4-5',
+  apiKeyLabel: 'API key',
+  apiKeyPlaceholder: 'Paste your API key',
+  /** Shown instead of a blank field when a key is already stored — the key
+   * itself is NEVER sent back to the webview (Section 12), only this
+   * boolean-derived hint. */
+  apiKeyAlreadyStoredHint: 'A key is already stored for this provider.',
+  ollamaBaseUrlLabel: 'Ollama address',
+  openaiCompatibleBaseUrlLabel: 'Base URL',
+  openaiCompatibleBaseUrlPlaceholder: 'e.g. https://api.deepseek.com',
+  saveKeyLabel: 'Save key',
+  clearKeyLabel: 'Clear key',
+  /**
+   * For Ollama specifically "Test key" is a reachability test, not a
+   * credential test (Ollama needs no key) — a distinct label rather than
+   * silently reusing "Test key" for a provider that has none.
+   */
+  testKeyButtonLabel: 'Test key',
+  testConnectionButtonLabel: 'Test connection',
+  testingLabel: 'Testing…',
+  testSucceeded: (latencyMs: number): string => `Connected — responded in ${latencyMs}ms.`,
+} as const;
+
+/**
  * Every literal title in Section 10 is static — none of them interpolate a
  * value, only the descriptions do. `AppError.message` (Section 7's error
  * envelope) is itself the fully-interpolated description string the
@@ -313,6 +363,14 @@ export const ERROR_TITLES: Readonly<Record<string, string>> = {
   E_FILE_TOO_LARGE: ERRORS.fileTooLarge('', '').title,
   E_PATH_ESCAPES_REPO: ERRORS.pathEscapesRepo().title,
   E_NO_ANALYSIS: ERRORS.noAnalysisForSearch().title,
+  // Both static (no interpolation in the title itself — only the
+  // description takes parameters), so — unlike E_AI_RATE_LIMITED, whose
+  // title needs the provider name and therefore has no entry here — these
+  // two resolve correctly through the same code-keyed lookup every other
+  // row uses. Phase 12 step 5 is the first consumer of these two codes'
+  // copy (Settings' Test key button).
+  E_AI_KEY_INVALID: ERRORS.aiKeyInvalid('').title,
+  E_AI_OLLAMA_UNREACHABLE: ERRORS.aiOllamaUnreachable('').title,
 };
 
 const DEFAULT_ERROR_TITLE = 'Something went wrong';

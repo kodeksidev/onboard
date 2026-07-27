@@ -11,7 +11,15 @@ import { z } from 'zod';
  * 6.2's example, and re-parsed in `settingsStore` exactly like
  * `AnalysisEnvelope` is in `repoStore`.
  */
-export const AiProvider = z.enum(['anthropic', 'ollama']);
+/**
+ * Phase 12 step 5: the three v1 adapters. `openai-compatible` covers
+ * DeepSeek/OpenAI/Groq/OpenRouter/Together and similar providers that
+ * share the same chat-completions REST shape — see
+ * `apps/desktop/src-tauri/src/commands/settings.rs`'s `AiProvider` for the
+ * matching Rust enum (`rename_all = "kebab-case"` on that side, matching
+ * this literal).
+ */
+export const AiProvider = z.enum(['anthropic', 'ollama', 'openai-compatible']);
 export type AiProvider = z.infer<typeof AiProvider>;
 
 export const AiSettings = z.object({
@@ -19,6 +27,10 @@ export const AiSettings = z.object({
   provider: AiProvider,
   model: z.string(),
   ollamaBaseUrl: z.string(),
+  /** `openai-compatible`'s stored base URL — empty by default (no single
+   * correct default across providers), shown only when that provider is
+   * selected. */
+  openaiCompatibleBaseUrl: z.string(),
   hasStoredKey: z.boolean(),
 });
 export type AiSettings = z.infer<typeof AiSettings>;
@@ -55,6 +67,7 @@ export const DEFAULT_SETTINGS: Settings = {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
     ollamaBaseUrl: 'http://127.0.0.1:11434',
+    openaiCompatibleBaseUrl: '',
     hasStoredKey: false,
   },
 };
