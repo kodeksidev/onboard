@@ -1595,6 +1595,88 @@ decided; it only records choices the spec left open.
     bring down from ~6,000-7,300 ms to roughly walk time (~1.8-2.2 s)
     plus a single-row read, comfortably inside the 6,000 ms budget.
 
+- **Phase 11 (P0 defect) — fixed "UNIQUE constraint failed: symbol.id" —
+  the engine crashed outright analyzing real repositories, including
+  `packages/engine` and `packages/engine/test` themselves.** Diagnosed
+  before choosing a fix, per the coordinator's requirement, by dumping the
+  two colliding rows straight from the parser (not guessed): both were
+  `{ name: "a", kind: "route", startLine: 39, path: "test/graph/
+  pagerank.test.ts" }`, one with `signature: "withSelfEdge.get('a')"` and
+  the other `signature: "without.get('a')"` — two DIFFERENT, genuine
+  `Map.get('a')` calls on the same source line
+  (`expect(withSelfEdge.get('a')).toBe(without.get('a'));`), each
+  misdetected as an Express-style `route` symbol named after its lone
+  string argument. **This is case (b): the same declaration was not
+  extracted twice — the route query itself was extracting phantom symbols
+  that were never routes at all**, so widening `symbol.id` to include
+  `kind` would only have masked it (two fake `route` rows would still
+  have polluted `symbolCount`, the search index, and the file outline).
+  Fixed at the extraction layer, in all three query files
+  (`src/parse/queries/{javascript,ts,tsx}.scm`): the route pattern
+  previously matched ANY `object.method('string', ...)` call where
+  `method` was an HTTP-verb-like name and a string appeared ANYWHERE in
+  the argument list — no requirement that the string be the first
+  argument, and no requirement that a handler argument (Express routes
+  always have one) follow it at all. Tightened to
+  `(arguments . (string) @route.path (_) @route.handler)`: the leading
+  `.` anchors the path string to the FIRST argument, and the `(_)
+  @route.handler` pattern requires at least one MORE argument after it.
+  A genuine `router.get('/users/:id', handler)` (2+ args, string first)
+  still matches; a single-argument `.get(key)`-style call (`Map.get`,
+  this test's `result.get('a')`, `URLSearchParams.get`, ...) no longer
+  does. Confirmed the fix does not regress real route detection: the
+  `node-express` fixture's `router.get('/:id', ...)` and
+  `app.use('/users', ...)` (both 2-arg) still extract correctly.
+  - **Proved the bug reproduces on the CURRENT (pre-fix) code before
+    fixing anything**, per the coordinator's explicit requirement: added
+    the exact colliding shape — two single-argument `.get('id')` calls on
+    one line, on two different `Map` instances — to
+    `fixtures/kitchen-sink/src/symbols-showcase.ts` (a real fixture
+    already wired into `verify:determinism` and the snapshot suite, so
+    this shape is now covered by both, not just a one-off unit test).
+    `git stash`-ed the three `.scm` fixes, ran the new tests, and watched
+    them fail for the right reason: the unit test
+    (`test/parse/ts-parser.test.ts`) failed asserting `kind !== 'route'`,
+    and a standalone repro script driving `analyze()` with a real
+    `SqliteCacheStore` reproduced the literal crash —
+    `SQLiteError: UNIQUE constraint failed: symbol.id` at
+    `sqlite-cache-store.ts`'s `replaceSymbolsForPath` INSERT, called from
+    `persistParsedFile` — confirming this is exactly where and how the
+    RPC-layer crash the coordinator reported actually originates. Popped
+    the stash to restore the fix; both the unit test and the standalone
+    repro then passed (repro script: `SUCCESS: symbols = 24`).
+  - **Regression coverage added:** `test/parse/ts-parser.test.ts` gained a
+    focused unit test (no cache store, pure extraction) asserting the
+    `.get('id') === .get('id')` shape produces zero `route` symbols, plus
+    a companion test confirming a genuine 2-arg `.use(...)` call still
+    does. `test/analyze/analyze.test.ts`'s kitchen-sink describe block
+    gained an end-to-end test that runs `analyze()` with a real
+    `SqliteCacheStore` against the kitchen-sink fixture (the layer where
+    the crash actually surfaced, not just the pure-parse path) and
+    asserts no two symbols in the whole fixture share an `id`.
+    `fixtures/kitchen-sink/src/symbols-showcase.ts` gaining two new
+    top-level symbols changed that fixture's committed snapshot
+    (`symbolCount` 21 -> 24, `signature`/`lineCount`/`contentHash` for
+    that one file), regenerated via `bun run scripts/generate-snapshots.ts`
+    — re-running that script over all 5 fixtures reproduced the other 4
+    byte-for-byte unchanged, itself a small confirmation that determinism
+    held throughout this change.
+  - **Verification:** `bun run typecheck` clean; `bun x eslint` across
+    `src/`, `scripts/`, `test/` clean; full `bun test` 457 pass / 0 fail;
+    `bun run verify:determinism` 20/20 (kitchen-sink's fingerprint moved,
+    as expected from the new symbols, but stayed stable run-to-run and
+    the substance floor still passed); `bun run build:sidecar` succeeded
+    with smoke test PASS. **Real-repo acceptance test, run through the
+    freshly rebuilt, compiled sidecar binary over stdio** (not the
+    in-process `analyze()` call): `engine.analyze` against
+    `packages/engine` itself now returns `files=178, symbols=887,
+    edges=300, PARSE_FAILED=1` (the 1 is the vendored kitchen-sink
+    fixture's deliberately-broken `broken.ts`, expected and unrelated to
+    this bug), and against `packages/engine/test` returns `files=51,
+    symbols=82, edges=0, PARSE_FAILED=0` — both previously crashed the
+    RPC call outright with no result at all; both now succeed with
+    non-zero symbols.
+
 - **Phase 11 — `panP95` deferred to a real WebView2 measurement (accepted gap).**
   Section 11 budgets scripted-pan p95 frame time at 22 ms (1,000 nodes) and
   33 ms (5,000 nodes). After the lazy-materialization fix the measured values

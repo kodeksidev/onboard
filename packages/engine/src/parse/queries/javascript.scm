@@ -33,9 +33,21 @@
   arguments: (arguments (_) @import.dynamic_arg)) @import.dynamic_stmt
 
 ; ---- route registrations, e.g. `router.get('/users/:id', handler)` ----
+; The leading `.` anchors the path string to the FIRST argument, and the
+; second `(_)` pattern requires at least one MORE argument after it (a
+; handler/middleware) — together these require a >=2-argument call whose
+; first argument is a string. Without both constraints this over-matched
+; ordinary one-argument `.get(key)`-style calls (`Map.get`, a test's
+; `result.get('a')`, ...) as phantom routes: same name + same call-site
+; line as a genuinely different `.get(...)` call on the same source line
+; collided on `symbol.id` (path#name#startLine omits `kind`), which is
+; how "UNIQUE constraint failed: symbol.id" surfaced on real repos with
+; `.get(...)` calls unrelated to routing (see docs/DECISIONS.md).
 (call_expression
   function: (member_expression
     object: (identifier)
     property: (property_identifier) @route.method)
-  arguments: (arguments (string) @route.path)
+  arguments: (arguments
+    . (string) @route.path
+    (_) @route.handler)
   (#any-of? @route.method "get" "post" "put" "delete" "patch" "options" "head" "use")) @route.call

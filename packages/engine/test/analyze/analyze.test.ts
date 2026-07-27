@@ -96,6 +96,41 @@ describe('analyze — kitchen-sink fixture (cycles, skip-rules, broken file)', (
     expect(paths).toContain('src/sub/nested/important.log');
     expect(paths).not.toContain('src/sub/nested/other.log');
   });
+
+  /**
+   * Regression test for the real "UNIQUE constraint failed: symbol.id"
+   * crash (docs/DECISIONS.md), reproduced end to end through a cache
+   * store — the layer where the crash actually surfaced
+   * (`persistParsedFile` -> `cacheStore.replaceSymbolsForPath`'s
+   * `INSERT`, not the pure-parse path other tests exercise). Also asserts
+   * `symbols-showcase.ts`'s two single-argument `.get('id')` calls (added
+   * as this bug's regression shape) never produce a phantom `route`
+   * symbol named "id", and that no two symbols in the whole fixture
+   * collide on `symbol.id`.
+   */
+  test('a cache-store-backed run never throws on the .get(...)-collision shape, and has zero symbol.id collisions', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'onboard-symbol-id-collision-'));
+    try {
+      const cacheStore = new SqliteCacheStore(join(dir, 'cache.sqlite'));
+      const result = await analyze({
+        repoRootAbs: join(FIXTURES_DIR, 'kitchen-sink'),
+        grammarsDir: GRAMMARS_DIR,
+        engineVersion: '0.0.0-test',
+        cacheStore,
+      });
+      cacheStore.close();
+
+      expect(result.symbols.some((s) => s.kind === 'route' && s.name === 'id')).toBe(false);
+      const idsSeen = new Set<string>();
+      result.symbols.forEach((s) => {
+        expect(idsSeen.has(s.id)).toBe(false);
+        idsSeen.add(s.id);
+      });
+      expect(result.symbols.some((s) => s.name === 'readBothCaches' && s.kind === 'function')).toBe(true);
+    } finally {
+      await removeDirWithRetry(dir);
+    }
+  });
 });
 
 /**
