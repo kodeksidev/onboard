@@ -1779,3 +1779,79 @@ decided; it only records choices the spec left open.
   `openai-compatible` provider variant (not added here — no provider code
   in this step) would follow the same pattern with its own stored
   `base_url` field.
+- **Phase 12 step 3A — `AiProvider` (Section 9) written as `-> impl Future<..> + Send`
+  instead of bare `async fn`.** `cargo clippy --all-targets -- -D warnings`
+  rejects `async fn` in a public trait outright (`async_fn_in_trait`'s
+  auto-trait-bounds lint, since it cannot express `Send`). The call-site
+  shape (`provider.complete(req).await`) is identical either way — this is
+  rustc's own suggested desugaring, not a behavioral deviation from
+  Section 9's frozen signature — and `+ Send` is not just lint-appeasement:
+  Tauri's own (`tokio`-based) async command runtime generally requires
+  `Send` futures, so this is what `commands/ai.rs` (a later sub-step) will
+  actually need regardless.
+- **Phase 12 step 3A — the real-bytes redaction test's endpoint seam:
+  `ai::endpoint::resolve_for_test` plus a `#[cfg(test)]`-only
+  `AnthropicProvider::test_endpoint` field, not a stored `anthropic_base_url`
+  setting.** The owner offered both as defensible; `#[cfg(test)]` was
+  explicitly called the "safest shape" and was chosen: the override
+  function and field are compiled out of every non-test build entirely
+  (`cargo build`, every packaged installer) — not merely unused or
+  disabled by a runtime flag, genuinely absent from the compiled artifact.
+  A stored `anthropic_base_url` would have been defensible too (it still
+  comes from settings, not a caller, and a compromised settings file could
+  already redirect `ollama_base_url`) but widens what a compromised
+  settings file can steer for no test-only benefit, since Anthropic's
+  production endpoint is intentionally a fixed constant, not
+  user-configurable.
+- **Phase 12 step 3A — `ai::http::send`'s `body` is a caller-built
+  `serde_json::Value`, and `payload: &RedactedPayload` is kept as a
+  parameter enforced by a runtime containment check
+  (`verify_body_contains_the_redacted_payload`), not removed.** `http.rs`
+  must stay provider-agnostic (Anthropic's `messages`+`system` shape
+  differs from Ollama's `/api/chat` shape), so `send` can no longer build
+  the body itself the way an earlier version did — but a `body` parameter
+  with no live connection to `payload` would make `payload` decorative
+  (a caller could build `body` from anywhere and hand `send` an unrelated
+  `RedactedPayload` just to satisfy the type signature). The containment
+  check asserts every one of `payload`'s own redacted snippet contents
+  actually appears in `body`'s serialized JSON before anything sends,
+  erroring `E_AI_PAYLOAD_UNSAFE` otherwise. This is a wrong-variable/
+  forgot-to-include-the-payload guard, not a leak-prevention guarantee —
+  nothing stops an adapter from ALSO stuffing unrelated content into
+  `body` — the same code-review-not-type-system residual gap `redact.rs`'s
+  doc comment already names for this whole phase.
+- **Phase 12 step 3A — `ai::http::RequestHeaders`, a plain newtype, instead
+  of adapters building `reqwest::header::HeaderMap` directly.** The first
+  draft of the Anthropic adapter imported `reqwest::header::*` to build its
+  auth header, which `check_egress_chokepoint`'s source-import check
+  correctly caught as a second file using `reqwest::` — even though the
+  adapter never touches the client or calls `.send()` itself. Every future
+  adapter (`ollama`/`openai-compatible`) would have needed the same import
+  just to build headers, permanently defeating "confined to exactly one
+  file." `RequestHeaders` is plain `(String, String)` pairs; `ai/http.rs`
+  is the only place they become a real `HeaderMap`, restoring the
+  chokepoint to genuinely one file, not one file plus every future adapter.
+- **Phase 12 step 3A — `REAL_KEYCHAIN_TEST_LOCK` / `eventually(..)`
+  (`secrets/ai_key.rs`, `#[cfg(test)]`-only): a pre-existing test-suite
+  race, found and fixed while verifying this step.** Multiple tests across
+  `ai/permit.rs`, `ai/anthropic.rs`, `secrets/ai_key.rs`, and
+  `commands/settings.rs` store/expect-absent a real key under the OS
+  keychain (some sharing the literal `"anthropic"` account — there is no
+  synthetic substitute, `AiProvider::key_str()` is fixed — others using
+  distinct provider names). `cargo test`'s default concurrent execution
+  raced these against each other and, independently, against the real
+  keychain backend's own write-then-immediate-read latency under general
+  system load (confirmed on Windows Credential Manager: a `store()`
+  immediately followed by `has_key()`/`retrieve()`, fully serialized
+  against every other test, still intermittently observed "not there"
+  under load — passed 100% of the time in isolation). This is not new to
+  step 3A — `ai/permit.rs`'s pre-existing tests already shared the
+  `"anthropic"` account — but step 3A's two new real-listener tests
+  materially increased concurrent load on the same resource, making a
+  rare race into a frequent one. Fixed with a shared, `#[cfg(test)]`-only
+  `Mutex<()>` every real-keychain-touching test now holds, plus a bounded
+  polling retry (`eventually`, ~1s max) around write-then-immediate-read
+  assertions — a write-visibility tolerance, not a weakening of what is
+  actually being tested; every test still fails for real if the key
+  genuinely never appears. Verified stable over 20+ consecutive full
+  `cargo test` runs after the fix (was failing roughly 1 run in 3 before).

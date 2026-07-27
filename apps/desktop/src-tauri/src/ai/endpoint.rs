@@ -74,9 +74,24 @@ impl ResolvedEndpoint {
     }
 }
 
-/// The only place `ResolvedEndpoint { .. }` is constructed. Builds the
-/// target URL from `stored` — which can only have come from the real
-/// settings file (see [`StoredAiSettings`]) — never from a caller argument.
+/// A `#[cfg(test)]`-only second construction site — the "safest shape" for
+/// letting the real-bytes redaction test (Phase 12 step 3A) point an
+/// adapter at a local `TcpListener` instead of the fixed Anthropic
+/// constant. Because the whole function is compiled out of every
+/// non-test build (`cargo build`, `cargo run`, every packaged installer),
+/// there is no runtime toggle, settings field, or caller argument that
+/// reaches it in a release binary — not "disabled by default," genuinely
+/// absent from the compiled artifact. `ResolvedEndpoint { .. }` still only
+/// ever appears in this one file, in exactly these two functions.
+#[cfg(test)]
+pub(crate) fn resolve_for_test(url: impl Into<String>) -> ResolvedEndpoint {
+    ResolvedEndpoint { url: url.into() }
+}
+
+/// The only production-reachable place `ResolvedEndpoint { .. }` is
+/// constructed. Builds the target URL from `stored` — which can only have
+/// come from the real settings file (see [`StoredAiSettings`]) — never
+/// from a caller argument.
 pub fn resolve(stored: &StoredAiSettings) -> Result<ResolvedEndpoint, AppError> {
     let settings = stored.ai();
     match settings.provider {

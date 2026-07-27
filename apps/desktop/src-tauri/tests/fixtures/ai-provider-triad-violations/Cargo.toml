@@ -1,0 +1,19 @@
+[package]
+name = "ai-provider-triad-violations-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately NOT part of any [workspace] — mirrors
+# tests/fixtures/redaction-violations/, tests/fixtures/egress-permit-violations/,
+# and tests/fixtures/ai-endpoint-violations/. Every binary here is meant to
+# fail to compile; see tests/ai_provider_triad_compile_fail.rs.
+#
+# Owner's requirement (Phase 12 step 3A): "If an adapter CAN construct a
+# request without passing through the triad, that's a defect — prove it
+# can't." These three fixtures each remove exactly one leg of
+# `ai::http::send`'s WHAT/WHETHER/WHERE triad and prove the resulting call
+# does not compile, isolated from the other two legs via `todo!()`.
+
+[dependencies]
+onboard = { path = "../../.." }

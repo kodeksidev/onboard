@@ -8,26 +8,61 @@
 //!    `&EgressPermit` ([`crate::ai::permit`]), which has no public
 //!    constructor — see that module's doc comment. `tests/ai_permit_compile_fail.rs`
 //!    proves a caller without one cannot call this function at all.
-//! 2. **Cannot be called with unredacted content.** The payload parameter
+//! 2. **Cannot be called with unredacted content.** The `payload` parameter
 //!    is [`crate::privacy::redact::RedactedPayload`], not `&str`/`String`/
 //!    `impl Into<String>` — see `redact.rs`'s doc comment for what that
 //!    does and does not guarantee. There is no second `send`-like function,
 //!    no `#[cfg(test)]`-only bypass, no "internal" raw-text path anywhere
 //!    in this module.
-//! 3. **Cannot be pointed at an arbitrary host.** The endpoint parameter is
-//!    [`crate::ai::endpoint::ResolvedEndpoint`], not `&str`/`String` — see
-//!    that module's doc comment. `tests/ai_endpoint_compile_fail.rs` proves
-//!    both that a caller cannot construct one by hand and that the old
-//!    `&str` call shape no longer compiles.
+//! 3. **Cannot be pointed at an arbitrary host.** The `endpoint` parameter
+//!    is [`crate::ai::endpoint::ResolvedEndpoint`], not `&str`/`String` —
+//!    see that module's doc comment. `tests/ai_endpoint_compile_fail.rs`
+//!    proves both that a caller cannot construct one by hand and that the
+//!    old `&str` call shape no longer compiles.
+//!
+//! ## `body`, and why `payload` is still required alongside it
+//!
+//! Phase 12 step 3A (real provider adapters) needs this module to stay
+//! provider-agnostic — Anthropic, `ollama`, and `openai-compatible` each
+//! need a different top-level JSON shape (`messages`+`system` vs. whatever
+//! Ollama's `/api/chat` wants), and hardcoding one shape here would break
+//! that. So `send` takes the fully-built `body` from its caller (the
+//! provider adapter module) rather than building it internally the way an
+//! earlier version of this function did. That alone would make `payload`
+//! decorative — a caller could build `body` from anywhere and just hand
+//! `send` an unrelated `RedactedPayload` to satisfy the type signature —
+//! so [`verify_body_contains_the_redacted_payload`] enforces, at runtime,
+//! that every one of `payload`'s own (already-redacted) snippet contents
+//! actually appears in the serialized `body` before anything is sent,
+//! erroring with `E_AI_PAYLOAD_UNSAFE` otherwise. This is **not** a leak
+//! *prevention* guarantee — nothing stops an adapter from ALSO stuffing
+//! unrelated content into `body` alongside the payload's — that remains
+//! the same code-review-not-type-system residual gap `redact.rs`'s doc
+//! comment already names for this whole phase. What it DOES catch: `send`
+//! being called with a `body` that was never actually derived from the
+//! `payload` it claims to be sending (a wrong-variable bug, a stale/empty
+//! body, an adapter that forgot to include the redacted content at all).
 //!
 //! Section 12 error hygiene: a response body, a provider error string, or
 //! an OS/transport error string is NEVER placed in `AppError.message` —
 //! only in `.detail` (same convention Phase 11 fixed `error.rs` to follow
 //! everywhere else). The mapping functions below take already-extracted
-//! plain data (status code, body text, a boolean) rather than
-//! `reqwest::Error` itself specifically so they are unit-testable without
-//! a live network call — `reqwest::Error` has no public constructor either,
-//! so no test in this crate can synthesize one.
+//! plain data (status code, body text, a boolean) rather than the HTTP
+//! client's own error type itself specifically so they are unit-testable
+//! without a live network call.
+//!
+//! ## `RequestHeaders`, and why adapters never see `reqwest::header::HeaderMap`
+//!
+//! An early version of `send` took `reqwest::header::HeaderMap` directly
+//! from its caller — which meant every adapter module (`ai/anthropic.rs`
+//! and, later, `ollama`/`openai-compatible`) had to `use reqwest::header`
+//! itself just to build an auth header, making `reqwest` a *second*
+//! consumer of the crate even though those adapters never touch the
+//! client or send anything themselves. [`RequestHeaders`] is plain,
+//! `reqwest`-free data; `send` is the only place it becomes a real
+//! `HeaderMap`. This is exactly what `check_egress_chokepoint`'s
+//! source-import check exists to catch, and it did — see
+//! `docs/DECISIONS.md`'s Phase 12 step 3A entry.
 
 use std::time::Duration;
 
@@ -39,6 +74,39 @@ use crate::ai::endpoint::ResolvedEndpoint;
 use crate::ai::permit::EgressPermit;
 use crate::error::AppError;
 use crate::privacy::redact::RedactedPayload;
+
+/// Plain header name/value pairs an adapter wants sent — never
+/// `reqwest::header::HeaderMap` (see this module's doc comment). No
+/// validation happens here; `send` validates while converting to a real
+/// `HeaderMap` and maps a malformed name/value to `E_AI_KEY_INVALID`
+/// (the only header adapters build today is the auth header).
+#[derive(Debug, Clone, Default)]
+pub struct RequestHeaders(Vec<(String, String)>);
+
+impl RequestHeaders {
+    pub fn new() -> Self {
+        RequestHeaders(Vec::new())
+    }
+
+    pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.0.push((name.into(), value.into()));
+    }
+}
+
+fn build_header_map(
+    headers: &RequestHeaders,
+    provider_label: &str,
+) -> Result<reqwest::header::HeaderMap, AppError> {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (name, value) in &headers.0 {
+        let header_name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|err| AppError::ai_key_invalid(provider_label, err.to_string()))?;
+        let header_value = reqwest::header::HeaderValue::from_str(value)
+            .map_err(|err| AppError::ai_key_invalid(provider_label, err.to_string()))?;
+        map.insert(header_name, header_value);
+    }
+    Ok(map)
+}
 
 /// Section 12: "per-request timeout 60s, no automatic retry on 429/5xx."
 pub const AI_REQUEST_TIMEOUT_SECS: u64 = 60;
@@ -64,26 +132,31 @@ pub struct AiResponse {
 
 /// The only function in this crate that sends bytes over the network.
 ///
-/// The three parameters are the WHAT/WHETHER/WHERE triad
-/// (`ai/endpoint.rs`'s doc comment): `_permit` proves AI is on (Section
-/// 12); `endpoint` is a [`ResolvedEndpoint`] — obtainable only from
-/// [`crate::ai::endpoint::resolve`], which reads it from the real settings
-/// store, never a caller argument — not `&str`/`String`, so there is no way
-/// to point this function at an arbitrary host; `payload` proves the body
-/// actually came from a real `RedactedPayload`. `headers` are plain,
-/// already-built request data (auth header etc. — step 3's concern).
+/// The parameters are the WHAT/WHETHER/WHERE triad (`ai/endpoint.rs`'s doc
+/// comment) plus the provider-built envelope: `_permit` proves AI is on
+/// (Section 12); `endpoint` is a [`ResolvedEndpoint`] — obtainable only
+/// from [`crate::ai::endpoint::resolve`], which reads it from the real
+/// settings store, never a caller argument — not `&str`/`String`, so there
+/// is no way to point this function at an arbitrary host; `payload` proves
+/// (and, via [`verify_body_contains_the_redacted_payload`], is checked to
+/// actually back) the redacted content inside `body`. `headers`/`body` are
+/// the provider adapter's own already-built request shape — see this
+/// module's doc comment for why `body` is a plain `serde_json::Value`
+/// rather than something this module builds itself.
 pub fn send(
     _permit: &EgressPermit,
     endpoint: &ResolvedEndpoint,
-    headers: reqwest::header::HeaderMap,
+    headers: &RequestHeaders,
+    body: &serde_json::Value,
     payload: &RedactedPayload,
 ) -> Result<AiResponse, AppError> {
-    let body = serde_json::json!({ "snippets": payload.to_request_snippets() });
+    verify_body_contains_the_redacted_payload(body, payload)?;
+    let header_map = build_header_map(headers, "the AI provider")?;
 
     let response = HTTP_CLIENT
         .post(endpoint.url())
-        .headers(headers)
-        .json(&body)
+        .headers(header_map)
+        .json(body)
         .send()
         .map_err(map_transport_error)?;
 
@@ -94,6 +167,25 @@ pub fn send(
         return Err(map_http_error("the AI provider", status, &body_text));
     }
     Ok(AiResponse { body: body_text })
+}
+
+/// See this module's doc comment for exactly what this does and does not
+/// guarantee. Every non-empty redacted snippet content string must appear
+/// somewhere in `body`'s serialized JSON, or `send` refuses to issue the
+/// request at all.
+fn verify_body_contains_the_redacted_payload(
+    body: &serde_json::Value,
+    payload: &RedactedPayload,
+) -> Result<(), AppError> {
+    let body_text = body.to_string();
+    let missing = payload
+        .to_request_snippets()
+        .into_iter()
+        .any(|snippet| !snippet.content.is_empty() && !body_text.contains(&snippet.content));
+    if missing {
+        return Err(AppError::ai_payload_unsafe());
+    }
+    Ok(())
 }
 
 /// `reqwest::Error` has no public constructor, so no test can synthesize
@@ -189,5 +281,52 @@ mod tests {
     #[test]
     fn request_timeout_constant_matches_section_12() {
         assert_eq!(AI_REQUEST_TIMEOUT_SECS, 60);
+    }
+
+    fn empty_redacted_payload() -> RedactedPayload {
+        crate::privacy::redact::redact(
+            &crate::contract::EngineSnippetsResult { snippets: vec![] },
+            &[],
+        )
+        .expect("redacting zero snippets cannot fail")
+    }
+
+    fn redacted_payload_from(path: &str, content: &str) -> RedactedPayload {
+        crate::privacy::redact::redact(
+            &crate::contract::EngineSnippetsResult {
+                snippets: vec![crate::contract::EngineSnippet {
+                    path: path.to_string(),
+                    start_line: 1,
+                    end_line: 1,
+                    content: content.to_string(),
+                }],
+            },
+            &[],
+        )
+        .expect("redacting a plain non-secret line cannot fail")
+    }
+
+    #[test]
+    fn verify_body_containment_passes_when_the_body_embeds_every_snippet() {
+        let payload = redacted_payload_from("a.ts", "const x = 1;");
+        let body =
+            serde_json::json!({ "messages": [{ "role": "user", "content": "const x = 1;" }] });
+        assert!(verify_body_contains_the_redacted_payload(&body, &payload).is_ok());
+    }
+
+    #[test]
+    fn verify_body_containment_passes_for_an_empty_payload_regardless_of_body() {
+        let payload = empty_redacted_payload();
+        let body = serde_json::json!({ "messages": [] });
+        assert!(verify_body_contains_the_redacted_payload(&body, &payload).is_ok());
+    }
+
+    #[test]
+    fn verify_body_containment_rejects_a_body_missing_the_payloads_content() {
+        let payload = redacted_payload_from("a.ts", "const x = 1;");
+        let body =
+            serde_json::json!({ "messages": [{ "role": "user", "content": "unrelated text" }] });
+        let err = verify_body_contains_the_redacted_payload(&body, &payload).unwrap_err();
+        assert_eq!(err.code, "E_AI_PAYLOAD_UNSAFE");
     }
 }

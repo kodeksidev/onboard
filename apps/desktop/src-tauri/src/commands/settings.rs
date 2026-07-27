@@ -27,6 +27,20 @@ pub enum AiProvider {
     Ollama,
 }
 
+impl AiProvider {
+    /// The stable string key this provider is stored/looked-up under in
+    /// the OS keychain (`secrets::ai_key`, Section 6.2's convention).
+    /// Single source of truth — `ai::permit::acquire` and the (Phase 12
+    /// step 3) provider adapters all call this instead of each keeping
+    /// their own copy of the match.
+    pub fn key_str(self) -> &'static str {
+        match self {
+            AiProvider::Anthropic => "anthropic",
+            AiProvider::Ollama => "ollama",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentRepo {
@@ -119,19 +133,12 @@ fn write_settings_file(path: &Path, settings: &Settings) -> Result<(), AppError>
         .map_err(|err| AppError::invalid_settings(&format!("Could not write settings.json: {err}")))
 }
 
-fn provider_key(provider: AiProvider) -> &'static str {
-    match provider {
-        AiProvider::Anthropic => "anthropic",
-        AiProvider::Ollama => "ollama",
-    }
-}
-
 /// Reads settings from disk, overwriting `ai.hasStoredKey` with the live
 /// keychain/session-only truth (Section 6.2: never trust the mirror flag
 /// on disk over the actual secret store).
 pub fn get_settings_core(settings_path: &Path, ai_keys: &AiKeyStore) -> Settings {
     let mut settings = read_settings_file(settings_path);
-    settings.ai.has_stored_key = ai_keys.has_key(provider_key(settings.ai.provider));
+    settings.ai.has_stored_key = ai_keys.has_key(settings.ai.provider.key_str());
     settings
 }
 
@@ -281,8 +288,15 @@ mod tests {
         assert_eq!(settings.settings_version, 1);
     }
 
+    /// Holds `secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK` — this test asserts
+    /// no REAL key exists right now for the real `"anthropic"` keychain
+    /// account, which only holds if no other concurrently-running test has
+    /// temporarily stored one there; see that lock's doc comment.
     #[test]
     fn has_stored_key_is_always_recomputed_from_the_key_store_not_disk() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         // Write a settings file that LIES about having a stored key.

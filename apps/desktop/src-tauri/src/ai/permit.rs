@@ -56,13 +56,6 @@ impl EgressPermit {
     }
 }
 
-fn provider_key(provider: AiProvider) -> &'static str {
-    match provider {
-        AiProvider::Anthropic => "anthropic",
-        AiProvider::Ollama => "ollama",
-    }
-}
-
 /// The only place `EgressPermit { .. }` is constructed. Section 12: checks
 /// `settings.isEnabled` first, then queries the REAL keychain/session
 /// state via `ai_keys.has_key` — both conditions must hold.
@@ -70,7 +63,7 @@ pub fn acquire(settings: &AiSettings, ai_keys: &AiKeyStore) -> Result<EgressPerm
     if !settings.is_enabled {
         return Err(AppError::ai_disabled());
     }
-    if !ai_keys.has_key(provider_key(settings.provider)) {
+    if !ai_keys.has_key(settings.provider.key_str()) {
         return Err(AppError::ai_disabled());
     }
     Ok(EgressPermit {
@@ -111,8 +104,16 @@ mod tests {
     /// rule `ModeIndicator`'s doc comment states on the UI side. AI never
     /// activates from a stored key alone, so this test proves it with a
     /// REAL keychain round trip, not a claimed boolean.
+    ///
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` — see that lock's doc comment. Even
+    /// though this test's provider name is unique to it, real OS keychain
+    /// contention across concurrently-running threads was observed to
+    /// affect calls regardless of account name, not just same-name races.
     #[test]
     fn toggle_off_with_a_real_stored_key_still_returns_e_ai_disabled() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ai_keys = AiKeyStore::new();
         let provider_name = "onboard-phase12-permit-test-toggle-off";
         let key = crate::secrets::ai_key::AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").unwrap();
@@ -138,7 +139,7 @@ mod tests {
         // short-circuit directly against the real store instead of routing
         // through `acquire`'s fixed two-provider enum.
         assert!(
-            ai_keys.has_key(provider_name),
+            crate::secrets::ai_key::eventually(|| ai_keys.has_key(provider_name)),
             "sanity: the real key IS there"
         );
         let result = acquire(&settings(false, AiProvider::Anthropic), &ai_keys);
@@ -149,8 +150,17 @@ mod tests {
     /// be fabricated claiming `isEnabled: true` (its fields must be public
     /// to round-trip through `settings.json`). This proves that lie ALONE
     /// is not sufficient — without a real key, `acquire` still refuses.
+    ///
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` because this test's assumption
+    /// ("no real anthropic key exists right now") only holds if no other
+    /// concurrently-running test has temporarily stored one under the same
+    /// real, process/system-wide `"anthropic"` keychain account — see that
+    /// lock's doc comment.
     #[test]
     fn acquire_ignores_a_fabricated_enabled_flag_without_a_real_key() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ai_keys = AiKeyStore::new();
         let fabricated = settings(true, AiProvider::Anthropic);
         assert!(
@@ -161,8 +171,14 @@ mod tests {
         assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
     }
 
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` — see that lock's doc comment;
+    /// this test itself stores a real key under the shared `"anthropic"`
+    /// account for its duration.
     #[test]
     fn toggle_on_and_a_real_stored_key_grants_a_permit_for_the_right_provider() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ai_keys = AiKeyStore::new();
         let provider_name = "anthropic";
         let key = crate::secrets::ai_key::AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").unwrap();
@@ -182,6 +198,9 @@ mod tests {
         ai_keys
             .store(provider_name, &key)
             .expect("store must succeed");
+        assert!(crate::secrets::ai_key::eventually(
+            || ai_keys.has_key(provider_name)
+        ));
 
         let permit =
             acquire(&settings(true, AiProvider::Anthropic), &ai_keys).expect("expected a permit");
