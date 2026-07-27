@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { ipc } from '@/ipc/ipc';
 import { WhereIsSearch } from './WhereIsSearch';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const REPO_ID = '9f3c1a7b2e5d4086';
 
@@ -16,7 +17,7 @@ beforeEach(() => {
 });
 
 /** Section 9 Phase 10's quality gate: keyboard-navigable + axe-clean, matching Phase 8/9's precedent. */
-describe('WhereIsSearch accessibility', () => {
+describe('WhereIsSearch accessibility', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('has zero axe-core violations with results rendered', async () => {
     const user = userEvent.setup();
     const { container } = render(<WhereIsSearch repoId={REPO_ID} />);

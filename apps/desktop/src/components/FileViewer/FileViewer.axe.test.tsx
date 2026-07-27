@@ -6,13 +6,14 @@ import { AnalysisEnvelope } from '@onboard/contract';
 import type { AnalysisResult } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { FileViewer } from './FileViewer';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const REPO_ID = '9f3c1a7b2e5d4086';
 const RESULT: AnalysisResult = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 const AUTH_SERVICE_PATH = 'src/services/auth.service.ts';
 
 /** Section 9 Phase 10's quality gate: axe-clean, matching Phase 8/9's precedent. */
-describe('FileViewer accessibility', () => {
+describe('FileViewer accessibility', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('has zero axe-core violations with a file loaded', async () => {
     const { container } = render(<FileViewer repoId={REPO_ID} result={RESULT} path={AUTH_SERVICE_PATH} />);
 

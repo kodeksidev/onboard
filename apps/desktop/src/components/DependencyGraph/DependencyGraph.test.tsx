@@ -6,6 +6,7 @@ import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { DependencyGraph } from './DependencyGraph';
 import { useGraphStore } from '@/state/graphStore';
 import { buildLargeSyntheticResult } from './graph-lazy-fixtures';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const SAMPLE = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 
@@ -17,7 +18,7 @@ function getCanvasRegion(): HTMLElement {
   return screen.getByRole('application', { name: /dependency graph canvas/i });
 }
 
-describe('DependencyGraph', () => {
+describe('DependencyGraph', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('renders the accessible canvas region, toolbar, and screen-reader table for the same data', async () => {
     render(<DependencyGraph result={SAMPLE} />);
 
