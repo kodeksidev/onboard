@@ -61,11 +61,20 @@ impl AnthropicProvider {
     }
 
     /// The only place `permit`/`endpoint`/`key`/`model` are resolved for a
-    /// real request — called once at the top of both trait methods.
-    fn resolve_context(&self) -> Result<ResolvedContext, AppError> {
+    /// real request — called once at the top of both trait methods (with
+    /// `model_override: None`) and by [`Self::test_with_model`] (Phase 12
+    /// step 5's `test_ai_key` command, `Some(..)`). The override touches
+    /// ONLY the plain `model` string — never part of the WHAT/WHETHER/
+    /// WHERE triad — so `permit`/`endpoint`/`key` are always resolved from
+    /// the real stored settings either way; a caller can make this adapter
+    /// try a different model id, never a different host, key, or bypass
+    /// the redaction/permit chokepoint.
+    fn resolve_context(&self, model_override: Option<&str>) -> Result<ResolvedContext, AppError> {
         let stored = load_stored_ai_settings(&self.settings_path, &self.ai_keys);
         let permit = permit::acquire(stored.ai(), &self.ai_keys)?;
-        let model = stored.ai().model.clone();
+        let model = model_override
+            .map(str::to_string)
+            .unwrap_or_else(|| stored.ai().model.clone());
 
         #[cfg(test)]
         let endpoint = match &self.test_endpoint {
@@ -83,6 +92,42 @@ impl AnthropicProvider {
             model,
         })
     }
+
+    /// Section 9 Phase 12 step 5's `test_ai_key` command: the SAME full
+    /// chokepoint round trip as the trait's `test()` (permit → redaction →
+    /// `ResolvedEndpoint` → `http::send`), but against `model` rather than
+    /// whatever is currently persisted — so a caller can verify a model id
+    /// they have not saved yet without a settings write. Not part of
+    /// `AiProvider` (the trait's frozen `test(&self)` takes no arguments).
+    pub async fn test_with_model(&self, model: &str) -> Result<TestResult, AppError> {
+        let ctx = self.resolve_context(Some(model))?;
+        run_test(&ctx).await
+    }
+}
+
+/// Shared by `AiProvider::test` and `AnthropicProvider::test_with_model` —
+/// the one place that actually issues the ping request, so both call sites
+/// are provably the same round trip, differing only in which `model`
+/// `resolve_context` resolved. On failure this PROPAGATES the real
+/// `AppError` from `http::send` — Section 7.4's `test_ai_key` contract
+/// rejects with the specific `E_AI_*` code (`{ isOk: true, latencyMs,
+/// modelEcho }` is the ONLY success shape — `isOk` is the TypeScript
+/// literal `true`, not `boolean`), never a generic "false."
+async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
+    let headers = build_headers(&ctx.key);
+    let empty_payload = crate::privacy::redact::redact(
+        &crate::contract::EngineSnippetsResult { snippets: vec![] },
+        &[],
+    )?;
+    http::send(
+        &ctx.permit,
+        &ctx.endpoint,
+        &headers,
+        ProviderShape::Anthropic,
+        &ctx.model,
+        &empty_payload,
+    )?;
+    Ok(TestResult { is_ok: true })
 }
 
 struct ResolvedContext {
@@ -130,7 +175,7 @@ impl AiProvider for AnthropicProvider {
     /// `http::send` builds the body itself from `ProviderShape::Anthropic`
     /// + `ctx.model` + `req.payload` only.
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, AppError> {
-        let ctx = self.resolve_context()?;
+        let ctx = self.resolve_context(None)?;
         let headers = build_headers(&ctx.key);
         let response = http::send(
             &ctx.permit,
@@ -144,26 +189,8 @@ impl AiProvider for AnthropicProvider {
     }
 
     async fn test(&self) -> Result<TestResult, AppError> {
-        let ctx = self.resolve_context()?;
-        let headers = build_headers(&ctx.key);
-        // A real, legitimately-empty `RedactedPayload` (via the real
-        // `redact()` with zero snippets — never a shortcut past it) just
-        // to confirm the model/key/endpoint combination actually answers.
-        let empty_payload = crate::privacy::redact::redact(
-            &crate::contract::EngineSnippetsResult { snippets: vec![] },
-            &[],
-        )?;
-        let result = http::send(
-            &ctx.permit,
-            &ctx.endpoint,
-            &headers,
-            ProviderShape::Anthropic,
-            &ctx.model,
-            &empty_payload,
-        );
-        Ok(TestResult {
-            is_ok: result.is_ok(),
-        })
+        let ctx = self.resolve_context(None)?;
+        run_test(&ctx).await
     }
 }
 

@@ -25,6 +25,22 @@ export default defineConfig({
     css: false,
     restoreMocks: true,
     /**
+     * Vitest's 5s default is a poor fit for this suite. The axe-core
+     * accessibility scans and the Cytoscape / CodeMirror mounts are genuinely
+     * slow to initialise — several seconds each in isolation — and running
+     * ~47 files across a shared worker pool pushes them past 5s on a loaded
+     * machine. The result was 9 failures reading "Test timed out in 5000ms"
+     * with zero assertion failures, i.e. a correctness gate turned into a coin
+     * flip by the clock.
+     *
+     * A timeout is not a correctness assertion, so raising it loses nothing:
+     * the real render-time budget is asserted deliberately and in isolation by
+     * `bun run test:perf` (Section 9 Phase 10's 20,000-line gate), which is
+     * excluded below precisely so CPU contention cannot corrupt a measurement
+     * that is supposed to mean something.
+     */
+    testTimeout: 20_000,
+    /**
      * `*.perf.test.tsx` (Section 9 Phase 10's 20,000-line render-time gate)
      * is measured with a real `performance.now()` wall-clock delta against a
      * fixed budget. Running it inside the default parallel suite — dozens of

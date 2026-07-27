@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod analyze;
 pub mod read_file;
 pub mod search;
@@ -13,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::error::AppError;
 use crate::state::AppState;
 
+use ai::{test_ai_key_core, TestAiKeyResponse};
 use analyze::{analyze_repo_core, AnalyzeContext, AnalyzeRepoRequest};
 use read_file::read_repo_file_core;
 use search::search_repo_core;
@@ -174,4 +176,25 @@ pub fn clear_ai_key(
     validate_provider(&provider)?;
     clear_ai_key_core(&state.ai_keys, &provider)?;
     Ok(EmptyResponse {})
+}
+
+/// Section 7.4: `test_ai_key`. `async fn` (unlike every other command in
+/// this file except `pick_repo_folder`) so Tauri's own async runtime — a
+/// dependency of `tauri` itself, not this crate directly — drives
+/// `ai::provider::AiProvider`'s async methods for real; see
+/// `commands::ai`'s doc comment for why this proves the full chokepoint
+/// rather than a lighter-weight credential check. Everything needed is
+/// read out of `app`/`state` BEFORE the first `.await`, so neither is held
+/// across a suspension point.
+#[tauri::command]
+pub async fn test_ai_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+    model: String,
+) -> Result<TestAiKeyResponse, AppError> {
+    validate_provider(&provider)?;
+    let path = settings_path(&app)?;
+    let ai_keys = state.ai_keys.clone();
+    test_ai_key_core(path, ai_keys, &provider, &model).await
 }

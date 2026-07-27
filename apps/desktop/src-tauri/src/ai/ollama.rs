@@ -16,22 +16,21 @@
 //! proves this directly against a real local listener, using the exact
 //! same shared assertion helper `ai/anthropic.rs`'s test does.
 //!
-//! ## Why this adapter still requires a stored key
+//! ## This adapter does not require a stored key (step 5)
 //!
-//! Section 12's gate (`ai::permit::acquire`) is "`settings.ai.isEnabled
-//! === true` **and** a key is retrievable" — worded as a blanket
-//! requirement, not provider-conditional, and that gate is frozen,
-//! already-reviewed code from step 2b that this step does not touch.
-//! Local Ollama installs commonly run with no authentication at all, so
-//! requiring *some* stored value here is arguably stricter than the real
-//! world needs — but weakening `acquire` per-provider would mean two
-//! different "AI is on" gates existing in the same crate, which is exactly
-//! the kind of asymmetry a bypass hides in. This adapter does not use the
-//! retrieved key for anything (no auth header is sent — see
-//! `build_headers` below); it exists purely to satisfy the uniform gate.
-//! Flagged for owner confirmation: whether local-Ollama-without-a-key
-//! should get its own accommodation is a UX decision for whichever step
-//! wires up the actual Settings UI (`commands/ai.rs`, not in scope here).
+//! The owner's ruling: `ai::permit::acquire` means "AI on + the
+//! credentials THIS provider requires," not "AI on + key always."
+//! [`crate::commands::settings::AiProvider::requires_stored_key`] answers
+//! `false` for Ollama — local, unauthenticated by default, nothing leaves
+//! the machine at all — so `acquire` grants a permit for it on the toggle
+//! alone, and `resolve_context` below never touches the keychain. This
+//! adapter sends no auth header either way (`build_headers` returns empty
+//! headers) — there was never a real credential for this adapter to use,
+//! only a formerly-required placeholder value the old, provider-blind gate
+//! insisted on. That was flagged for owner confirmation in the prior
+//! report and has now been resolved this way, in the one place
+//! (`requires_stored_key`) that answers "is egress allowed" for every
+//! provider — not a second gate, not a branch here.
 
 use std::path::PathBuf;
 
@@ -68,10 +67,14 @@ impl OllamaProvider {
         self
     }
 
-    fn resolve_context(&self) -> Result<ResolvedContext, AppError> {
+    /// See `AnthropicProvider::resolve_context`'s doc comment for the
+    /// `model_override` contract — identical here.
+    fn resolve_context(&self, model_override: Option<&str>) -> Result<ResolvedContext, AppError> {
         let stored = load_stored_ai_settings(&self.settings_path, &self.ai_keys);
         let permit = permit::acquire(stored.ai(), &self.ai_keys)?;
-        let model = stored.ai().model.clone();
+        let model = model_override
+            .map(str::to_string)
+            .unwrap_or_else(|| stored.ai().model.clone());
 
         #[cfg(test)]
         let endpoint = match &self.test_endpoint {
@@ -86,6 +89,54 @@ impl OllamaProvider {
             endpoint,
             model,
         })
+    }
+
+    /// Section 9 Phase 12 step 5's `test_ai_key` command for Ollama: "Test
+    /// key" naturally becomes a reachability test rather than a credential
+    /// test here (there is no credential — see this module's doc comment)
+    /// — handled coherently by routing through the exact same
+    /// `resolve_context`/`run_test` shape every other provider uses, not a
+    /// special case in the button or the command layer.
+    pub async fn test_with_model(&self, model: &str) -> Result<TestResult, AppError> {
+        let ctx = self.resolve_context(Some(model))?;
+        run_test(&ctx).await
+    }
+}
+
+/// Shared by `AiProvider::test` and `OllamaProvider::test_with_model`. On
+/// failure this PROPAGATES the real `AppError` from `http::send` (never
+/// collapses it into a generic "false") — Section 7.4's `test_ai_key`
+/// contract rejects with the specific `E_AI_*` code
+/// (`{ isOk: true, latencyMs, modelEcho }` is the ONLY success shape; the
+/// `isOk` field is the TypeScript literal `true`, not `boolean` — failure
+/// is a rejected promise, never a differently-shaped success), so
+/// `commands::ai::test_ai_key_core` needs the original code intact to
+/// return the right one. The one reclassification this module does:
+/// `E_AI_NETWORK` → `E_AI_OLLAMA_UNREACHABLE`, since for a local-only
+/// target "the request failed at the transport level" and "Ollama isn't
+/// running" are the same event in practice, and Section 10 gives the
+/// latter its own literal copy.
+async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
+    let headers = build_headers();
+    let empty_payload = crate::privacy::redact::redact(
+        &crate::contract::EngineSnippetsResult { snippets: vec![] },
+        &[],
+    )?;
+    let result = http::send(
+        &ctx.permit,
+        &ctx.endpoint,
+        &headers,
+        ProviderShape::Ollama,
+        &ctx.model,
+        &empty_payload,
+    );
+    match result {
+        Ok(_) => Ok(TestResult { is_ok: true }),
+        Err(err) if err.code == "E_AI_NETWORK" => Err(AppError::ai_ollama_unreachable(
+            &ctx.model,
+            err.detail.unwrap_or_default(),
+        )),
+        Err(err) => Err(err),
     }
 }
 
@@ -128,7 +179,7 @@ impl AiProvider for OllamaProvider {
     /// `AnthropicProvider::complete` except `ProviderShape::Ollama` and no
     /// auth header.
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, AppError> {
-        let ctx = self.resolve_context()?;
+        let ctx = self.resolve_context(None)?;
         let headers = build_headers();
         let response = http::send(
             &ctx.permit,
@@ -142,23 +193,8 @@ impl AiProvider for OllamaProvider {
     }
 
     async fn test(&self) -> Result<TestResult, AppError> {
-        let ctx = self.resolve_context()?;
-        let headers = build_headers();
-        let empty_payload = crate::privacy::redact::redact(
-            &crate::contract::EngineSnippetsResult { snippets: vec![] },
-            &[],
-        )?;
-        let result = http::send(
-            &ctx.permit,
-            &ctx.endpoint,
-            &headers,
-            ProviderShape::Ollama,
-            &ctx.model,
-            &empty_payload,
-        );
-        Ok(TestResult {
-            is_ok: result.is_ok(),
-        })
+        let ctx = self.resolve_context(None)?;
+        run_test(&ctx).await
     }
 }
 
@@ -169,7 +205,6 @@ mod tests {
         update_settings_core, AiProvider as ProviderKind, AiSettingsPatch, SettingsPatch,
     };
     use crate::contract::{EngineSnippet, EngineSnippetsResult};
-    use crate::secrets::ai_key::AiKey;
     use std::future::Future;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
@@ -257,36 +292,18 @@ mod tests {
         (format!("http://{addr}"), rx)
     }
 
-    /// See `ai::anthropic::tests::KeychainCleanupGuard`'s doc comment for
-    /// why this holds `REAL_KEYCHAIN_TEST_LOCK`.
-    struct KeychainCleanupGuard {
-        provider_key: &'static str,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-    impl Drop for KeychainCleanupGuard {
-        fn drop(&mut self) {
-            let _ = AiKeyStore::new().clear(self.provider_key);
-        }
-    }
-
-    fn enable_real_ollama(
-        dir: &std::path::Path,
-    ) -> (std::path::PathBuf, AiKeyStore, KeychainCleanupGuard) {
-        let lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    /// Enables Ollama through the real settings-file machinery — and,
+    /// deliberately, stores NO key anywhere. Step 5's owner ruling:
+    /// `ai::permit::acquire` no longer requires one for Ollama
+    /// (`AiProvider::requires_stored_key` returns `false`) — this proves
+    /// that end-to-end through the real adapter, not just the permit
+    /// function in isolation. No `REAL_KEYCHAIN_TEST_LOCK` needed either:
+    /// with no credential requirement, Ollama's `resolve_context` never
+    /// touches the keychain at all, so there is no shared resource to
+    /// serialize against.
+    fn enable_real_ollama(dir: &std::path::Path) -> (std::path::PathBuf, AiKeyStore) {
         let settings_path = dir.join("settings.json");
         let ai_keys = AiKeyStore::new();
-        // See this module's doc comment: the uniform gate still requires a
-        // stored value even though it is never sent as an auth header.
-        let key = AiKey::parse("ollama-adapter-test-placeholder-0").unwrap();
-        ai_keys
-            .store(ProviderKind::Ollama.key_str(), &key)
-            .expect("store must succeed");
-        assert!(
-            crate::secrets::ai_key::eventually(|| ai_keys.has_key(ProviderKind::Ollama.key_str())),
-            "sanity: the real key IS there before proceeding"
-        );
         update_settings_core(
             &settings_path,
             &ai_keys,
@@ -301,11 +318,7 @@ mod tests {
             },
         )
         .expect("update_settings_core must succeed");
-        let cleanup = KeychainCleanupGuard {
-            provider_key: ProviderKind::Ollama.key_str(),
-            _lock: lock,
-        };
-        (settings_path, ai_keys, cleanup)
+        (settings_path, ai_keys)
     }
 
     /// The owner's explicit Part B requirement: "A test should demonstrate
@@ -315,7 +328,7 @@ mod tests {
     #[test]
     fn ollamas_outbound_bytes_are_redacted_exactly_like_anthropics() {
         let dir = tempfile::tempdir().unwrap();
-        let (settings_path, ai_keys, _cleanup) = enable_real_ollama(dir.path());
+        let (settings_path, ai_keys) = enable_real_ollama(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
         let planted_secret = "REDACTED-AWS-BY-HISTORY-REWRITE"; // Section 8.9 rule 2 (AWS key)
@@ -370,7 +383,7 @@ mod tests {
     #[test]
     fn test_method_reports_success_against_a_real_listener() {
         let dir = tempfile::tempdir().unwrap();
-        let (settings_path, ai_keys, _cleanup) = enable_real_ollama(dir.path());
+        let (settings_path, ai_keys) = enable_real_ollama(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
         let provider = OllamaProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
@@ -398,5 +411,52 @@ mod tests {
             payload: empty_payload,
         }));
         assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
+    }
+
+    /// A connection-refused transport failure (nothing listening on the
+    /// configured port — exactly what "Ollama isn't running" looks like)
+    /// is reclassified from the generic `E_AI_NETWORK` to
+    /// `E_AI_OLLAMA_UNREACHABLE`, with Section 10's literal copy.
+    #[test]
+    fn test_reclassifies_a_connection_refused_failure_as_ollama_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings_path, ai_keys) = enable_real_ollama(dir.path());
+
+        // Bind, then immediately drop — the OS reliably refuses the next
+        // connection to a port nothing is listening on anymore.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let provider = OllamaProvider::new(settings_path, ai_keys)
+            .with_test_endpoint(format!("http://{addr}"));
+        let result = block_on_never_pending(provider.test());
+
+        let err = result.expect_err("expected the connection to fail");
+        assert_eq!(err.code, "E_AI_OLLAMA_UNREACHABLE");
+        assert!(err
+            .message
+            .contains("Start Ollama and pull llama-test-model"));
+    }
+
+    /// `test_with_model` uses the OVERRIDE model, not whatever is
+    /// currently persisted — proven against the real bytes a listener
+    /// actually receives, not just the return value.
+    #[test]
+    fn test_with_model_sends_the_override_model_not_the_stored_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings_path, ai_keys) = enable_real_ollama(dir.path());
+        let (base_url, rx) = spawn_capturing_server();
+
+        let provider = OllamaProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
+        let result = block_on_never_pending(provider.test_with_model("override-model"));
+        assert!(result.is_ok(), "test_with_model failed: {:?}", result.err());
+
+        let received_body = rx
+            .recv_timeout(std::time::Duration::from_secs(15))
+            .expect("the local listener never received a request");
+        let received_json: serde_json::Value = serde_json::from_slice(&received_body).unwrap();
+        assert_eq!(received_json["model"], "override-model");
+        assert_ne!(received_json["model"], "llama-test-model");
     }
 }

@@ -144,6 +144,7 @@ pub fn run() {
             commands::update_settings,
             commands::store_ai_key,
             commands::clear_ai_key,
+            commands::test_ai_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Onboard application");

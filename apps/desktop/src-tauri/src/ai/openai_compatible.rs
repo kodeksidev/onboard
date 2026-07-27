@@ -44,10 +44,14 @@ impl OpenAiCompatibleProvider {
         self
     }
 
-    fn resolve_context(&self) -> Result<ResolvedContext, AppError> {
+    /// See `AnthropicProvider::resolve_context`'s doc comment for the
+    /// `model_override` contract — identical here.
+    fn resolve_context(&self, model_override: Option<&str>) -> Result<ResolvedContext, AppError> {
         let stored = load_stored_ai_settings(&self.settings_path, &self.ai_keys);
         let permit = permit::acquire(stored.ai(), &self.ai_keys)?;
-        let model = stored.ai().model.clone();
+        let model = model_override
+            .map(str::to_string)
+            .unwrap_or_else(|| stored.ai().model.clone());
 
         #[cfg(test)]
         let endpoint = match &self.test_endpoint {
@@ -67,6 +71,32 @@ impl OpenAiCompatibleProvider {
             model,
         })
     }
+
+    /// Section 9 Phase 12 step 5's `test_ai_key` command — see
+    /// `AnthropicProvider::test_with_model`'s doc comment.
+    pub async fn test_with_model(&self, model: &str) -> Result<TestResult, AppError> {
+        let ctx = self.resolve_context(Some(model))?;
+        run_test(&ctx).await
+    }
+}
+
+/// See `ai::anthropic::run_test`'s doc comment — identical error-propagation
+/// contract, no reclassification (that's Ollama-only).
+async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
+    let headers = build_headers(&ctx.key)?;
+    let empty_payload = crate::privacy::redact::redact(
+        &crate::contract::EngineSnippetsResult { snippets: vec![] },
+        &[],
+    )?;
+    http::send(
+        &ctx.permit,
+        &ctx.endpoint,
+        &headers,
+        ProviderShape::OpenAiCompatible,
+        &ctx.model,
+        &empty_payload,
+    )?;
+    Ok(TestResult { is_ok: true })
 }
 
 struct ResolvedContext {
@@ -115,7 +145,7 @@ impl AiProvider for OpenAiCompatibleProvider {
     /// `AnthropicProvider::complete` except `ProviderShape::OpenAiCompatible`
     /// and a `Bearer` auth header.
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, AppError> {
-        let ctx = self.resolve_context()?;
+        let ctx = self.resolve_context(None)?;
         let headers = build_headers(&ctx.key)?;
         let response = http::send(
             &ctx.permit,
@@ -129,23 +159,8 @@ impl AiProvider for OpenAiCompatibleProvider {
     }
 
     async fn test(&self) -> Result<TestResult, AppError> {
-        let ctx = self.resolve_context()?;
-        let headers = build_headers(&ctx.key)?;
-        let empty_payload = crate::privacy::redact::redact(
-            &crate::contract::EngineSnippetsResult { snippets: vec![] },
-            &[],
-        )?;
-        let result = http::send(
-            &ctx.permit,
-            &ctx.endpoint,
-            &headers,
-            ProviderShape::OpenAiCompatible,
-            &ctx.model,
-            &empty_payload,
-        );
-        Ok(TestResult {
-            is_ok: result.is_ok(),
-        })
+        let ctx = self.resolve_context(None)?;
+        run_test(&ctx).await
     }
 }
 

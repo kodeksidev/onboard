@@ -2080,3 +2080,59 @@ decided; it only records choices the spec left open.
     `AppShell.tsx`, `ErrorState.tsx`, `EmptyState.tsx` audited and confirmed
     to contain no array-mapping with an empty branch at risk (none of them
     render a data-driven list at all).
+- **Phase 12 step 5 — `AiProvider::requires_stored_key` is the ONE place
+  that answers "does this provider need a credential," consulted by the
+  one `ai::permit::acquire` that already exists.** The owner's ruling,
+  carried as a hard constraint: `acquire` means "AI on + the credentials
+  THIS provider requires," not "AI on + key always." Anthropic/
+  `openai-compatible` need a key; Ollama (local, unauthenticated) does
+  not. `acquire`'s own shape and call sites are unchanged — only the
+  has-a-key check is now gated behind this one predicate instead of
+  always running. This retires the step-3B placeholder ("Ollama's adapter
+  still requires a stored key even though it never sends one," flagged
+  for owner confirmation in that report) exactly the way it was flagged:
+  a single provider-aware definition, not a second gate.
+- **Phase 12 step 5 — `test_ai_key`'s round trip against a not-yet-saved
+  model uses a `model_override: Option<&str>` parameter on each adapter's
+  private `resolve_context`, plus a new inherent (non-trait) method
+  `test_with_model`.** The frozen `AiProvider` trait's `test(&self)` takes
+  no arguments, so the override could not go there; `model` was already
+  the one piece of `resolve_context`'s output not part of the WHAT/
+  WHETHER/WHERE triad, so overriding only it (permit/endpoint/key still
+  always resolved from real stored settings) does not weaken any
+  existing guarantee.
+- **Phase 12 step 5 — `E_AI_OLLAMA_UNREACHABLE` is a full new
+  `AppErrorCode`, and `ai::ollama::run_test`/`complete` reclassify a
+  generic `E_AI_NETWORK` transport failure into it.** Section 10 gives
+  this code its own literal copy ("Ollama isn't answering on
+  127.0.0.1:11434"); for a local-only target, "the request failed at the
+  transport level" and "Ollama isn't running" are the same event in
+  practice, so the reclassification happens once, in the one adapter that
+  ever produces it — not a special case threaded through the command
+  layer or the UI.
+- **Phase 12 step 5 — `AiKeyStore` is now `Clone` (a cheap `Arc` clone of
+  its session-only fallback map, never an independent empty one).** The
+  three provider adapters each take an OWNED `AiKeyStore` in their
+  constructor (so their own tests can build throwaway instances freely);
+  `commands::ai::test_ai_key_core` needs to hand each one a `.clone()` of
+  the single, app-lifetime `AppState.ai_keys` handle. An independent
+  clone would silently stop seeing a key stored earlier through the A18
+  session-only fallback (no OS keychain available) — this makes the
+  clone share state instead.
+- **Phase 12 step 5 — `mock-ipc.ts`'s `testAiKey` now (a) mirrors the
+  Rust side's provider-aware credential rule (Ollama succeeds regardless
+  of `hasStoredKey`) and (b) builds its rejection `message` from
+  `ERRORS.aiKeyInvalid(...).description` instead of a hand-written string
+  that duplicated the TITLE text.** The old hand-written message
+  ("That key was rejected") happened to be identical to
+  `ERROR_TITLES.E_AI_KEY_INVALID`, so a real component rendering both
+  (title from `resolveErrorCopy`, description as `error.message`) showed
+  the same sentence twice — caught by wiring `TestKeyButton` to the real
+  mock for the first time; nothing consumed `testAiKey`'s rejection shape
+  before this step.
+- **Phase 12 step 5 — `AiProvider`'s Rust `#[serde(rename_all = ...)]`
+  changed from `"lowercase"` to `"kebab-case"`.** Adding
+  `OpenAiCompatible` under `"lowercase"` would serialize as
+  `"openaicompatible"`; `"kebab-case"` produces `"openai-compatible"`
+  while leaving `Anthropic`/`Ollama`'s wire values unchanged (both are
+  single words, identical under either rule).

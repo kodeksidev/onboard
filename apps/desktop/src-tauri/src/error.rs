@@ -56,6 +56,13 @@ pub enum AppErrorCode {
     EAiRateLimited,
     /// Phase 12 step 2: the provider responded 404 for the configured model.
     EAiModelNotFound,
+    /// Phase 12 step 5: Ollama specifically (never Anthropic/openai-compatible)
+    /// could not be reached at all — reclassified from a generic
+    /// `E_AI_NETWORK` transport failure by `ai::ollama`, since for a
+    /// local-only target that almost always means "Ollama isn't running,"
+    /// not a generic connectivity problem. Section 10 gives this its own
+    /// literal copy.
+    EAiOllamaUnreachable,
 }
 
 impl AppErrorCode {
@@ -81,6 +88,7 @@ impl AppErrorCode {
             AppErrorCode::EAiKeyInvalid => "E_AI_KEY_INVALID",
             AppErrorCode::EAiRateLimited => "E_AI_RATE_LIMITED",
             AppErrorCode::EAiModelNotFound => "E_AI_MODEL_NOT_FOUND",
+            AppErrorCode::EAiOllamaUnreachable => "E_AI_OLLAMA_UNREACHABLE",
         }
     }
 }
@@ -312,6 +320,21 @@ impl AppError {
         )
         .with_detail(raw_detail.into())
     }
+
+    /// Section 10's literal copy for "Ollama not running":
+    /// `apps/desktop/src/copy/messages.ts`'s `ERRORS.aiOllamaUnreachable`
+    /// title is static ("Ollama isn't answering on 127.0.0.1:11434"); this
+    /// `message` is that row's description, verbatim, with `model`
+    /// interpolated exactly like the frontend copy does.
+    pub fn ai_ollama_unreachable(model: &str, raw_detail: impl Into<String>) -> Self {
+        Self::new(
+            AppErrorCode::EAiOllamaUnreachable,
+            format!(
+                "Start Ollama and pull {model}, then test again. Static mode is unaffected — everything below still works."
+            ),
+        )
+        .with_detail(raw_detail.into())
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +370,18 @@ mod tests {
         assert!(err.message.contains("big.log"));
         assert!(err.message.contains("3.1 MB"));
         assert!(err.message.contains("Onboard displays files up to 2 MB"));
+    }
+
+    #[test]
+    fn ai_ollama_unreachable_matches_the_literal_section_10_copy() {
+        let err = AppError::ai_ollama_unreachable("llama3", "connection refused");
+
+        assert_eq!(err.code, "E_AI_OLLAMA_UNREACHABLE");
+        assert_eq!(
+            err.message,
+            "Start Ollama and pull llama3, then test again. Static mode is unaffected — everything below still works."
+        );
+        assert_eq!(err.detail.as_deref(), Some("connection refused"));
     }
 
     #[test]

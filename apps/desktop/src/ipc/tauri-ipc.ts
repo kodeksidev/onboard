@@ -15,6 +15,7 @@ import type {
   ReadRepoFileResult,
   StoreAiKeyRequest,
   StoreAiKeyResult,
+  TestAiKeyRequest,
   TestAiKeyResult,
   Unsubscribe,
 } from './ipc';
@@ -60,16 +61,19 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 }
 
 /**
- * The Phase 12 `ai_*` commands do not exist on the Rust side yet — rejecting
- * with the real, honest `E_AI_DISABLED` code (rather than a placeholder
- * `E_NOT_WIRED`) means the AI panels' existing "AI is off" empty states
- * render correctly today, and nothing here needs to change again once
- * Phase 12 registers the real commands.
+ * The three AI FEATURE commands (`ai_project_summary`/`ai_explain_module`/
+ * `ai_ask`) are Phase 12 step 6, after review, and do not exist on the Rust
+ * side yet — rejecting with the real, honest `E_AI_DISABLED` code (rather
+ * than a placeholder `E_NOT_WIRED`) means the AI panels' existing "AI is
+ * off" empty states render correctly today, and nothing here needs to
+ * change again once step 6 registers the real commands. `test_ai_key`
+ * (Settings' Test key button) is step 5 and IS wired below, to the real
+ * `test_ai_key` Tauri command.
  */
 const AI_NOT_YET_IMPLEMENTED: AppError = {
   code: 'E_AI_DISABLED',
   message: 'Turn on AI in Settings and store a key to use this feature.',
-  detail: 'The AI commands land in Phase 12; the master toggle is off until then.',
+  detail: 'The AI feature commands land in Phase 12 step 6; the master toggle is off until then.',
   path: null,
 };
 
@@ -112,14 +116,20 @@ export function createTauriIpc(): OnboardIpc {
     updateSettings: (patch: SettingsPatch) => call<Settings>('update_settings', { patch }),
 
     storeAiKey: (request: StoreAiKeyRequest) =>
-      call<StoreAiKeyResult>('store_ai_key', { provider: request.provider, apiKey: request.apiKey }),
+      call<StoreAiKeyResult>('store_ai_key', {
+        provider: request.provider,
+        apiKey: request.apiKey,
+      }),
 
     clearAiKey: (request: ClearAiKeyRequest) =>
       call<Record<string, never>>('clear_ai_key', { provider: request.provider }),
 
-    // The ai_* family lands in Phase 12; the signatures exist so OnboardIpc
-    // stays satisfied, but every one rejects until then.
-    testAiKey: () => aiNotYetImplemented<TestAiKeyResult>(),
+    testAiKey: (request: TestAiKeyRequest) =>
+      call<TestAiKeyResult>('test_ai_key', { provider: request.provider, model: request.model }),
+
+    // The three AI FEATURE commands land in Phase 12 step 6, after review;
+    // the signatures exist so OnboardIpc stays satisfied, but every one
+    // rejects until then.
     aiProjectSummary: () => aiNotYetImplemented<AiActionResult>(),
     aiExplainModule: () => aiNotYetImplemented<AiActionResult>(),
     aiAsk: () => aiNotYetImplemented<AiActionResult>(),

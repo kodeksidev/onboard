@@ -4,7 +4,12 @@ import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { DEFAULT_SETTINGS } from './settings-schema';
 import type { Settings, SettingsPatch } from './settings-schema';
 import { buildSearchResponse } from './mock-search';
-import { BENCH_LARGE_FILE_LINE_COUNT, BENCH_LARGE_FILE_PATH, buildBenchLargeFileContent } from './mock-bench-file';
+import {
+  BENCH_LARGE_FILE_LINE_COUNT,
+  BENCH_LARGE_FILE_PATH,
+  buildBenchLargeFileContent,
+} from './mock-bench-file';
+import { ERRORS } from '../copy/messages';
 import type {
   AiActionResult,
   AnalysisErrorListener,
@@ -142,11 +147,20 @@ function clearAiKey(state: MockIpcState): Record<string, never> {
   return {};
 }
 
+/**
+ * Mirrors the Rust side's provider-aware credential rule (Phase 12 step 5:
+ * `AiProvider::requires_stored_key` — Ollama is local/unauthenticated and
+ * needs no key; Anthropic/openai-compatible do). `message` is the long
+ * Section 10 description (Section 12's convention, identical to how the
+ * real backend builds `AppError.message` — `resolveErrorCopy` treats it as
+ * the description, never re-deriving it from the title).
+ */
 async function testAiKey(state: MockIpcState, request: TestAiKeyRequest): Promise<TestAiKeyResult> {
-  if (!state.settings.ai.hasStoredKey) {
+  const requiresStoredKey = request.provider !== 'ollama';
+  if (requiresStoredKey && !state.settings.ai.hasStoredKey) {
     return rejectWith({
       code: 'E_AI_KEY_INVALID',
-      message: 'That key was rejected',
+      message: ERRORS.aiKeyInvalid(request.provider).description,
       detail: `${request.provider} returned 401.`,
       path: null,
     });
@@ -164,7 +178,9 @@ async function runAiAction(state: MockIpcState): Promise<AiActionResult> {
     });
   }
   const citedPath =
-    SAMPLE_ENVELOPE.result.importantFilePaths[0] ?? SAMPLE_ENVELOPE.result.entryPoints[0]?.path ?? '';
+    SAMPLE_ENVELOPE.result.importantFilePaths[0] ??
+    SAMPLE_ENVELOPE.result.entryPoints[0]?.path ??
+    '';
   return {
     markdown: `This project centers on [[${citedPath}:1]].`,
     citedPaths: [citedPath],

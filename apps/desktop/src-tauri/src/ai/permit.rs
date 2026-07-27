@@ -16,6 +16,20 @@
 //! `tests/ai_permit_compile_fail.rs` proves this from an external crate,
 //! mirroring `tests/redaction_compile_fail.rs`'s technique exactly.
 //!
+//! ## "A key is retrievable" is provider-aware, not "always a key" (step 5)
+//!
+//! The owner's ruling, carried as a hard constraint: `acquire` does not
+//! mean "AI on + key always." It means "AI on + the credentials THIS
+//! provider requires." For `anthropic`/`openai-compatible` that is a key;
+//! for `ollama` — local, unauthenticated, nothing leaves the machine at
+//! all — it is nothing. This is encoded as ONE thing:
+//! [`AiProvider::requires_stored_key`] (`commands::settings`), consulted
+//! once, right here, by the one `acquire` that already exists. There is no
+//! second "is egress allowed" answer anywhere in this crate, no
+//! `if provider == Ollama` scattered through callers — `acquire`'s own
+//! logic is unchanged in shape; only the has-a-key check is now asked
+//! "does this provider even need one," not assumed "yes" unconditionally.
+//!
 //! ## Why `acquire` takes `&AiSettings` and `&AiKeyStore`, not two `bool`s
 //!
 //! An earlier version of this function took `(is_ai_enabled: bool,
@@ -57,13 +71,16 @@ impl EgressPermit {
 }
 
 /// The only place `EgressPermit { .. }` is constructed. Section 12: checks
-/// `settings.isEnabled` first, then queries the REAL keychain/session
-/// state via `ai_keys.has_key` — both conditions must hold.
+/// `settings.isEnabled` first, then — only for a provider that
+/// [`AiProvider::requires_stored_key`] — queries the REAL keychain/session
+/// state via `ai_keys.has_key`. Both conditions must hold for a
+/// credential-requiring provider; the toggle alone is sufficient for one
+/// that doesn't.
 pub fn acquire(settings: &AiSettings, ai_keys: &AiKeyStore) -> Result<EgressPermit, AppError> {
     if !settings.is_enabled {
         return Err(AppError::ai_disabled());
     }
-    if !ai_keys.has_key(settings.provider.key_str()) {
+    if settings.provider.requires_stored_key() && !ai_keys.has_key(settings.provider.key_str()) {
         return Err(AppError::ai_disabled());
     }
     Ok(EgressPermit {
@@ -94,10 +111,88 @@ mod tests {
         assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
     }
 
+    /// Anthropic requires a key (`requires_stored_key() == true`) — toggle
+    /// on with none stored must still refuse.
+    ///
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` — this test's assumption ("no real
+    /// anthropic key exists right now") only holds if no other
+    /// concurrently-running test has temporarily stored one under the same
+    /// real, process/system-wide `"anthropic"` account; see that lock's
+    /// doc comment.
+    ///
+    /// A DIFFERENT test's cleanup (a real keychain `clear()`) can still be
+    /// settling on the OS side immediately after this one acquires the
+    /// lock — the delete-visibility mirror of the write-visibility race
+    /// `eventually` exists for (see that function's doc comment) — so the
+    /// check itself is wrapped in `eventually`, not a one-shot `acquire`.
     #[test]
-    fn toggle_on_with_no_stored_key_returns_e_ai_disabled() {
+    fn anthropic_toggle_on_with_no_stored_key_returns_e_ai_disabled() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ai_keys = AiKeyStore::new();
-        let result = acquire(&settings(true, AiProvider::Ollama), &ai_keys);
+        assert!(crate::secrets::ai_key::eventually(|| {
+            matches!(
+                acquire(&settings(true, AiProvider::Anthropic), &ai_keys),
+                Err(ref e) if e.code == "E_AI_DISABLED"
+            )
+        }));
+    }
+
+    /// `openai-compatible` requires a key too — same shape as Anthropic.
+    ///
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` for the same reason, against the
+    /// real `"openai-compatible"` account, and the same `eventually`
+    /// delete-visibility tolerance as the Anthropic case above.
+    #[test]
+    fn openai_compatible_toggle_on_with_no_stored_key_returns_e_ai_disabled() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ai_keys = AiKeyStore::new();
+        assert!(crate::secrets::ai_key::eventually(|| {
+            matches!(
+                acquire(&settings(true, AiProvider::OpenAiCompatible), &ai_keys),
+                Err(ref e) if e.code == "E_AI_DISABLED"
+            )
+        }));
+    }
+
+    /// The owner's ruling, proven directly: Ollama does NOT require a
+    /// stored key (`requires_stored_key() == false`) — toggle on with an
+    /// EMPTY `AiKeyStore` (no fabrication, no fallback, genuinely nothing
+    /// stored anywhere) must still grant a permit. This is the behavior
+    /// change step 5 exists to make: local, unauthenticated Ollama is not
+    /// gated behind pasting a key that is never transmitted.
+    #[test]
+    fn ollama_toggle_on_with_no_stored_key_still_grants_a_permit() {
+        let ai_keys = AiKeyStore::new();
+        let permit =
+            acquire(&settings(true, AiProvider::Ollama), &ai_keys).expect("expected a permit");
+        assert!(matches!(permit.provider(), AiProvider::Ollama));
+    }
+
+    /// The case a careless refactor breaks: the toggle-off short-circuit
+    /// must fire BEFORE the (now provider-conditional) credential check for
+    /// every provider, including the one that doesn't require a key at
+    /// all. If `acquire` were rewritten as "provider doesn't need a key ⇒
+    /// skip straight to Ok," this would catch it — Ollama with the master
+    /// toggle off must still return `E_AI_DISABLED`, not a permit.
+    #[test]
+    fn ollama_toggle_off_still_returns_e_ai_disabled_even_though_it_needs_no_key() {
+        let ai_keys = AiKeyStore::new();
+        let result = acquire(&settings(false, AiProvider::Ollama), &ai_keys);
+        assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
+    }
+
+    /// Same "toggle off wins regardless of credential requirement" case,
+    /// for a provider that DOES require a key too — completing the matrix
+    /// (toggle off ⇒ `E_AI_DISABLED` for all three providers, independent
+    /// of whether a key happens to be stored).
+    #[test]
+    fn openai_compatible_toggle_off_still_returns_e_ai_disabled() {
+        let ai_keys = AiKeyStore::new();
+        let result = acquire(&settings(false, AiProvider::OpenAiCompatible), &ai_keys);
         assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
     }
 
@@ -168,8 +263,11 @@ mod tests {
             fabricated.is_enabled,
             "sanity: the fabricated flag claims enabled"
         );
-        let result = acquire(&fabricated, &ai_keys);
-        assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
+        // Delete-visibility tolerance — see the doc comment on the
+        // analogous check above.
+        assert!(crate::secrets::ai_key::eventually(|| {
+            matches!(acquire(&fabricated, &ai_keys), Err(ref e) if e.code == "E_AI_DISABLED")
+        }));
     }
 
     /// Holds `REAL_KEYCHAIN_TEST_LOCK` — see that lock's doc comment;
@@ -206,5 +304,82 @@ mod tests {
         let permit =
             acquire(&settings(true, AiProvider::Anthropic), &ai_keys).expect("expected a permit");
         assert!(matches!(permit.provider(), AiProvider::Anthropic));
+    }
+
+    /// Completes the matrix for the other credential-requiring provider:
+    /// `openai-compatible`, toggle on, a real stored key ⇒ a permit.
+    ///
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` — see that lock's doc comment.
+    #[test]
+    fn openai_compatible_toggle_on_and_a_real_stored_key_grants_a_permit() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ai_keys = AiKeyStore::new();
+        let provider_name = "openai-compatible";
+        let key =
+            crate::secrets::ai_key::AiKey::parse("sk-openai-permittest2222222222222").unwrap();
+        struct Cleanup<'a> {
+            store: &'a AiKeyStore,
+            provider: &'a str,
+        }
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let _ = self.store.clear(self.provider);
+            }
+        }
+        let _cleanup = Cleanup {
+            store: &ai_keys,
+            provider: provider_name,
+        };
+        ai_keys
+            .store(provider_name, &key)
+            .expect("store must succeed");
+        assert!(crate::secrets::ai_key::eventually(
+            || ai_keys.has_key(provider_name)
+        ));
+
+        let permit = acquire(&settings(true, AiProvider::OpenAiCompatible), &ai_keys)
+            .expect("expected a permit");
+        assert!(matches!(permit.provider(), AiProvider::OpenAiCompatible));
+    }
+
+    /// A key stored for Ollama anyway (a user who pasted one even though
+    /// it's not required) must not BREAK the toggle-on grant either —
+    /// `requires_stored_key() == false` means the check is skipped, not
+    /// that a stored key becomes disqualifying.
+    ///
+    /// Holds `REAL_KEYCHAIN_TEST_LOCK` — see that lock's doc comment.
+    #[test]
+    fn ollama_toggle_on_with_a_key_present_anyway_still_grants_a_permit() {
+        let _lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ai_keys = AiKeyStore::new();
+        let provider_name = "ollama";
+        let key = crate::secrets::ai_key::AiKey::parse("ollama-permittest-key-0000000").unwrap();
+        struct Cleanup<'a> {
+            store: &'a AiKeyStore,
+            provider: &'a str,
+        }
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let _ = self.store.clear(self.provider);
+            }
+        }
+        let _cleanup = Cleanup {
+            store: &ai_keys,
+            provider: provider_name,
+        };
+        ai_keys
+            .store(provider_name, &key)
+            .expect("store must succeed");
+        assert!(crate::secrets::ai_key::eventually(
+            || ai_keys.has_key(provider_name)
+        ));
+
+        let permit =
+            acquire(&settings(true, AiProvider::Ollama), &ai_keys).expect("expected a permit");
+        assert!(matches!(permit.provider(), AiProvider::Ollama));
     }
 }
