@@ -106,6 +106,30 @@ describe('createTsFamilyParser — route detection', () => {
     const route = parsed.symbols.find((s) => s.kind === 'route');
     expect(route?.name).toBe('/users/:id');
   });
+
+  /**
+   * Regression test for "UNIQUE constraint failed: symbol.id" on real
+   * repos (docs/DECISIONS.md): a single-argument `.get('x')`/`.post('x')`/
+   * etc. call — e.g. `Map.get(key)`, no handler argument — used to be
+   * misdetected as a route because the query only checked that a string
+   * literal appeared somewhere among the call's arguments, not that a
+   * second (handler) argument followed it. Two such calls sharing a name
+   * and a source line then collided on `symbol.id`
+   * (path#name#startLine, no `kind`) and crashed the cache write. This
+   * shape — two single-argument `.get(...)` calls with the same string
+   * argument on one line — is exactly the one bisected from
+   * `test/graph/pagerank.test.ts` on the real repo.
+   */
+  test('does NOT extract a single-argument .get(...) call as a route (no handler argument)', () => {
+    const parsed = jsParser.parse("const ok = cacheA.get('id') === cacheB.get('id');");
+    expect(parsed.symbols.some((s) => s.kind === 'route')).toBe(false);
+  });
+
+  test('DOES extract a two-argument .use(...) call as a route even when the object is not literally "router"', () => {
+    const parsed = jsParser.parse("app.use('/users', userRoutes);");
+    const route = parsed.symbols.find((s) => s.kind === 'route');
+    expect(route?.name).toBe('/users');
+  });
 });
 
 describe('createTsFamilyParser — raw imports', () => {
