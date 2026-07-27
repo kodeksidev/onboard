@@ -4,17 +4,21 @@
 //! - `permit` — WHETHER: the capability token that gates `http::send`.
 //! - `endpoint` — WHERE: the resolved-from-settings target URL.
 //! - `provider` — Section 9's `AiProvider` trait every adapter implements.
-//! - `anthropic` — step 3A: the Anthropic Messages API adapter, the first
-//!   real implementation.
+//! - `anthropic` / `ollama` / `openai_compatible` — the three v1 adapters
+//!   (§3 non-goal 2 caps v1 at exactly these three), each routing every
+//!   real request through the same `http::send` triad. No adapter has its
+//!   own HTTP path, its own endpoint argument, or any other route to the
+//!   wire.
 //!
-//! `ollama`/`openai-compatible` (step 3B/3C), `prompt`, `transcript` are
-//! later Phase 12 sub-steps, after the owner reviews this leg —
-//! deliberately absent. So is any code that calls these adapters for the
-//! three AI features (summary, module explanations, Q&A) — this phase is
-//! adapters only.
+//! `prompt`, `transcript` are later Phase 12 sub-steps, after the owner
+//! reviews this leg — deliberately absent. So is any code that calls these
+//! adapters for the three AI features (summary, module explanations,
+//! Q&A) — this phase is adapters only.
 
 pub mod anthropic;
 pub mod endpoint;
 pub mod http;
+pub mod ollama;
+pub mod openai_compatible;
 pub mod permit;
 pub mod provider;

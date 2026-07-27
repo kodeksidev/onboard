@@ -1,0 +1,19 @@
+[package]
+name = "ai-provider-body-violations-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately NOT part of any [workspace] — mirrors the other
+# tests/fixtures/*-violations crates. Every binary here is meant to fail
+# to compile; see tests/ai_provider_body_compile_fail.rs.
+#
+# Owner's ruling (Phase 12 step 3A, Part A): a free-form `body: &Value`
+# parameter is the same defect pattern as the three already-closed legs —
+# so it was deleted, not deprecated. These fixtures prove an adapter
+# cannot put content into the outbound body, because no parameter exists
+# through which it could.
+
+[dependencies]
+onboard = { path = "../../.." }
+serde_json = "1"

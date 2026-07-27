@@ -1,27 +1,13 @@
-//! `ai/anthropic.rs` — Section 9 Phase 12 sub-step A: the Anthropic
-//! Messages API adapter, the first real implementation of
-//! [`crate::ai::provider::AiProvider`]. See that module's doc comment for
-//! the trait shape and the `AiProvider`-naming-collision note.
+//! `ai/openai_compatible.rs` — Section 9 Phase 12 sub-step B: the
+//! OpenAI-compatible chat-completions adapter, covering
+//! DeepSeek/OpenAI/Groq/OpenRouter/Together and similar providers that
+//! share the same REST shape. See `ai/anthropic.rs`'s doc comment for the
+//! shared adapter pattern (`resolve_context`, the `#[cfg(test)]`-only
+//! endpoint seam) — this file follows it exactly.
 //!
-//! Every real request routes through all three legs of `ai::http::send`'s
-//! triad (`ai::http`'s own doc comment): [`crate::ai::permit::acquire`]
-//! (WHETHER), [`crate::ai::endpoint::resolve`] (WHERE), and the caller's
-//! `RedactedPayload` (WHAT) — [`AnthropicProvider::resolve_context`] is the
-//! only place any of those three are obtained, and it is called at the top
-//! of both `complete` and `test`. Provider, model, and key all come from
-//! `StoredAiSettings`/`AiKeyStore` inside `resolve_context`, never a
-//! caller argument to either trait method.
-//!
-//! ## The endpoint seam this adapter uses for its own tests
-//!
-//! [`AnthropicProvider::with_test_endpoint`] and the `test_endpoint` field
-//! are both `#[cfg(test)]` — compiled out of every non-test build
-//! entirely, not merely unused. In a release binary, `resolve_context`
-//! reduces to exactly one line, `crate::ai::endpoint::resolve(&stored)?`;
-//! there is no field, no branch, no code path left for a caller to reach.
-//! See `docs/DECISIONS.md`'s Phase 12 step 3A entry and
-//! `ai/endpoint.rs::resolve_for_test`'s doc comment for the full
-//! justification.
+//! `base_url` comes from `StoredAiSettings.openai_compatible_base_url` via
+//! [`crate::ai::endpoint::resolve`] — never a caller argument (Section 12
+//! step 3A/B's WHERE guarantee, unchanged for this third provider).
 
 use std::path::PathBuf;
 
@@ -33,18 +19,16 @@ use crate::commands::settings::{load_stored_ai_settings, AiProvider as ProviderK
 use crate::error::AppError;
 use crate::secrets::ai_key::{AiKey, AiKeyStore};
 
-const ANTHROPIC_VERSION: &str = "2023-06-01";
-
-pub struct AnthropicProvider {
+pub struct OpenAiCompatibleProvider {
     settings_path: PathBuf,
     ai_keys: AiKeyStore,
     #[cfg(test)]
     test_endpoint: Option<String>,
 }
 
-impl AnthropicProvider {
+impl OpenAiCompatibleProvider {
     pub fn new(settings_path: PathBuf, ai_keys: AiKeyStore) -> Self {
-        AnthropicProvider {
+        OpenAiCompatibleProvider {
             settings_path,
             ai_keys,
             #[cfg(test)]
@@ -52,16 +36,14 @@ impl AnthropicProvider {
         }
     }
 
-    /// `#[cfg(test)]`-only — see this module's doc comment. Does not exist
-    /// in any non-test build.
+    /// `#[cfg(test)]`-only — see `ai/anthropic.rs`'s doc comment. Does not
+    /// exist in any non-test build.
     #[cfg(test)]
     pub(crate) fn with_test_endpoint(mut self, url: impl Into<String>) -> Self {
         self.test_endpoint = Some(url.into());
         self
     }
 
-    /// The only place `permit`/`endpoint`/`key`/`model` are resolved for a
-    /// real request — called once at the top of both trait methods.
     fn resolve_context(&self) -> Result<ResolvedContext, AppError> {
         let stored = load_stored_ai_settings(&self.settings_path, &self.ai_keys);
         let permit = permit::acquire(stored.ai(), &self.ai_keys)?;
@@ -75,7 +57,9 @@ impl AnthropicProvider {
         #[cfg(not(test))]
         let endpoint = endpoint::resolve(&stored)?;
 
-        let key = self.ai_keys.retrieve(ProviderKind::Anthropic.key_str())?;
+        let key = self
+            .ai_keys
+            .retrieve(ProviderKind::OpenAiCompatible.key_str())?;
         Ok(ResolvedContext {
             permit,
             endpoint,
@@ -92,16 +76,17 @@ struct ResolvedContext {
     model: String,
 }
 
-/// Plain `RequestHeaders` — never the HTTP client's own header type — so
-/// this adapter never needs to import the HTTP client crate at all. See
-/// `ai::http`'s doc comment.
-fn build_headers(key: &AiKey) -> RequestHeaders {
+/// The conventional `Authorization: Bearer <key>` header every named
+/// OpenAI-compatible provider (OpenAI, DeepSeek, Groq, OpenRouter,
+/// Together) accepts.
+fn build_headers(key: &AiKey) -> Result<RequestHeaders, AppError> {
     let mut headers = RequestHeaders::new();
-    headers.insert("x-api-key", key.reveal());
-    headers.insert("anthropic-version", ANTHROPIC_VERSION);
-    headers
+    headers.insert("authorization", format!("Bearer {}", key.reveal()));
+    Ok(headers)
 }
 
+/// The OpenAI chat-completions response shape:
+/// `{"choices": [{"message": {"role": "assistant", "content": "..."}}]}`.
 fn parse_completion_response(raw_body: &str) -> Result<CompletionResponse, AppError> {
     let value: serde_json::Value = serde_json::from_str(raw_body).map_err(|err| {
         AppError::ai_network(
@@ -110,11 +95,12 @@ fn parse_completion_response(raw_body: &str) -> Result<CompletionResponse, AppEr
         )
     })?;
     let text = value
-        .get("content")
+        .get("choices")
         .and_then(|c| c.as_array())
         .and_then(|arr| arr.first())
-        .and_then(|first| first.get("text"))
-        .and_then(|t| t.as_str())
+        .and_then(|first| first.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
         .ok_or_else(|| {
             AppError::ai_network(false, format!("unexpected response shape: {raw_body}"))
         })?;
@@ -123,20 +109,19 @@ fn parse_completion_response(raw_body: &str) -> Result<CompletionResponse, AppEr
     })
 }
 
-impl AiProvider for AnthropicProvider {
+impl AiProvider for OpenAiCompatibleProvider {
     /// `req.instructions` is not yet threaded into the outbound request —
-    /// see `ai::http`'s doc comment ("No free-form body"): real prompt
-    /// content is `prompt.rs`'s job, a later, not-yet-reviewed step.
-    /// `http::send` builds the body itself from `ProviderShape::Anthropic`
-    /// + `ctx.model` + `req.payload` only.
+    /// see `ai::http`'s doc comment. Identical shape to
+    /// `AnthropicProvider::complete` except `ProviderShape::OpenAiCompatible`
+    /// and a `Bearer` auth header.
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, AppError> {
         let ctx = self.resolve_context()?;
-        let headers = build_headers(&ctx.key);
+        let headers = build_headers(&ctx.key)?;
         let response = http::send(
             &ctx.permit,
             &ctx.endpoint,
             &headers,
-            ProviderShape::Anthropic,
+            ProviderShape::OpenAiCompatible,
             &ctx.model,
             &req.payload,
         )?;
@@ -145,10 +130,7 @@ impl AiProvider for AnthropicProvider {
 
     async fn test(&self) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context()?;
-        let headers = build_headers(&ctx.key);
-        // A real, legitimately-empty `RedactedPayload` (via the real
-        // `redact()` with zero snippets — never a shortcut past it) just
-        // to confirm the model/key/endpoint combination actually answers.
+        let headers = build_headers(&ctx.key)?;
         let empty_payload = crate::privacy::redact::redact(
             &crate::contract::EngineSnippetsResult { snippets: vec![] },
             &[],
@@ -157,7 +139,7 @@ impl AiProvider for AnthropicProvider {
             &ctx.permit,
             &ctx.endpoint,
             &headers,
-            ProviderShape::Anthropic,
+            ProviderShape::OpenAiCompatible,
             &ctx.model,
             &empty_payload,
         );
@@ -179,15 +161,7 @@ mod tests {
     use std::sync::mpsc;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-    // -----------------------------------------------------------------
-    // A minimal single-poll executor — see this module's doc comment
-    // block above for why this crate hand-rolls one instead of adding a
-    // dependency: `ai::provider::AiProvider`'s async methods wrap a
-    // blocking HTTP call (see `ai::http`'s doc comment), so the future
-    // they return never actually suspends and always resolves on the
-    // first `poll`.
-    // -----------------------------------------------------------------
-
+    // Same hand-rolled single-poll executor as `ai::anthropic::tests`.
     fn noop_raw_waker() -> RawWaker {
         fn clone(_: *const ()) -> RawWaker {
             noop_raw_waker()
@@ -198,12 +172,8 @@ mod tests {
     }
 
     fn noop_waker() -> Waker {
-        // SAFETY: `noop_raw_waker`'s vtable functions (`clone`/`wake`/
-        // `wake_by_ref`/`drop`) never read or write through the data
-        // pointer — they ignore it entirely and either do nothing or
-        // return a fresh identical `RawWaker`. A null data pointer that is
-        // never dereferenced satisfies `Waker::from_raw`'s safety
-        // contract.
+        // SAFETY: see `ai::anthropic::tests::noop_waker` — identical
+        // invariant, identical vtable shape.
         unsafe { Waker::from_raw(noop_raw_waker()) }
     }
 
@@ -218,14 +188,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
-    // A real local HTTP listener the adapter genuinely POSTs to.
-    // -----------------------------------------------------------------
-
-    /// Accepts exactly one connection, reads the real HTTP request body
-    /// (via `Content-Length`), sends it back over `rx` so the test can
-    /// assert on it, then replies with a minimal valid Anthropic-shaped
-    /// 200 response so `complete()`/`test()` succeed end-to-end.
     fn spawn_capturing_server() -> (String, mpsc::Receiver<Vec<u8>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a local test listener");
         let addr = listener
@@ -246,7 +208,7 @@ mod tests {
                 }
                 let trimmed = line.trim_end();
                 if trimmed.is_empty() {
-                    break; // end of headers
+                    break;
                 }
                 let lower = trimmed.to_ascii_lowercase();
                 if lower.starts_with("content-length:") {
@@ -260,7 +222,7 @@ mod tests {
             let _ = reader.read_exact(&mut body);
             let _ = tx.send(body);
 
-            let response_body = br#"{"content":[{"type":"text","text":"ok"}]}"#;
+            let response_body = br#"{"choices":[{"message":{"role":"assistant","content":"ok"}}]}"#;
             let response_head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 response_body.len()
@@ -273,18 +235,6 @@ mod tests {
         (format!("http://{addr}"), rx)
     }
 
-    /// Holds `secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK` for the whole
-    /// test's duration (not just the `store` call) — every test using
-    /// [`enable_real_anthropic`] stores a real key under the shared,
-    /// process/system-wide `"anthropic"` keychain account, which races
-    /// against `ai::permit`'s tests of the same account unless serialized;
-    /// see that lock's doc comment. Also cleans up the stored key on drop,
-    /// via a fresh `AiKeyStore` — `clear()`'s job is deleting whatever is
-    /// really there (session map or OS keychain), a system-wide/
-    /// process-wide resource either way, so cleanup doesn't need to share
-    /// an instance with the code under test the way RETRIEVAL does (see
-    /// `enable_real_anthropic`'s comment on why *that* returns the same
-    /// `AiKeyStore` instance it stored into).
     struct KeychainCleanupGuard {
         provider_key: &'static str,
         _lock: std::sync::MutexGuard<'static, ()>,
@@ -295,16 +245,7 @@ mod tests {
         }
     }
 
-    /// Stores a real key and flips the real toggle on, through the real
-    /// settings-file + keychain machinery (never a fabricated
-    /// `AiSettings`). Returns the SAME `AiKeyStore` instance the key was
-    /// stored into — if the OS keychain backend is unavailable in a given
-    /// test environment, `AiKeyStore::store` falls back to a per-instance,
-    /// in-memory session map (A18), so a *different* `AiKeyStore::new()`
-    /// instance built later would not see it. Moving this exact instance
-    /// into `AnthropicProvider::new` keeps the test correct regardless of
-    /// which backend actually served the store.
-    fn enable_real_anthropic(
+    fn enable_real_openai_compatible(
         dir: &std::path::Path,
     ) -> (std::path::PathBuf, AiKeyStore, KeychainCleanupGuard) {
         let lock = crate::secrets::ai_key::REAL_KEYCHAIN_TEST_LOCK
@@ -312,13 +253,13 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let settings_path = dir.join("settings.json");
         let ai_keys = AiKeyStore::new();
-        let key = AiKey::parse("sk-ant-anthropic-adapter-test-0000").unwrap();
+        let key = AiKey::parse("sk-openai-compatible-adapter-test-0").unwrap();
         ai_keys
-            .store(ProviderKind::Anthropic.key_str(), &key)
+            .store(ProviderKind::OpenAiCompatible.key_str(), &key)
             .expect("store must succeed");
         assert!(
             crate::secrets::ai_key::eventually(
-                || ai_keys.has_key(ProviderKind::Anthropic.key_str())
+                || ai_keys.has_key(ProviderKind::OpenAiCompatible.key_str())
             ),
             "sanity: the real key IS there before proceeding"
         );
@@ -328,8 +269,9 @@ mod tests {
             SettingsPatch {
                 ai: Some(AiSettingsPatch {
                     is_enabled: Some(true),
-                    provider: Some(ProviderKind::Anthropic),
-                    model: Some("claude-test-model".to_string()),
+                    provider: Some(ProviderKind::OpenAiCompatible),
+                    model: Some("deepseek-test-model".to_string()),
+                    openai_compatible_base_url: Some("https://api.deepseek.com".to_string()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -337,20 +279,16 @@ mod tests {
         )
         .expect("update_settings_core must succeed");
         let cleanup = KeychainCleanupGuard {
-            provider_key: ProviderKind::Anthropic.key_str(),
+            provider_key: ProviderKind::OpenAiCompatible.key_str(),
             _lock: lock,
         };
         (settings_path, ai_keys, cleanup)
     }
 
-    /// The hard requirement: a planted secret must appear as `<redacted>`
-    /// in the bytes the adapter ACTUALLY sends over the wire — asserted
-    /// against a real local listener's received body, not `redact()`'s
-    /// return value and not a mock.
     #[test]
     fn a_planted_secret_is_redacted_in_the_bytes_actually_sent_over_the_wire() {
         let dir = tempfile::tempdir().unwrap();
-        let (settings_path, ai_keys, _cleanup) = enable_real_anthropic(dir.path());
+        let (settings_path, ai_keys, _cleanup) = enable_real_openai_compatible(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
         let planted_secret = "REDACTED-AWS-BY-HISTORY-REWRITE"; // Section 8.9 rule 2 (AWS key)
@@ -366,13 +304,11 @@ mod tests {
             &[],
         )
         .expect("redact() must not abort on a single known-good rule match");
-        // Sanity: the corpus test elsewhere already proves this, but this
-        // specific input, in THIS test, must actually contain the
-        // placeholder before we trust anything downstream of it.
         let expected_snippets = redacted_payload.to_request_snippets();
         assert!(expected_snippets[0].content.contains("<redacted>"));
 
-        let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
+        let provider =
+            OpenAiCompatibleProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let result = block_on_never_pending(provider.complete(CompletionRequest {
             instructions: "Summarize this code.".to_string(),
@@ -380,9 +316,6 @@ mod tests {
         }));
         assert!(result.is_ok(), "complete() failed: {:?}", result.err());
 
-        // Assert the listener actually received a request BEFORE trusting
-        // anything about its body — a test that only checks "no secret in
-        // the body" passes vacuously if no request ever arrived.
         let received_body = rx
             .recv_timeout(std::time::Duration::from_secs(15))
             .expect("the local listener never received a request — vacuous pass guard");
@@ -397,17 +330,11 @@ mod tests {
             "the planted secret leaked into the bytes actually sent: {received_text}"
         );
 
-        // The strengthened owner-mandated check: not merely "the redacted
-        // content appears somewhere" (which a body with EXTRA, unrelated
-        // content alongside it would still pass) but "the full body
-        // contains nothing beyond the redacted content plus known
-        // scaffolding." Walks every string leaf (and field name) of the
-        // REAL received JSON.
         let received_json: serde_json::Value =
             serde_json::from_slice(&received_body).expect("the received body must be valid JSON");
         crate::ai::http::test_support::assert_body_contains_nothing_beyond_scaffolding_and_snippets(
             &received_json,
-            "claude-test-model",
+            "deepseek-test-model",
             &expected_snippets,
         );
     }
@@ -415,10 +342,11 @@ mod tests {
     #[test]
     fn test_method_reports_success_against_a_real_listener() {
         let dir = tempfile::tempdir().unwrap();
-        let (settings_path, ai_keys, _cleanup) = enable_real_anthropic(dir.path());
+        let (settings_path, ai_keys, _cleanup) = enable_real_openai_compatible(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
-        let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
+        let provider =
+            OpenAiCompatibleProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let result = block_on_never_pending(provider.test());
         let received = rx
@@ -433,7 +361,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings_path = dir.path().join("settings.json");
         let ai_keys = AiKeyStore::new();
-        let provider = AnthropicProvider::new(settings_path, ai_keys);
+        let provider = OpenAiCompatibleProvider::new(settings_path, ai_keys);
 
         let empty_payload =
             crate::privacy::redact::redact(&EngineSnippetsResult { snippets: vec![] }, &[])
