@@ -327,6 +327,37 @@ mod tests {
         ("entropy1", r#"const token = "aB3$kL9!pQ2&mZ7@wR4^tY1*";"#),
         ("entropy2", r#"apiSecret = 'zQ9#vX2$mK7!pL4&nR8^wT3@';"#),
         ("entropy3", r#"const blob = "Xk2$Qw9!Zp4&Rt7@Lm3^Vn8*Bh1";"#),
+        // Rule 12, backtick delimiter — Phase 13 M4. `blob`, not `token`:
+        // a KEY/TOKEN-ish name would be caught by rule 11 first and this
+        // entry would pass without rule 12 ever seeing a template literal.
+        ("entropy4", "const blob = `Xk2$Qw9!Zp4&Rt7@Lm3^Vn8*Bh1`;"),
+        // Rule 13 — HTTP auth headers (each demonstrated by the Phase 13
+        // audit as surviving rules 1-12 untouched).
+        (
+            "auth1",
+            "Authorization: Basic YWRtaW46c3VwZXJzZWNyZXRwYXNzd29yZA==",
+        ),
+        (
+            "auth2",
+            "Authorization: Bearer abcdef1234567890abcdef1234567890",
+        ),
+        (
+            "auth3",
+            r#"headers = { authorization: "Bearer sV9pQ2xR7tL4zK8mN3bW" }"#,
+        ),
+        // Rule 14 — hex-only blobs, which rule 12 structurally cannot reach
+        // (two character classes, ~3.8 bits/char).
+        (
+            "hex1",
+            r#"const s = "d41d8cd98f00b204e9800998ecf8427e5f2a3b4c";"#,
+        ),
+        ("hex2", "webhookSignature = 5f2a3b4c5d6e7f809a0b1c2d3e4f5061"),
+        // Rule 15 — a PEM body pasted without its BEGIN/END markers, which
+        // rule 1 keys off and therefore never sees.
+        (
+            "pembody1",
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ",
+        ),
     ];
 
     const NEGATIVE_CONTROLS: &[(&str, &str)] = &[

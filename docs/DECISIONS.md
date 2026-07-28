@@ -2272,3 +2272,54 @@ decided; it only records choices the spec left open.
   any implementation was written. Recorded because a test that has never
   run is not evidence of anything — the same trap the compile-fail suites'
   specific-error-code assertions exist to avoid.
+- **Phase 13 (finding H1) — a `[[path:line]]` token is illegitimate in the
+  RAW answer, and the whole answer is rejected if one appears.** `[[path:line]]`
+  is what §8.10 step 4 EMITS and what the UI PARSES, but nothing stopped the
+  MODEL from writing one: it is neither a backtick span nor a well-formed
+  `[text](target)` link, so `parse_span` returned `None`, the token was copied
+  through verbatim, and it reached the UI never having been checked against the
+  index. With a path cited legitimately elsewhere it passed the UI's
+  `citedPaths` gate too and rendered as a real, clickable link to a line the
+  file does not have — so step 3's whole-answer rejection was evadable purely
+  by choice of delimiter, and strengthening (a) was bypassed entirely.
+  Rejecting was chosen over verifying (which would make the verifier's output
+  grammar also its input grammar — the exact confusion that caused this) and
+  over neutralising (which still SHOWS a path nothing verified). The two
+  grammars are kept disjoint, so the invariant is: every `[[…]]` token in the
+  returned markdown was written by `verify_citations` after verification. The
+  recogniser is deliberately WIDER than either real grammar, because a
+  candidate-based rule would miss `[[src/ghost.txt:1]]` — `.txt` is not a
+  §8.10 extension, so the candidate pattern never sees it, yet the UI would
+  linkify it happily.
+- **Phase 13 (finding H1) — the invariant is enforced twice, and each layer
+  has its own direct test.** `reject_forged_tokens` is the rule;
+  `ensure_every_token_was_emitted` re-derives the property from the FINISHED
+  buffer, so a future rewrite of the scanning loop has to defeat a
+  post-condition stated in terms of the invariant itself rather than in terms
+  of any parsing step. A mutation probe confirmed the layers are independently
+  sufficient — disabling the rule left all 27 tests green, because the
+  post-condition caught every forgery alone. That is the redundancy working,
+  but it also meant deleting the rule outright would have failed nothing: the
+  post-condition had a direct unit test and the rule did not. Both do now.
+  Redundant layers each need their own test, or the redundancy silently decays
+  to a single layer while still looking like two.
+- **Phase 13 (finding M4) — §8.9 R2 gains rules 13-15 by APPENDING, and rule
+  12 gains a third delimiter.** Rules 1-12 keep their numbers, regexes and
+  relative order, because R2 is an ordered list and order is load-bearing:
+  `Authorization: Bearer eyJ…` must still be caught by rule 9 (JWT) rather
+  than by the new auth-header rule, which a prepend would have silently
+  changed. Rule 12's backtick-template-literal support is inside its existing
+  "quoted string" wording, not a renumbering. The corpus grew 30 -> 37 planted
+  secrets while `NEGATIVE_CONTROLS` stays at exactly 5, all still surviving
+  byte-identical. Note the corpus proves the shapes it contains are caught; it
+  is not a proof of completeness, and R3 idempotence is not coverage.
+- **Phase 13 (finding M5) — the egress chokepoint checker refuses dependency
+  tables it cannot parse, rather than skipping them.** Its manifest scan was
+  evadable by `[dependencies.ureq]` or `[target.'cfg(...)'.dependencies]`
+  headers, its source scan by `use reqwest as h;`, and neither `std::net` nor
+  `std::process::Command` was on any list. An unrecognised dependency-table
+  shape is now a violation, on the grounds that a checker which silently skips
+  what it does not understand is worse than no checker — it reports OK. The
+  new process/socket allowlist is per-file AND per-symbol, and a test fails if
+  an allowlist entry stops matching anything, so reviewed-door permissions
+  cannot accumulate past the code that justified them.

@@ -38,12 +38,50 @@
 //! `E_AI_CITATION_REJECTED` error ([`AppError::ai_answer_uncited`]), not a
 //! success with an empty list.
 //!
+//! **(c) The output grammar is not an input grammar** (Phase 13 finding
+//! H1). `[[path:line]]` is the token step 4 EMITS and the token the UI
+//! PARSES (`answer-tokens.ts`'s `INLINE_PATTERN`). Nothing, originally,
+//! stopped the MODEL from writing one: `[[src/ghost.ts:1]]` is neither a
+//! backtick span nor a well-formed `[text](target)` link, so [`parse_span`]
+//! returned `None`, the `[` was copied through as a literal, and the token
+//! reached the UI **never having been checked against the index** — with a
+//! path that is legitimately cited elsewhere it even passed the UI's
+//! `citedPaths` gate and rendered as a real, clickable link to a line the
+//! file does not have. Step 3's whole-answer rejection was evadable purely
+//! by choice of delimiter.
+//!
+//! The fix is *not* to verify such a token (that would make the verifier's
+//! output indistinguishable from its input by design) and *not* to
+//! neutralise it (that still SHOWS the user a path nothing verified, which
+//! is what step 3 exists to prevent). It is to keep the two grammars
+//! **disjoint**: a token in the verifier's output grammar is illegitimate
+//! anywhere in the RAW answer, so [`reject_forged_tokens`] refuses the
+//! whole answer before any rewriting
+//! ([`AppError::ai_citation_token_forged`]). The model is asked for
+//! backticked `path:line` citations (`ai::prompt`'s task strings), so no
+//! legitimate answer contains one.
+//!
+//! That gives the property the rest of the pipeline can rely on:
+//!
+//! > **Every `[[…]]` token in the answer this function returns was written
+//! > by this function, after verifying it against the index.**
+//!
+//! It is enforced twice, on purpose. `reject_forged_tokens` is the rule;
+//! [`ensure_every_token_was_emitted`] re-derives the property from the
+//! FINISHED buffer and fails closed if it does not hold, so a future edit
+//! to the scanning loop cannot quietly reopen the hole — it has to defeat a
+//! post-condition stated in terms of the invariant itself, not in terms of
+//! any particular parsing step. Both the rule and the post-condition share
+//! one recogniser ([`parse_output_token`]) whose acceptance set is a
+//! superset of what [`Citation::to_token`] emits AND of what the UI
+//! linkifies, so neither grammar can drift out from under it.
+//!
 //! Both failure modes reject the WHOLE answer (step 3: "Never show a
 //! partially verified answer") — the rewrite below is built into a fresh
 //! buffer that is discarded entirely on the first bad citation, so there is
 //! no partially-verified value for a caller to accidentally use.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
 use once_cell::sync::Lazy;
@@ -136,12 +174,20 @@ struct Citation {
 }
 
 impl Citation {
+    /// The inside of Section 8.10 step 4's token — `path` or `path:line`.
+    /// Kept separate from [`Citation::to_token`] so the emitted text and
+    /// the text remembered for [`ensure_every_token_was_emitted`] cannot
+    /// drift apart: there is exactly one place either is spelled.
+    fn token_inner(&self) -> String {
+        match self.line {
+            Some(line) => format!("{}:{line}", self.path),
+            None => self.path.clone(),
+        }
+    }
+
     /// Section 8.10 step 4's clickable token.
     fn to_token(&self) -> String {
-        match self.line {
-            Some(line) => format!("[[{}:{line}]]", self.path),
-            None => format!("[[{}]]", self.path),
-        }
+        format!("[[{}]]", self.token_inner())
     }
 }
 
@@ -212,11 +258,94 @@ fn parse_span(tail: &str) -> Option<(Span<'_>, usize)> {
     ))
 }
 
+/// Recognises the `[[…]]` token grammar at `tail[0..]`, returning the
+/// token's inner text and its byte length. Strengthening (c)'s single
+/// recogniser, used for BOTH the model-authored-token rule and the
+/// post-condition, so the two can never disagree about what a token is.
+///
+/// Deliberately **wider** than either grammar it has to dominate:
+///
+/// - wider than [`Citation::to_token`] (which only ever emits an indexed
+///   path, optionally `:line`), so a token this module could never produce
+///   is still recognised as one;
+/// - wider than the UI's `\[\[([^\s[\]:]+):(\d+)\]\]`, so a forgery the UI
+///   would linkify — `[[src/ghost.txt:1]]`, whose extension is not even a
+///   Section 8.10 candidate — cannot slip through by using a shape this
+///   module happens not to emit.
+///
+/// The only things excluded are inner texts containing whitespace or a
+/// bracket, which neither grammar can express — that is precisely what
+/// keeps ordinary prose such as `[[1, 2], [3, 4]]` or a wiki-style
+/// `[[Getting Started]]` out of scope, since neither is a citation claim.
+fn parse_output_token(tail: &str) -> Option<(&str, usize)> {
+    let after_open = tail.strip_prefix("[[")?;
+    let close = after_open.find("]]")?;
+    let inner = &after_open[..close];
+    if inner.is_empty()
+        || inner
+            .chars()
+            .any(|c| c.is_whitespace() || c == '[' || c == ']')
+    {
+        return None;
+    }
+    Some((inner, "[[".len() + close + "]]".len()))
+}
+
+/// Calls `on_token` for each `[[…]]` token in `text`, left to right.
+/// A `[[` that does not open a token is skipped one byte at a time (it is
+/// ASCII, so the offset stays on a char boundary) — `[[[x:1]]]` therefore
+/// still yields the real token nested inside it.
+fn for_each_output_token<E>(
+    text: &str,
+    mut on_token: impl FnMut(&str) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut rest = text;
+    while let Some(offset) = rest.find("[[") {
+        let tail = &rest[offset..];
+        match parse_output_token(tail) {
+            Some((inner, consumed)) => {
+                on_token(inner)?;
+                rest = &tail[consumed..];
+            }
+            None => rest = &tail["[".len()..],
+        }
+    }
+    Ok(())
+}
+
+/// Strengthening (c), the rule: the raw answer may not contain a token in
+/// this module's own output grammar. Runs before any rewriting, so a
+/// forgery is refused rather than copied through — see this module's doc
+/// comment for why rejecting beats verifying or neutralising.
+fn reject_forged_tokens(answer_markdown: &str) -> Result<(), AppError> {
+    for_each_output_token(answer_markdown, |inner| {
+        Err(AppError::ai_citation_token_forged(inner))
+    })
+}
+
+/// Strengthening (c), the post-condition: every token in the FINISHED
+/// buffer must be one this run actually emitted. Stated over the output
+/// rather than over any parsing step, so it keeps holding no matter how the
+/// scanning loop is later rewritten; fails closed if it ever does not.
+fn ensure_every_token_was_emitted(
+    output: &str,
+    emitted: &BTreeSet<String>,
+) -> Result<(), AppError> {
+    for_each_output_token(output, |inner| {
+        if emitted.contains(inner) {
+            Ok(())
+        } else {
+            Err(AppError::ai_citation_token_forged(inner))
+        }
+    })
+}
+
 /// Accumulates verified citations while the rewrite is built, so
 /// `cited_paths` stays first-seen-ordered and de-duplicated without a
 /// second pass.
 struct Verified {
     cited_paths: Vec<String>,
+    emitted_tokens: BTreeSet<String>,
     count: usize,
 }
 
@@ -225,6 +354,7 @@ impl Verified {
         if !self.cited_paths.iter().any(|p| p == &citation.path) {
             self.cited_paths.push(citation.path.clone());
         }
+        self.emitted_tokens.insert(citation.token_inner());
         self.count += 1;
     }
 }
@@ -258,15 +388,19 @@ fn rewrite_candidates(
 }
 
 /// Section 8.10 `VERIFY`. Rejects the WHOLE answer on the first candidate
-/// that does not resolve (unknown path OR out-of-range line), and on an
-/// answer that cites nothing at all — see this module's doc comment.
+/// that does not resolve (unknown path OR out-of-range line), on an answer
+/// that writes this module's own `[[…]]` token itself, and on an answer
+/// that cites nothing at all — see this module's doc comment.
 pub fn verify_citations(
     answer_markdown: &str,
     index: &CitationIndex,
 ) -> Result<VerifiedAnswer, AppError> {
+    reject_forged_tokens(answer_markdown)?;
+
     let mut out = String::with_capacity(answer_markdown.len());
     let mut verified = Verified {
         cited_paths: Vec::new(),
+        emitted_tokens: BTreeSet::new(),
         count: 0,
     };
     let mut rest = answer_markdown;
@@ -315,6 +449,7 @@ pub fn verify_citations(
 
     let citation_count =
         NonZeroUsize::new(verified.count).ok_or_else(AppError::ai_answer_uncited)?;
+    ensure_every_token_was_emitted(&out, &verified.emitted_tokens)?;
     Ok(VerifiedAnswer {
         markdown: out,
         cited_paths: verified.cited_paths,
@@ -505,5 +640,209 @@ mod tests {
             result.is_err(),
             "a partially-verified answer must not be constructible"
         );
+    }
+
+    /// Phase 13 finding H1. `[[path:line]]` is this module's OUTPUT grammar
+    /// and the UI's input grammar: `AnswerMarkdown` treats it as a citation.
+    /// But `parse_span` only recognises backtick spans and `[text](target)`
+    /// links, so a `[[…]]` the MODEL wrote is neither, falls through
+    /// `parse_span`'s `None` branch, and is copied into the answer verbatim
+    /// — never checked against the index. The whole-answer rejection in 8.10
+    /// step 3 was therefore evadable by choosing a different delimiter.
+    ///
+    /// Every earlier test here feeds the verifier backticked or linked input,
+    /// so none of them could catch this: the control was real, its tests were
+    /// vacuous with respect to this input shape.
+    #[test]
+    fn a_model_authored_double_bracket_token_for_an_unknown_path_is_rejected() {
+        let answer = "Start at `src/index.ts:1`. Also see [[src/ghost.ts:1]].";
+        let err = verify_citations(answer, &index()).unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+    }
+
+    /// The more dangerous half of H1: the path IS in the index, so the UI's
+    /// `citedPaths` membership check passes and the token renders as a real,
+    /// clickable `CitationLink` — pointing at a line that does not exist.
+    /// This is exactly the "plausible citation that resolves to nothing" the
+    /// line-range strengthening exists to stop, smuggled past it.
+    #[test]
+    fn a_model_authored_double_bracket_token_cannot_smuggle_an_out_of_range_line() {
+        let answer = "Start at `src/index.ts:1`. Also see [[src/index.ts:9999]].";
+        let err = verify_citations(answer, &index()).unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+    }
+
+    /// The fix must not be "ban `[[` anywhere", which would break ordinary
+    /// prose. A `[[` that is not a well-formed `path:line` token carries no
+    /// citation claim and must survive.
+    #[test]
+    fn a_double_bracket_that_is_not_a_citation_token_is_left_alone() {
+        let answer = "See `src/index.ts:1`. The array literal [[1, 2], [3, 4]] is fine.";
+        let verified = verify_citations(answer, &index()).expect("prose must not be rejected");
+        assert!(verified.markdown().contains("[[1, 2], [3, 4]]"));
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 13 H1 — the rest of strengthening (c)
+    // -----------------------------------------------------------------
+
+    /// The rule is stated over the TOKEN grammar, not over the candidate
+    /// grammar. `.txt` is not a Section 8.10 extension, so this forgery is
+    /// invisible to `CITATION_PATTERN` — but it is a perfectly good token
+    /// as far as the UI's `\[\[([^\s[\]:]+):(\d+)\]\]` is concerned. A
+    /// candidate-based rule would have let it through.
+    #[test]
+    fn a_forged_token_is_rejected_even_when_its_path_is_not_a_candidate() {
+        let answer = "Start at `src/index.ts:1`. Also see [[src/ghost.txt:1]].";
+        let err = verify_citations(answer, &index()).unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+    }
+
+    /// The path-only form is emitted by `Citation::to_token` too, so it is
+    /// equally part of the output grammar and equally forgeable.
+    #[test]
+    fn a_forged_path_only_token_is_rejected() {
+        let err =
+            verify_citations("Read `README.md`, then [[src/index.ts]].", &index()).unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+    }
+
+    /// Backticks do not launder a forgery: the rule runs over the RAW
+    /// answer, before any span parsing decides what to look inside.
+    #[test]
+    fn a_forged_token_inside_a_backtick_span_is_rejected_too() {
+        let err = verify_citations(
+            "Cite like `[[src/ghost.txt:4]]`, e.g. `README.md`.",
+            &index(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+    }
+
+    /// A forgery is refused even when everything it claims is TRUE. The
+    /// point is not that the claim is false — it is that this function did
+    /// not make it, and downstream nothing can tell the difference. Keeping
+    /// the two grammars disjoint is what makes the invariant checkable at
+    /// all.
+    #[test]
+    fn a_forged_token_is_rejected_even_when_its_path_and_line_would_verify() {
+        let err =
+            verify_citations("See `README.md` and [[src/index.ts:5]].", &index()).unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+        assert_eq!(err.path, None, "the UI must fall back to `message` here");
+    }
+
+    /// Bracketed prose that carries no citation claim survives — the
+    /// companion of `a_double_bracket_that_is_not_a_citation_token_is_left_
+    /// alone`, for the wiki-link shape rather than the array-literal one.
+    #[test]
+    fn a_double_bracketed_phrase_containing_a_space_is_not_a_token() {
+        let verified =
+            verify_citations("See `README.md`, section [[Getting Started]].", &index()).unwrap();
+        assert!(verified.markdown().contains("[[Getting Started]]"));
+    }
+
+    /// The recogniser both halves of strengthening (c) share must accept
+    /// everything `Citation::to_token` can produce, or the post-condition
+    /// would be checking a different language than the one being emitted.
+    #[test]
+    fn the_recogniser_accepts_every_shape_this_module_emits() {
+        for citation in [
+            Citation {
+                path: "src/index.ts".to_string(),
+                line: Some(1),
+            },
+            Citation {
+                path: "README.md".to_string(),
+                line: None,
+            },
+        ] {
+            let token = citation.to_token();
+            let (inner, consumed) = parse_output_token(&token)
+                .unwrap_or_else(|| panic!("{token} must be recognised as a token"));
+            assert_eq!(inner, citation.token_inner());
+            assert_eq!(consumed, token.len());
+        }
+    }
+
+    /// The RULE, exercised directly — the mirror of the post-condition test
+    /// below, and it exists for the same reason stated in reverse.
+    ///
+    /// Strengthening (c) is enforced twice, and a mutation probe showed the
+    /// two layers are independently sufficient: disabling
+    /// `reject_forged_tokens` left all 27 tests in this module GREEN, because
+    /// `ensure_every_token_was_emitted` caught every forgery on its own. That
+    /// is the redundancy working as designed, but it also meant deleting the
+    /// rule outright would have failed nothing — the post-condition had a
+    /// direct test and the rule did not. Redundant layers each need their own
+    /// test, or the redundancy silently decays to a single layer.
+    #[test]
+    fn the_rule_rejects_a_forged_token_before_any_rewriting() {
+        let err = reject_forged_tokens("prose [[src/ghost.ts:9]] more").unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+        // ...and leaves non-citation bracket prose alone, so the rule cannot
+        // be satisfied by simply rejecting everything.
+        assert!(reject_forged_tokens("array [[1, 2], [3, 4]] here").is_ok());
+        assert!(reject_forged_tokens("no brackets at all").is_ok());
+    }
+
+    /// The post-condition, exercised directly with a hand-built buffer —
+    /// the same discipline `redact.rs` applies to R3's `ensure_idempotent`.
+    /// `reject_forged_tokens` means the real pipeline should never reach
+    /// this branch, so proving the branch works cannot be left to the
+    /// end-to-end tests: they would pass with the check deleted.
+    #[test]
+    fn the_post_condition_rejects_a_token_the_run_did_not_emit() {
+        let emitted = BTreeSet::from(["src/index.ts:1".to_string()]);
+        let err = ensure_every_token_was_emitted(
+            "ok [[src/index.ts:1]] bad [[src/ghost.ts:9]]",
+            &emitted,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+    }
+
+    /// ...and accepts the buffer the real rewrite produces, including a
+    /// token nested inside brackets the model wrote around it (a markdown
+    /// link whose text is a backticked citation yields `[[[path:line]]]`),
+    /// so the post-condition cannot be satisfied by simply never matching.
+    #[test]
+    fn the_post_condition_accepts_emitted_tokens_however_they_are_nested() {
+        let emitted = BTreeSet::from(["src/index.ts:1".to_string()]);
+        assert!(ensure_every_token_was_emitted("[[[src/index.ts:1]]]", &emitted).is_ok());
+        assert!(ensure_every_token_was_emitted("no tokens at all", &emitted).is_ok());
+        assert!(ensure_every_token_was_emitted("[[1, 2], [3, 4]]", &emitted).is_ok());
+    }
+
+    /// The end-to-end statement of the invariant: for a battery of accepted
+    /// answers, every token in the returned markdown names a path in
+    /// `citedPaths`, and every line it names is inside that file's real
+    /// range. Nothing in the output is a token the index cannot back.
+    #[test]
+    fn every_token_in_an_accepted_answer_resolves_against_the_index() {
+        let index = index();
+        for answer in [
+            "See `src/index.ts:22` and [the logger](src/utils/logger.ts:10).",
+            "Run `bun test src/index.ts`, then read `README.md`.",
+            "`./src/services/auth.service.ts:40` — the array [[1, 2], [3, 4]] is prose.",
+        ] {
+            let verified = verify_citations(answer, &index).expect(answer);
+            for_each_output_token::<()>(verified.markdown(), |inner| {
+                let (path, line) = match inner.split_once(':') {
+                    Some((path, line)) => (path, Some(line.parse::<u64>().expect("digits"))),
+                    None => (inner, None),
+                };
+                assert!(
+                    verified.cited_paths().iter().any(|p| p == path),
+                    "{answer}: {inner} is not in citedPaths"
+                );
+                let real = index.line_count(path).expect("cited path must be indexed");
+                if let Some(line) = line {
+                    assert!(line >= 1 && line <= real, "{answer}: {inner} out of range");
+                }
+                Ok(())
+            })
+            .expect("the closure never returns Err");
+        }
     }
 }

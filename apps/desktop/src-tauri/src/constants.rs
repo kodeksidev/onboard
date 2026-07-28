@@ -69,3 +69,17 @@ pub const HIGH_ENTROPY_MIN_LEN: usize = 24;
 pub const HIGH_ENTROPY_MIN_CHAR_CLASSES: u32 = 3;
 pub const HIGH_ENTROPY_MIN_BITS_PER_CHAR: f64 = 4.0;
 pub const ASSIGNMENT_HEURISTIC_MIN_VALUE_LEN: usize = 8;
+
+/// Thresholds for Phase 13's additive rules 13-15 (finding M4). See
+/// `privacy/patterns.rs` for why each rule exists and `docs/DECISIONS.md`
+/// for the record that 8.9's numbered list was extended, not renumbered.
+///
+/// `HEX_BLOB_MIN_LEN` is 32 because that is the shortest secret-shaped
+/// hex string in practice (an MD5 digest, and the length most 32-character
+/// hex API keys use). It is also comfortably above the longest single-class
+/// run in a legitimate literal the corpus's negative controls contain (28),
+/// so the rule cannot start eating ordinary filler text — asserted by
+/// `a_hex_run_shorter_than_the_threshold_survives`.
+pub const AUTH_SCHEME_MIN_VALUE_LEN: usize = 8;
+pub const HEX_BLOB_MIN_LEN: usize = 32;
+pub const BASE64_BLOB_MIN_LEN: usize = 40;

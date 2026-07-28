@@ -3,10 +3,11 @@ import { render, screen, within } from '@testing-library/react';
 import { AnalysisEnvelope } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { GraphListFallback } from './GraphListFallback';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const SAMPLE = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 
-describe('GraphListFallback', () => {
+describe('GraphListFallback', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('renders one row per file with classification, module, and rank', () => {
     render(<GraphListFallback result={SAMPLE} onOpenFile={vi.fn()} />);
     const rows = screen.getAllByRole('row');

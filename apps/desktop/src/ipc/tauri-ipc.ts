@@ -3,6 +3,9 @@ import { listen } from '@tauri-apps/api/event';
 import type { AppError, EngineProgress } from '@onboard/contract';
 import type {
   AiActionResult,
+  AiAskRequest,
+  AiExplainModuleRequest,
+  AiProjectSummaryRequest,
   AnalysisErrorListener,
   AnalysisProgressListener,
   AnalyzeRepoRequest,
@@ -60,27 +63,6 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
-/**
- * The three AI FEATURE commands (`ai_project_summary`/`ai_explain_module`/
- * `ai_ask`) are Phase 12 step 6, after review, and do not exist on the Rust
- * side yet — rejecting with the real, honest `E_AI_DISABLED` code (rather
- * than a placeholder `E_NOT_WIRED`) means the AI panels' existing "AI is
- * off" empty states render correctly today, and nothing here needs to
- * change again once step 6 registers the real commands. `test_ai_key`
- * (Settings' Test key button) is step 5 and IS wired below, to the real
- * `test_ai_key` Tauri command.
- */
-const AI_NOT_YET_IMPLEMENTED: AppError = {
-  code: 'E_AI_DISABLED',
-  message: 'Turn on AI in Settings and store a key to use this feature.',
-  detail: 'The AI feature commands land in Phase 12 step 6; the master toggle is off until then.',
-  path: null,
-};
-
-function aiNotYetImplemented<T>(): Promise<T> {
-  return Promise.reject(AI_NOT_YET_IMPLEMENTED);
-}
-
 /** Subscribes to a Tauri event, tolerating unsubscribe before `listen()` resolves. */
 function onEvent<T>(eventName: string, listener: (payload: T) => void): Unsubscribe {
   let unlisten: (() => void) | null = null;
@@ -95,6 +77,39 @@ function onEvent<T>(eventName: string, listener: (payload: T) => void): Unsubscr
   return () => {
     isDisposed = true;
     unlisten?.();
+  };
+}
+
+/**
+ * The three AI FEATURE commands. Rust returns `AiAnswer`, which serializes
+ * camelCase field-for-field into `AiActionResult`
+ * (`{ markdown, citedPaths, sentFileCount, sentByteCount }`), so no mapping is
+ * needed here — and no mapping SHOULD be here, because the whole Section 8.10
+ * pipeline (gating, redaction, citation verification, rate limiting) lives
+ * behind these commands. A rejection arrives as an already-serialized
+ * `AppError` and is passed through by `toAppError` untouched, which is what
+ * lets `AiAnswerView` render `E_AI_CITATION_REJECTED`'s `.path` and
+ * `messages.ts` narrow on `E_AI_DISABLED` / `E_AI_RATE_LIMITED` /
+ * `E_AI_NETWORK`.
+ *
+ * Split out of `createTauriIpc` only to keep that function under the
+ * `max-lines-per-function` limit; they are spread back in below, so
+ * `Object.keys(createTauriIpc())` is unchanged and the seam guard in
+ * `tauri-ipc.seam.test.ts` still sees every command.
+ */
+function aiFeatureCommands(): Pick<OnboardIpc, 'aiProjectSummary' | 'aiExplainModule' | 'aiAsk'> {
+  return {
+    aiProjectSummary: (request: AiProjectSummaryRequest) =>
+      call<AiActionResult>('ai_project_summary', { repoId: request.repoId }),
+
+    aiExplainModule: (request: AiExplainModuleRequest) =>
+      call<AiActionResult>('ai_explain_module', {
+        repoId: request.repoId,
+        moduleId: request.moduleId,
+      }),
+
+    aiAsk: (request: AiAskRequest) =>
+      call<AiActionResult>('ai_ask', { repoId: request.repoId, question: request.question }),
   };
 }
 
@@ -127,12 +142,7 @@ export function createTauriIpc(): OnboardIpc {
     testAiKey: (request: TestAiKeyRequest) =>
       call<TestAiKeyResult>('test_ai_key', { provider: request.provider, model: request.model }),
 
-    // The three AI FEATURE commands land in Phase 12 step 6, after review;
-    // the signatures exist so OnboardIpc stays satisfied, but every one
-    // rejects until then.
-    aiProjectSummary: () => aiNotYetImplemented<AiActionResult>(),
-    aiExplainModule: () => aiNotYetImplemented<AiActionResult>(),
-    aiAsk: () => aiNotYetImplemented<AiActionResult>(),
+    ...aiFeatureCommands(),
 
     onAnalysisProgress: (listener: AnalysisProgressListener): Unsubscribe =>
       onEvent<EngineProgress>('onboard://analysis-progress', listener),
