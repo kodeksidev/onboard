@@ -438,6 +438,10 @@ mod tests {
     }
 
     /// The full corpus: credential-shaped entries plus the rest.
+    pub(super) fn planted_secrets_for_rule_check() -> Vec<(&'static str, String)> {
+        planted_secrets()
+    }
+
     fn planted_secrets() -> Vec<(&'static str, String)> {
         let mut all = planted_credential_secrets();
         all.extend(planted_credential_secrets_b());
@@ -664,5 +668,112 @@ mod idempotence_property {
             let redacted = apply_r2_pipeline(&input);
             prop_assert_eq!(redacted.split('\n').count(), input.split('\n').count());
         }
+    }
+}
+
+/// Per-family non-vacuity for the redaction corpus.
+///
+/// The corpus asserts that every planted secret is redacted. That is
+/// necessary and not sufficient: an entry could be caught INCIDENTALLY by a
+/// different rule than the one it was written for, leaving the corpus looking
+/// complete while the rule it names is never exercised. The split of the
+/// literals into `privacy::fake_secrets` made this urgent — a rewrite that
+/// changed a string just enough to stop triggering its own rule would be
+/// invisible to the corpus test.
+///
+/// So for each family: disable that ONE rule and assert the entry survives.
+/// If it is still redacted with its rule off, something else is catching it
+/// and the entry proves nothing about the rule it claims to cover.
+#[cfg(test)]
+mod per_rule_non_vacuity {
+    use super::tests::planted_secrets_for_rule_check;
+    use crate::privacy::patterns::{
+        apply_single_line_rules, apply_single_line_rules_except, REDACTED_PLACEHOLDER,
+    };
+
+    /// Corpus entry -> the rule that must be the one catching it.
+    const ENTRY_RULE: &[(&str, &str)] = &[
+        ("aws1", "aws"),
+        ("aws2", "aws"),
+        ("aws3", "aws"),
+        ("gh1", "github"),
+        ("gh2", "github"),
+        ("gh3", "github"),
+        ("slack1", "slack"),
+        ("slack2", "slack"),
+        ("slack3", "slack"),
+        ("stripe1", "stripe"),
+        ("stripe2", "stripe"),
+        ("stripe3", "stripe"),
+        ("google1", "google"),
+        ("google2", "google"),
+        ("openai1", "openai"),
+        ("openai2", "openai"),
+        ("anthropic1", "anthropic"),
+        ("anthropic2", "anthropic"),
+        ("jwt1", "jwt"),
+        ("jwt2", "jwt"),
+    ];
+
+    /// Per FAMILY, not per entry.
+    ///
+    /// Requiring EVERY entry to survive its rule being disabled is too
+    /// strong, and the first run proved it: `aws1` is
+    /// `aws_access_key_id = AKIA...`, which rule 11 (the assignment
+    /// heuristic) also catches, so it stays redacted with the AWS rule off.
+    /// That is a pre-existing property of the corpus, not a defect the
+    /// literal split introduced — belt-and-braces coverage, not a hole.
+    ///
+    /// What DOES need to hold is that each family has at least one entry
+    /// that genuinely depends on its own rule. Otherwise a family could be
+    /// entirely covered by accident and its rule never exercised, which is
+    /// exactly what the split could have caused by changing a string just
+    /// enough to stop matching.
+    #[test]
+    fn every_split_family_has_at_least_one_entry_that_needs_its_own_rule() {
+        let corpus = planted_secrets_for_rule_check();
+        let mut families: Vec<&str> = ENTRY_RULE.iter().map(|(_, r)| *r).collect();
+        families.sort_unstable();
+        families.dedup();
+
+        for rule_name in families {
+            let entries: Vec<&(&str, String)> = corpus
+                .iter()
+                .filter(|(n, _)| {
+                    ENTRY_RULE
+                        .iter()
+                        .any(|(en, er)| en == n && *er == rule_name)
+                })
+                .collect();
+            assert!(
+                !entries.is_empty(),
+                "no corpus entries for rule {rule_name}"
+            );
+
+            // Every entry must be redacted with all rules on.
+            for (name, line) in &entries {
+                assert!(
+                    apply_single_line_rules(line).contains(REDACTED_PLACEHOLDER),
+                    "{name}: not redacted with all rules on"
+                );
+            }
+
+            // At least one must SURVIVE with this rule alone disabled.
+            let depends = entries.iter().any(|(_, line)| {
+                !apply_single_line_rules_except(line, rule_name).contains(REDACTED_PLACEHOLDER)
+            });
+            assert!(
+                depends,
+                "rule {rule_name:?} is never exercised: every one of its corpus entries stays \n                 redacted with it disabled, so another rule is doing all the work"
+            );
+        }
+    }
+
+    /// Non-vacuity of THIS test: the mechanism must be able to fail. A rule
+    /// name that does not exist must panic rather than silently skipping.
+    #[test]
+    #[should_panic(expected = "no rule named")]
+    fn disabling_an_unknown_rule_is_a_hard_error() {
+        let _ = apply_single_line_rules_except("anything", "not-a-real-rule");
     }
 }
