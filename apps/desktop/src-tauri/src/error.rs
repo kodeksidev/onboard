@@ -412,6 +412,29 @@ impl AppError {
         )
     }
 
+    /// Phase 13 finding H1. `[[path:line]]` is
+    /// [`crate::privacy::verify_citations`]'s OUTPUT grammar and the UI's
+    /// INPUT grammar, so a token the MODEL wrote is a citation claim
+    /// wearing the verifier's own uniform — indistinguishable, downstream,
+    /// from one the verifier actually checked. It is refused wholesale like
+    /// any other unverifiable citation.
+    ///
+    /// `.path` stays `None` deliberately: the frontend renders
+    /// `ERRORS.aiCitationRejected(path).description` ("The model referenced
+    /// {path}, which is not in the index") whenever `.path` is non-empty,
+    /// and that sentence is not what happened here — the claim may name a
+    /// real indexed file. With `.path` absent the UI falls back to this
+    /// `message`, exactly as it already does for
+    /// [`AppError::ai_answer_uncited`].
+    pub fn ai_citation_token_forged(claim: &str) -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            format!(
+                "The model wrote its own citation token for {claim} instead of letting Onboard verify it. Onboard only shows citations it produced itself. Try a narrower question."
+            ),
+        )
+    }
+
     /// Section 10's literal copy for "Ollama not running":
     /// `apps/desktop/src/copy/messages.ts`'s `ERRORS.aiOllamaUnreachable`
     /// title is static ("Ollama isn't answering on 127.0.0.1:11434"); this

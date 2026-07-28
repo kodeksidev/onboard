@@ -2,6 +2,7 @@ import { createRef } from 'react';
 import { describe, expect, test } from 'vitest';
 import { render, renderHook, waitFor } from '@testing-library/react';
 import { useCodeMirror } from './useCodeMirror';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 function setupContainer(): React.RefObject<HTMLDivElement | null> {
   const ref = createRef<HTMLDivElement>();
@@ -9,7 +10,7 @@ function setupContainer(): React.RefObject<HTMLDivElement | null> {
   return ref;
 }
 
-describe('useCodeMirror', () => {
+describe('useCodeMirror', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('mounts a read-only CodeMirror view with the given content', async () => {
     const containerRef = setupContainer();
     renderHook(() => useCodeMirror({ containerRef, content: 'const a = 1;\nconst b = 2;', language: 'ts' }));

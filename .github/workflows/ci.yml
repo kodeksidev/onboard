@@ -5,10 +5,34 @@ on:
     branches: [main]
   pull_request:
 
+# A superseded run of the same ref proves nothing; let a new push cancel it.
+# `main` pushes are NOT cancelled — every commit that lands on the default
+# branch gets its own complete, attributable verdict.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Keep in lockstep with the "packageManager" pin in package.json.
   # Section 4 names Bun 1.2.x; we run 1.3.x — see docs/DECISIONS.md.
   BUN_VERSION: '1.3.14'
+
+  # There is no `rust-toolchain.toml` in this repository (checked: `find . -name
+  # 'rust-toolchain*'` returns nothing), so the workspace config is the only
+  # declaration of a Rust version: `apps/desktop/src-tauri/Cargo.toml` sets
+  # `rust-version = "1.82"`. That field is an MSRV *floor*, not a build pin —
+  # and cargo enforces it by itself (it refuses to build the package with an
+  # older toolchain), so the floor needs no CI step of its own. What CI must
+  # choose is the *ceiling*, and that is `stable`, matching the toolchain this
+  # repo's only pre-existing Rust job already used.
+  #
+  # Known trade-off, stated rather than hidden: `clippy -- -D warnings` on a
+  # floating `stable` can go red on a Rust release day for a brand-new lint
+  # that has nothing to do with the PR under test. The fix for that is a
+  # committed `rust-toolchain.toml` pin, which lives in `src-tauri/` and so
+  # belongs to the crate's owner, not to this workflow.
+  CARGO_AUDIT_VERSION: '0.22.2'
+  CARGO_TERM_COLOR: always
 
 jobs:
   verify:
@@ -27,10 +51,35 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Cache the Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      # A COLD Vite dependency-optimization cache is measurably the slowest
+      # part of the UI suite's first run, which is exactly CI's situation on
+      # every job. The in-repo answer to that is per-file `SLOW_MOUNT_TIMEOUT_MS`
+      # (see `apps/desktop/src/test/timeouts.ts` and the long comment on
+      # `testTimeout` in `apps/desktop/vitest.config.ts`) — deliberately NOT a
+      # blanket timeout bump, because that would hide a real slowdown in the
+      # ~270 tests that have no reason to be slow. This cache is the other,
+      # non-weakening half: keep the optimizer warm across runs so cold-start
+      # is the exception rather than the rule. It is keyed on the lockfile plus
+      # both Vite configs, so any dependency or config change invalidates it
+      # instead of serving a stale prebundle.
+      - name: Cache the Vite dependency-optimization cache
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/node_modules/.vite
+          key: vite-${{ runner.os }}-${{ hashFiles('bun.lock', 'apps/desktop/vite.config.ts', 'apps/desktop/vitest.config.ts') }}
+          restore-keys: vite-${{ runner.os }}-
+
       - name: Install dependencies
         run: bun install
 
-      - name: Run verify (typecheck && lint && test)
+      - name: Run verify (typecheck && lint && contract drift && test)
         run: bun run verify
 
   verify-space-in-path:
@@ -59,19 +108,14 @@ jobs:
         working-directory: 'onboard checkout'
         run: bun run verify
 
-  egress-chokepoint:
-    # Section 12: "apps/desktop/src-tauri/src/ai/http.rs constructs the only
-    # reqwest::Client in the repository." Phase 12 step 2 landed ai/http.rs,
-    # so this is now the "exactly one file" check the earlier placeholder
-    # asked for — implemented as a real, unit-tested program
-    # (src-tauri/src/bin/check_egress_chokepoint.rs) rather than an inline
-    # grep, so the check itself has test coverage (zero/one/two-match cases,
-    # both directions) instead of being trusted on faith. See that file's
-    # doc comment and docs/DECISIONS.md for the resolution of a conflict in
-    # the original literal wording ("hyper/rustls appearing anywhere fails"
-    # is unsatisfiable once reqwest exists at all, since reqwest depends on
-    # both transitively).
-    name: egress chokepoint (reqwest confined to exactly one door)
+  rust-fmt:
+    # Split out from the `rust` job on purpose: `cargo fmt --check` is the only
+    # Rust gate in this repository that compiles nothing, so it needs neither
+    # the staged sidecar, nor the built frontend, nor the Linux webkit
+    # toolchain (see the `rust` job for why the other gates need all three).
+    # Keeping it separate means a formatting slip is reported in well under a
+    # minute instead of behind a full Tauri build.
+    name: rust fmt
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -82,14 +126,352 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+  rust:
+    # SECURITY_AUDIT.md H2: before this job existed, the entire Rust-side
+    # security suite was unenforced. `cargo test` here is what actually runs
+    # the >=30-secret redaction corpus and its idempotence property test
+    # (Section 8.9), `ai::permit`'s gating matrix, `ai::pipeline`'s fail-closed
+    # ordering trace, all of `privacy::verify_citations` (Section 8.10),
+    # `tests/lockdown.rs`'s CSP/capability/devtools assertions, and the five
+    # compile-fail suites that prove `RedactedPayload` / `EgressPermit` /
+    # `ResolvedEndpoint` / `PromptSpec` cannot be constructed outside their
+    # own modules. Every one of those could previously regress to green.
+    #
+    # ## Why the build steps below are not optional ceremony
+    #
+    # Verified directly against a clean `git worktree` of HEAD (i.e. a fresh
+    # clone, with the gitignored build outputs absent), NOT assumed:
+    #
+    #   1. With `binaries/` empty, `cargo check` fails in `build.rs` with
+    #      "resource path `binaries\onboard-engine-x86_64-pc-windows-msvc.exe`
+    #      doesn't exist" — `tauri-build` resolves `bundle.externalBin` for the
+    #      HOST triple on every cargo invocation, including `cargo check` and
+    #      `cargo test`, not just `tauri build`.
+    #   2. With that fixed but `apps/desktop/dist/` absent, compiling the lib
+    #      fails inside `tauri::generate_context!` with "The `frontendDist`
+    #      configuration is set to `\"../dist\"` but this path doesn't exist".
+    #
+    # So `bun run build:sidecar && bun run stage:sidecar` and a frontend
+    # `vite build` are hard preconditions for ANY cargo target in this crate.
+    # This is also why the previous standalone `egress-chokepoint` job could
+    # never have passed on a fresh checkout: it ran `cargo test --bin ...` with
+    # neither precondition met. That job's two steps are folded in at the end
+    # of this one, where the preconditions actually hold.
+    #
+    # ## Matrix
+    #
+    # Windows and Linux, per H2's own recommendation, because the keychain
+    # backend differs and `src/util/paths.rs`, `src/sidecar/spawn.rs`,
+    # `src/commands/analyze.rs` and `src/commands/read_file.rs` all carry
+    # `#[cfg(windows)]` / `#[cfg(unix)]` branches that only one of the two can
+    # exercise. macOS is deliberately excluded — see the report/DECISIONS entry
+    # accompanying this change: no `cfg` branch here is macOS-specific that
+    # Linux does not also cover, and the `apple-native` keychain tests would
+    # need login-keychain unlocking on the runner, which is itself untested
+    # machinery. `verify` still covers macOS on the TypeScript side.
+    #
+    # KNOWN GAP, recorded rather than papered over: the Linux runner has no
+    # Secret Service daemon, so `AiKeyStore` falls back to A18's session-only
+    # in-memory map and the real Secret Service backend is NOT exercised there.
+    # That is the documented Linux production behaviour (A18 / known-hard-part
+    # 7), and Windows exercises a real OS credential store, so the backend is
+    # covered — but closing this properly means running the suite under
+    # `dbus-run-session` with an unlocked `gnome-keyring`, which should be
+    # proven on a branch before it is allowed to block every push.
+    name: rust gates (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Tauri v2's documented Linux prerequisites. `tauri` -> `tauri-runtime-wry`
+      # -> `wry` -> the webkit2gtk sys crates are compiled for ANY target of this
+      # package (confirmed with `cargo build -v`: `tauri`, `wry` and friends are
+      # in the unit graph even for `--bin check_egress_chokepoint`), so these are
+      # required by every cargo step below, not only by a bundling step.
+      - name: Install Tauri's Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache the Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install
+
+      # ~6s locally for all four target triples, including the script's own
+      # smoke test (it launches the host binary and runs a real `engine.analyze`
+      # over stdio), so there is no reason to narrow it to one triple. This also
+      # satisfies known-hard-part (2): the script fails if any of the four
+      # `-<target-triple>` filenames is missing.
+      # Two steps rather than one `&&` chain, so the two OSes' default shells
+      # (bash on Linux, pwsh on Windows) never have to agree on an operator.
+      - name: Build the engine sidecar (precondition 1a)
+        run: bun run build:sidecar
+
+      - name: Stage the sidecar into the Tauri shell (precondition 1b)
+        run: bun run stage:sidecar
+
+      - name: Build the frontend bundle (precondition 2)
+        run: bun run --cwd "apps/desktop" build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
 
-      - name: Run the checker's own unit tests (both directions, per fixture)
-        run: cargo test --bin check_egress_chokepoint
+      # `--all-targets` so the tests and the compile-fail suites are linted too,
+      # not just the library. Section 13 #27: clippy is half of the enforcement
+      # for "no function over 50 lines, no block nested deeper than 4" — the
+      # thresholds live in `src-tauri/clippy.toml` and are `deny`-level in
+      # `Cargo.toml`'s `[lints.clippy]`, which only fails a build if clippy is
+      # actually run.
+      - name: cargo clippy -- -D warnings
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # `--no-fail-fast` so one red test binary still reports the other twelve
+      # instead of masking them; the job's exit status is unaffected (cargo
+      # still exits non-zero). Without it, a single failing `--lib` test hides
+      # every integration and compile-fail suite behind it — observed directly:
+      # a plain `cargo test` here stopped after the lib target and never ran
+      # `lockdown.rs` or any of the five compile-fail suites at all.
+      - name: cargo test (full Rust suite)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --no-fail-fast
+
+      # Section 12: `apps/desktop/src-tauri/src/ai/http.rs` constructs the only
+      # `reqwest::Client` in the repository. Implemented as a real, unit-tested
+      # program (`src/bin/check_egress_chokepoint.rs`) rather than an inline
+      # grep, so the check itself has test coverage (zero/one/two-match cases,
+      # both directions) instead of being trusted on faith — that bin's own unit
+      # tests now run as part of `cargo test` above, which is why the previous
+      # standalone `cargo test --bin check_egress_chokepoint` step is gone. See that file's doc comment and
+      # docs/DECISIONS.md for the resolution of a conflict in the original
+      # literal wording ("hyper/rustls appearing anywhere fails" is unsatisfiable
+      # once reqwest exists at all, since reqwest depends on both transitively).
+      #
+      # The argument is `.` rather than `"$(pwd)"`: `working-directory` already
+      # puts us in the crate root, and `$(pwd)` under Git Bash on the Windows
+      # runner yields an MSYS path (`/d/a/...`) that Rust's `std::path` cannot
+      # resolve.
       - name: Assert exactly one door and no banned HTTP/TLS crates
-        run: cargo run --quiet --bin check_egress_chokepoint -- "$(pwd)"
+        working-directory: apps/desktop/src-tauri
+        run: cargo run --quiet --bin check_egress_chokepoint -- .
+
+  engine-no-network:
+    # Section 9 Phase 5 gate item 3 / acceptance criterion 8. Linux-only on
+    # purpose: the static bundle scan is platform-independent (so running it on
+    # three OSes would buy nothing), but the second, materially stronger half —
+    # a full fixture analysis executed with network namespaces unshared — is
+    # `unshare -rn`, which exists only on Linux. `scripts/verify-no-network.ts`
+    # prints a loud SKIPPED line elsewhere rather than silently passing, and it
+    # reads the built Linux binary from `packages/engine/dist/`, so
+    # `build:sidecar` must run first.
+    name: engine no-network gate (static scan + unshare -rn)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache the Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build the sidecar binaries
+        run: bun run build:sidecar
+
+      - name: verify:no-network (bundle scan + sandboxed fixture analysis)
+        run: bun run --cwd "packages/engine" verify:no-network
+
+  dependency-audit:
+    # Phase 13's own gate (Section 9): "`cargo audit` and `bun audit` report no
+    # unpatched high-severity advisories." Neither ran in CI before this job,
+    # which is why docs/SECURITY_AUDIT.md has to describe itself as "a
+    # point-in-time statement about this commit only".
+    #
+    # This job compiles nothing: `cargo audit` reads `Cargo.lock` and `bun audit`
+    # reads `bun.lock`, so it needs neither the webkit toolchain nor either of
+    # the two build preconditions the `rust` job documents. That is what makes
+    # it cheap enough to run on every push.
+    name: dependency audit (cargo audit + bun audit)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache the Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: bun audit
+        run: bun audit
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # cargo-audit is NOT preinstalled on GitHub runners and takes minutes to
+      # compile from source, so the built binary itself is cached, keyed on the
+      # pinned version. Only the `cargo install` is skipped on a hit; the
+      # advisory database is still fetched fresh on every run below.
+      - name: Cache the cargo-audit binary
+        id: cache-cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ env.CARGO_AUDIT_VERSION }}
+
+      - name: Install cargo-audit
+        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version ${{ env.CARGO_AUDIT_VERSION }}
+
+      # Incremental: `cargo audit` always `git fetch`es the advisory DB (there is
+      # no `--no-fetch` here), so a restored cache can only ever be a starting
+      # point, never a stale verdict.
+      - name: Cache the RustSec advisory database
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ github.run_id }}
+          restore-keys: advisory-db-
+
+      # `--deny warnings` rather than a bare `cargo audit`, with every currently
+      # accepted advisory named explicitly on the command line.
+      #
+      # A bare `cargo audit` exits 0 on `unmaintained`/`unsound` warnings, so it
+      # would silently absorb the NEXT unmaintained-dependency advisory too. The
+      # 17 IDs below are exactly the ones docs/SECURITY_AUDIT.md's dependency
+      # section reviewed and accepted (16 GTK3/proc-macro/unic `unmaintained` +
+      # 1 `glib` `unsound`); they are resolvable only by Tauri moving off GTK3,
+      # which is outside this project's control. Anything NOT on this list —
+      # including any actual vulnerability — fails the job. When Tauri moves off
+      # GTK3, delete the corresponding lines and this gate tightens by itself.
+      #
+      # The list is inline here rather than in a `.cargo/audit.toml` because
+      # that file would live inside `apps/desktop/src-tauri/`, which this
+      # workflow does not own; moving it there later is a pure refactor.
+      - name: cargo audit
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2024-0411 \
+            --ignore RUSTSEC-2024-0412 \
+            --ignore RUSTSEC-2024-0413 \
+            --ignore RUSTSEC-2024-0414 \
+            --ignore RUSTSEC-2024-0415 \
+            --ignore RUSTSEC-2024-0416 \
+            --ignore RUSTSEC-2024-0417 \
+            --ignore RUSTSEC-2024-0418 \
+            --ignore RUSTSEC-2024-0419 \
+            --ignore RUSTSEC-2024-0420 \
+            --ignore RUSTSEC-2024-0429 \
+            --ignore RUSTSEC-2024-0370 \
+            --ignore RUSTSEC-2025-0075 \
+            --ignore RUSTSEC-2025-0080 \
+            --ignore RUSTSEC-2025-0081 \
+            --ignore RUSTSEC-2025-0098 \
+            --ignore RUSTSEC-2025-0100
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT wired here, with reasons — so the next person does not have
+# to re-derive them. Nothing below is silently weakened: each is either broken
+# upstream of CI or measures something a shared runner cannot honestly measure.
+#
+# `bun run e2e` (WebdriverIO + tauri-driver, Section 9 Phase 11 / A19)
+#   The harness itself is currently non-deterministic, measured rather than
+#   guessed: two consecutive local runs on Windows, with every prerequisite
+#   present (`build:e2e` + `cargo build --bin onboard`, real WebView2
+#   150.0.4078.99, real sidecar, real `analyze_repo`), each ended
+#   "3 passed, 1 failed, 4 total" — and it was a DIFFERENT spec file each time
+#   (`graph.spec.ts`, then `picker.spec.ts`). The failure is never an assertion;
+#   it is always `Failed to create a session: WebDriverError ... UND_ERR_SOCKET
+#   POST http://127.0.0.1:4444/session`. Cause is visible in `wdio.conf.ts`:
+#   every spec file's `beforeSession` spawns its own `tauri-driver` +
+#   `msedgedriver` pair on the same two FIXED ports (4444 / 9515) and
+#   `afterSession` kills them, so consecutive spec files race the previous
+#   pair's socket teardown. `--maxInstances 1` serialises the workers but does
+#   not wait for the port to be free or listening.
+#   Wiring this as a blocking gate today would mean a ~25%-per-spec-file false
+#   failure rate on every push, which teaches everyone to ignore red CI — the
+#   opposite of what SECURITY_AUDIT.md H2 is asking for. The specs themselves
+#   are good and they pass when their session is created; the fix is in
+#   `wdio.conf.ts` (allocate a free port per session, or poll the driver's port
+#   until it accepts a connection before `newSession`), and it belongs to that
+#   file's owner. Once it is deterministic this should become a Windows job:
+#   everything else it needs is already proven by the `rust` job above.
+#
+# `bun run bench` / `bun run --cwd apps/desktop test:perf` / `bench:graph`
+#   Wall-clock budgets. `apps/desktop/vitest.config.ts` already documents,
+#   from direct observation, that the same measurement moves from ~200ms to
+#   641ms purely from CPU contention with other test files — a shared GitHub
+#   runner is strictly worse. A number a runner cannot honestly guarantee makes
+#   a gate that fails for the wrong reason. These belong on a `schedule:` (or
+#   `workflow_dispatch:`) run on a consistent runner where a trend is
+#   meaningful, not on every push.
+#
+# Coverage thresholds (Section 13 #10: >=80% lines and branches per package,
+# 90% for engine graph/rank/resolve/search, `cargo llvm-cov` for Rust)
+#   Genuinely not wired anywhere yet, and out of scope for the H2 fix (which is
+#   "run the gates that already exist"). Flagged here so it is not mistaken for
+#   something this workflow covers.
+#
+# Conventional-commit message linting (Section 13 #28)
+#   Same: not wired, not part of H2, recorded so the gap stays visible.
+# ---------------------------------------------------------------------------
