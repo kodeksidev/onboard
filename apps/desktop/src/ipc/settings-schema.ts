@@ -12,14 +12,15 @@ import { z } from 'zod';
  * `AnalysisEnvelope` is in `repoStore`.
  */
 /**
- * Phase 12 step 5: the three v1 adapters. `openai-compatible` covers
- * DeepSeek/OpenAI/Groq/OpenRouter/Together and similar providers that
- * share the same chat-completions REST shape — see
- * `apps/desktop/src-tauri/src/commands/settings.rs`'s `AiProvider` for the
- * matching Rust enum (`rename_all = "kebab-case"` on that side, matching
- * this literal).
+ * The two v1 adapters (A4: "v1 ships exactly two AI adapters: Anthropic and
+ * Ollama"). §3 non-goal 2 names DeepSeek/OpenAI/Azure/Bedrock and "any
+ * adapter beyond Anthropic and Ollama" explicitly; an `openai-compatible`
+ * variant was built here in violation of both and has been removed —
+ * see `docs/V2_BACKLOG.md`. Mirrors
+ * `apps/desktop/src-tauri/src/commands/settings.rs`'s `AiProvider`
+ * (`rename_all = "kebab-case"` on that side, matching these literals).
  */
-export const AiProvider = z.enum(['anthropic', 'ollama', 'openai-compatible']);
+export const AiProvider = z.enum(['anthropic', 'ollama']);
 export type AiProvider = z.infer<typeof AiProvider>;
 
 export const AiSettings = z.object({
@@ -27,10 +28,6 @@ export const AiSettings = z.object({
   provider: AiProvider,
   model: z.string(),
   ollamaBaseUrl: z.string(),
-  /** `openai-compatible`'s stored base URL — empty by default (no single
-   * correct default across providers), shown only when that provider is
-   * selected. */
-  openaiCompatibleBaseUrl: z.string(),
   hasStoredKey: z.boolean(),
 });
 export type AiSettings = z.infer<typeof AiSettings>;
@@ -67,7 +64,6 @@ export const DEFAULT_SETTINGS: Settings = {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
     ollamaBaseUrl: 'http://127.0.0.1:11434',
-    openaiCompatibleBaseUrl: '',
     hasStoredKey: false,
   },
 };

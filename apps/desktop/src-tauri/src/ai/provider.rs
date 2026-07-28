@@ -3,7 +3,7 @@
 //! AppError>` and `async fn test(&self) -> Result<TestResult, AppError>` —
 //! nothing provider-specific leaks past it." Anthropic
 //! ([`crate::ai::anthropic`]) is the first (and, Phase 12 step 3A, only)
-//! implementation; `ollama` and `openai-compatible` slot in behind this
+//! implementation; `ollama` slots in behind this
 //! same trait unchanged, after the owner reviews this leg.
 //!
 //! ## Naming collision, deliberately, per the frozen contract

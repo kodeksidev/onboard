@@ -2323,3 +2323,51 @@ decided; it only records choices the spec left open.
   new process/socket allowlist is per-file AND per-symbol, and a test fails if
   an allowlist entry stops matching anything, so reviewed-door permissions
   cannot accumulate past the code that justified them.
+- **Phase 13 follow-up — the `openai-compatible` adapter is deleted, not
+  deprecated: it was a scope violation, not a feature.** A4 says "v1 ships
+  exactly **two AI adapters: Anthropic and Ollama**"; Section 3 non-goal 2
+  names "DeepSeek, OpenAI, Azure, Bedrock, or any adapter beyond Anthropic and
+  Ollama" and prescribes the response — "If you find yourself writing one,
+  stop and delete it." A third adapter was nevertheless built and shipped.
+
+  **How it got built, since that determines whether anything else drifted.**
+  The phase spec did *not* drift. Phase 12's Files list names exactly
+  `src-tauri/src/ai/{mod.rs,provider.rs,anthropic.rs,ollama.rs,http.rs,`
+  `prompt.rs,transcript.rs}` — there is no `openai_compatible.rs` in it, and
+  the word "openai" appears nowhere in the phase text. The drift was a
+  self-invented sub-step: entries in this file recorded under "Phase 12 step
+  3B" introduced the adapter, switched `AiProvider`'s serde representation
+  from `lowercase` to `kebab-case` to accommodate its name, and added the
+  `openai_compatible_base_url` setting — each entry reasoned carefully about
+  its own local trade-off, and none checked the new module against A4 or the
+  non-goal list. The `settings-schema.ts` doc comment then hardened the error
+  into an assertion, calling them "the three v1 adapters."
+
+  This is the same failure mode as the vacuous bench gate fixed alongside it:
+  a local decision recorded thoroughly enough to look reviewed, never checked
+  against the frozen constraint it violated. The generalisable rule is that a
+  DECISIONS entry justifies *how* something was built and can never authorise
+  *that* it be built — only Sections 2 and 3 do that.
+
+  **Scope of the removal.** The adapter module, `AiProvider::OpenAiCompatible`
+  (Rust) and the `'openai-compatible'` zod literal (TS), the
+  `ProviderShape::OpenAiCompatible` body shape, the `openaiCompatibleBaseUrl`
+  setting on both sides, its Settings-dialog field and copy strings, its
+  keychain account, its `validate_provider` acceptance, and every test
+  asserting the adapter worked. `privacy/patterns.rs`'s `OPENAI_KEY_RE` stays:
+  it is Section 8.9 rule 7, a *redaction* rule for OpenAI keys found in the
+  user's own repo, and is unrelated to which providers Onboard talks to.
+
+  **Deletions replaced by guards, not by silence.** `validate_provider` now
+  has a test asserting `openai-compatible`, `openai`, `deepseek`, `azure`,
+  `bedrock`, `groq` and `openrouter` are all rejected, and the Settings
+  dropdown test asserts the option list is exactly `['Anthropic',
+  'Ollama (local)']` rather than merely containing them — so re-adding an
+  out-of-scope adapter fails a test instead of shipping.
+
+  **Migration is fail-safe by construction.** An old `settings.json` carrying
+  `openaiCompatibleBaseUrl` still loads (serde ignores unknown fields). One
+  pinned to `provider: "openai-compatible"` no longer deserializes, so
+  `read_settings_file` falls back to `Settings::default()` — which has
+  `isEnabled: false`. The one outcome that must never happen is continuing to
+  send snippets to a provider that no longer exists; both paths are tested.

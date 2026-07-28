@@ -31,7 +31,7 @@
 //! through the full chokepoint — permit → redaction → `ResolvedEndpoint`
 //! → `http::send`." [`test_ai_key_core`] does not hand-roll a lighter-weight
 //! connectivity check; it calls the SAME `AiProvider` adapter
-//! (`ai::anthropic`/`ai::ollama`/`ai::openai_compatible`) real feature code
+//! (`ai::anthropic`/`ai::ollama`) real feature code
 //! will eventually use, via each adapter's `test_with_model` — which
 //! resolves a real `EgressPermit`, builds a real (empty but genuinely
 //! `redact()`-produced) `RedactedPayload`, resolves a real
@@ -66,7 +66,6 @@ use serde::Serialize;
 use crate::ai::anthropic::AnthropicProvider;
 use crate::ai::http::ProviderShape;
 use crate::ai::ollama::OllamaProvider;
-use crate::ai::openai_compatible::OpenAiCompatibleProvider;
 use crate::ai::pipeline::{PipelineStep, PipelineTrace};
 use crate::ai::prompt::{AiFeature, ModuleId, PromptSpec, UserQuestion};
 use crate::ai::provider::{AiProvider as AiProviderTrait, CompletionRequest};
@@ -113,13 +112,8 @@ pub async fn test_ai_key_core(
                 .test_with_model(model)
                 .await?;
         }
-        "openai-compatible" => {
-            OpenAiCompatibleProvider::new(settings_path, ai_keys)
-                .test_with_model(model)
-                .await?;
-        }
         // `validate_provider` above already rejected anything else.
-        _ => unreachable!("validate_provider only accepts anthropic/ollama/openai-compatible"),
+        _ => unreachable!("validate_provider only accepts anthropic/ollama"),
     }
 
     Ok(TestAiKeyResponse {
@@ -164,13 +158,7 @@ async fn test_ai_key_core_against_test_endpoint(
                 .test_with_model(model)
                 .await?;
         }
-        "openai-compatible" => {
-            OpenAiCompatibleProvider::new(settings_path, ai_keys)
-                .with_test_endpoint(test_endpoint)
-                .test_with_model(model)
-                .await?;
-        }
-        _ => unreachable!("validate_provider only accepts anthropic/ollama/openai-compatible"),
+        _ => unreachable!("validate_provider only accepts anthropic/ollama"),
     }
 
     Ok(TestAiKeyResponse {
@@ -230,7 +218,6 @@ fn provider_shape(provider: AiProvider) -> ProviderShape {
     match provider {
         AiProvider::Anthropic => ProviderShape::Anthropic,
         AiProvider::Ollama => ProviderShape::Ollama,
-        AiProvider::OpenAiCompatible => ProviderShape::OpenAiCompatible,
     }
 }
 
@@ -322,15 +309,6 @@ async fn complete_with_provider(
         }
         AiProvider::Ollama => {
             let adapter = OllamaProvider::new(settings_path, ai_keys);
-            #[cfg(test)]
-            let adapter = match &ctx.test_endpoint {
-                Some(url) => adapter.with_test_endpoint(url.clone()),
-                None => adapter,
-            };
-            adapter.complete(req).await?
-        }
-        AiProvider::OpenAiCompatible => {
-            let adapter = OpenAiCompatibleProvider::new(settings_path, ai_keys);
             #[cfg(test)]
             let adapter = match &ctx.test_endpoint {
                 Some(url) => adapter.with_test_endpoint(url.clone()),

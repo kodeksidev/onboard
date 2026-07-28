@@ -61,7 +61,7 @@
 //!
 //! An early version of `send` took `reqwest::header::HeaderMap` directly
 //! from its caller — which meant every adapter module (`ai/anthropic.rs`,
-//! `ai/ollama.rs`, `ai/openai_compatible.rs`) had to `use reqwest::header`
+//! `ai/ollama.rs`) had to `use reqwest::header`
 //! itself just to build an auth header, making `reqwest` a *second*
 //! consumer of the crate even though those adapters never touch the client
 //! or send anything themselves. [`RequestHeaders`] is plain, `reqwest`-free
@@ -113,13 +113,13 @@ fn build_header_map(
     Ok(map)
 }
 
-/// The exactly-three request-body shapes §3 non-goal 2 caps v1 at. Adapters
-/// name their shape; they never build or supply the body itself — see this
-/// module's doc comment.
+/// The exactly-two request-body shapes §3 non-goal 2 caps v1 at ("DeepSeek,
+/// OpenAI, Azure, Bedrock, or any adapter beyond Anthropic and Ollama").
+/// Adapters name their shape; they never build or supply the body itself —
+/// see this module's doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderShape {
     Anthropic,
-    OpenAiCompatible,
     Ollama,
 }
 
@@ -174,13 +174,6 @@ pub(crate) fn build_body(
             "max_tokens": ANTHROPIC_MAX_TOKENS,
             "system": task,
             "messages": [{ "role": "user", "content": blocks }],
-        }),
-        ProviderShape::OpenAiCompatible => serde_json::json!({
-            "model": model,
-            "messages": [
-                { "role": "system", "content": task },
-                { "role": "user", "content": blocks },
-            ],
         }),
         ProviderShape::Ollama => serde_json::json!({
             "model": model,
@@ -427,12 +420,8 @@ mod tests {
     }
 
     #[test]
-    fn build_body_produces_the_three_named_shapes_without_panicking() {
-        for shape in [
-            ProviderShape::Anthropic,
-            ProviderShape::OpenAiCompatible,
-            ProviderShape::Ollama,
-        ] {
+    fn build_body_produces_the_two_named_shapes_without_panicking() {
+        for shape in [ProviderShape::Anthropic, ProviderShape::Ollama] {
             let prompt = prompt_from(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 "a.ts",
@@ -445,7 +434,7 @@ mod tests {
 }
 
 /// Shared by every adapter's own real-bytes redaction test
-/// (`ai::anthropic::tests`, `ai::ollama::tests`, `ai::openai_compatible::tests`)
+/// (`ai::anthropic::tests`, `ai::ollama::tests`)
 /// — `pub(crate)` so those sibling modules can use it, `#[cfg(test)]` so
 /// none of it exists in a non-test build.
 #[cfg(test)]

@@ -62,7 +62,7 @@ pub enum AppErrorCode {
     /// answer is withheld — Section 8.10 step 3: "Never show a partially
     /// verified answer."
     EAiCitationRejected,
-    /// Phase 12 step 5: Ollama specifically (never Anthropic/openai-compatible)
+    /// Phase 12 step 5: Ollama specifically (never Anthropic)
     /// could not be reached at all — reclassified from a generic
     /// `E_AI_NETWORK` transport failure by `ai::ollama`, since for a
     /// local-only target that almost always means "Ollama isn't running,"

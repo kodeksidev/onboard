@@ -345,7 +345,6 @@ export const SETTINGS_COPY = {
   providerOptionLabels: {
     anthropic: 'Anthropic',
     ollama: 'Ollama (local)',
-    'openai-compatible': 'OpenAI-compatible',
   },
   modelLabel: 'Model',
   modelPlaceholder: 'e.g. claude-sonnet-4-5',
@@ -356,8 +355,6 @@ export const SETTINGS_COPY = {
    * boolean-derived hint. */
   apiKeyAlreadyStoredHint: 'A key is already stored for this provider.',
   ollamaBaseUrlLabel: 'Ollama address',
-  openaiCompatibleBaseUrlLabel: 'Base URL',
-  openaiCompatibleBaseUrlPlaceholder: 'e.g. https://api.deepseek.com',
   saveKeyLabel: 'Save key',
   clearKeyLabel: 'Clear key',
   /**
