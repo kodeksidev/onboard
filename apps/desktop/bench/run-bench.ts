@@ -20,6 +20,7 @@ import {
 } from './fixtures/generate-synthetic-repo';
 import { spawnEngine, assertNoRpcError, type JsonRpcMessage } from './support/engine-rpc-client';
 import { startRssMonitor } from './support/rss-sampler';
+import { evaluateGraphOutput, shouldFailBuild } from './support/graph-verdict';
 
 interface Budgets {
   readonly coldAnalysis1kMs: { readonly budget: number };
@@ -585,7 +586,10 @@ async function runGraphBench(): Promise<{ output: string; hasFail: boolean }> {
   ]);
   await proc.exited;
   const output = stdout + (stderr.length > 0 ? `\n[stderr]\n${stderr}` : '');
-  return { output, hasFail: /FAIL/.test(output) };
+  // NOT `/FAIL/.test(output)` — see `support/graph-verdict.ts`. That matched
+  // the graph bench's own caveat sentence on every run, so the flag was
+  // permanently true and the gate fired regardless of what was measured.
+  return { output, hasFail: shouldFailBuild(evaluateGraphOutput(output)) };
 }
 
 /**
