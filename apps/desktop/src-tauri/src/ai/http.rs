@@ -234,6 +234,27 @@ pub struct AiResponse {
 /// constructible from a `RedactedPayload` (see `ai::prompt`). There is no
 /// way to reach the network with content that did not come from `prompt`,
 /// because `send` never accepts a body from its caller at all.
+/// The approval-kind comparison, extracted so its branch is directly
+/// testable.
+///
+/// It lives outside `send` because `send` cannot be called from a unit test
+/// at all: its first parameter is `&EgressPermit`, which has no public
+/// constructor and no test seam, by design. Adding one would punch a hole in
+/// the WHETHER leg purely to exercise the approval leg — a bad trade. A pure
+/// function needs neither.
+///
+/// What this does NOT prove is ORDERING: that the refusal happens before any
+/// network work. That needs an integration test driving a real pipeline, and
+/// is on the CI list.
+fn check_kind(minted: TraceKind, expected: TraceKind) -> Result<(), AppError> {
+    if minted == expected {
+        return Ok(());
+    }
+    Err(AppError::ai_pipeline_incomplete(format!(
+        "send refused: approval minted for {minted:?} but this is a {expected:?} request"
+    )))
+}
+
 pub fn send(
     _permit: &EgressPermit,
     approval: SendApproval,
@@ -253,12 +274,7 @@ pub fn send(
     // nothing if their tokens are interchangeable. A connectivity approval is
     // minted after five steps with no Redacted and no Capped, so without this
     // it would authorise a full feature payload.
-    if approval.kind() != expected_kind {
-        return Err(AppError::ai_pipeline_incomplete(format!(
-            "send refused: approval minted for {:?} but this is a {expected_kind:?} request",
-            approval.kind()
-        )));
-    }
+    check_kind(approval.kind(), expected_kind)?;
     let body = build_body(shape, model, prompt);
     let header_map = build_header_map(headers, "the AI provider")?;
 
@@ -435,6 +451,30 @@ mod tests {
                 .contains("where is auth?"),
             "the question must not be concatenated into the task copy"
         );
+    }
+
+    /// Both directions of the kind check, so it cannot decay to "any token
+    /// works" if the polarity is ever flipped. The Connectivity->Feature
+    /// direction is the one that matters: a connectivity approval is minted
+    /// after five steps with no Redacted and no Capped, so accepting it for
+    /// a feature request would authorise a full repo payload past three
+    /// skipped privacy steps.
+    #[test]
+    fn a_mismatched_approval_kind_is_refused_in_both_directions() {
+        for (minted, expected) in [
+            (TraceKind::Connectivity, TraceKind::Feature),
+            (TraceKind::Feature, TraceKind::Connectivity),
+        ] {
+            let err = check_kind(minted, expected)
+                .expect_err("a mismatched approval kind must be refused");
+            assert_eq!(err.code, "E_AI_PAYLOAD_UNSAFE");
+        }
+    }
+
+    #[test]
+    fn a_matching_approval_kind_is_accepted() {
+        assert!(check_kind(TraceKind::Feature, TraceKind::Feature).is_ok());
+        assert!(check_kind(TraceKind::Connectivity, TraceKind::Connectivity).is_ok());
     }
 
     #[test]
