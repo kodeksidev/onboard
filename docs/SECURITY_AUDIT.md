@@ -491,3 +491,66 @@ Remaining open findings (5 MEDIUM, 7 LOW) do not block the gate and are carried 
 M1/M2/M3/M6/M7 to `rust-tauri`, L4/L6/L7 to `react-ui`. Two handoffs also arose from the fixes: the
 `wdio.conf.ts` fixed-port race that makes e2e unfit for a per-push gate (`react-ui`), and a
 `rust-toolchain.toml` pin so `stable` drift cannot break `-D warnings` (`rust-tauri`).
+
+---
+
+## 6. Coverage of this audit — added 2026-07-28
+
+### The claim this document is entitled to make
+
+**"Zero open CRITICAL and zero open HIGH" is a claim about what was examined, not a
+claim about what exists.**
+
+That sentence is added because a real fail-open was found afterwards, in a method this
+audit had inspected twice.
+
+### INV-3, and how it was missed
+
+`engine.snippets` silently discarded any path that failed repo containment. This audit
+examined that method and recorded two conclusions, both correct:
+
+- §2 CRITICAL, "specifically checked and not found": *"a path-traversal escape in
+  `read_repo_file`, `engine.readFile`, or `engine.snippets`"*
+- §3 invariant 6, **HOLDS**: *"`engine.snippets`/`engine.readFile`: dot-dot segment
+  rejection plus `realpathSync` containment"*
+
+Both asked **whether a path can escape**. Neither asked **what the method does with a
+path that fails**. The answer was: drop it, return a shorter array, tell nobody.
+
+It was not undiscoverable. `docs/DECISIONS.md`'s Phase 5 entry flagged it explicitly —
+*"flagged here for the AI-path owner to confirm or override"* — in the same file this
+audit was reading. A search of this document for "silently omit" / "partial" / "drops"
+returns nothing.
+
+### Why it reached the user interface
+
+Nothing between the engine and the UI compared paths requested against snippets
+returned. So a dropped path produced a shorter array, `redact()` saw only survivors,
+and `RedactedPayload::sent_file_count()` — which counts what survived, not what was
+asked for — reported it as the total. The UI displayed **"23 files sent"**.
+
+That number is accurate. It satisfies acceptance criterion 17's *"the UI displays the
+actual `sentFileCount`"*. **The criterion was met, and meeting it is what hid the
+refusal.** A user auditing what left their machine saw a truthful count with no
+indication that a security control had fired.
+
+### The method finding, which generalises
+
+This audit's method was: enumerate the invariants and check that each holds. That
+method catches *"can the guard be bypassed"* and **cannot, structurally, surface what a
+guard does when it fires** — no invariant in §3's table asks that question. Every
+fail-open in this codebase is invisible to it. INV-3 is the one now known.
+
+A derived sweep of every guard, refusal and validation point — recording, for each,
+what it does when it fires (errors, returns null, drops silently, logs, continues) —
+is tracked in `docs/KNOWN_ISSUES.md`.
+
+### Status
+
+Fixed. `engine.snippets` refuses the whole request on any bad path (Section 8.9 R3's
+precedent: never send a partially validated set), and `ai::snippets::fetch` treats
+`returned.len() != requested.len()` as an error so a future silent drop anywhere
+upstream fails at the boundary instead of laundering into a smaller number.
+
+**Acceptance criterion 26 remains PARTIAL** until a re-audit is performed with a method
+that can see fail-open behaviour.
