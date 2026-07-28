@@ -279,87 +279,175 @@ mod tests {
     // Redaction corpus: >=30 planted secrets (at least one per R2 rule)
     // -----------------------------------------------------------------
 
-    const PLANTED_SECRETS: &[(&str, &str)] = &[
-        // Rule 2 — AWS access key id
-        ("aws1", "aws_access_key_id = REDACTED-AWS-BY-HISTORY-REWRITE"),
-        ("aws2", "export AWS_KEY=REDACTED-AWS-BY-HISTORY-REWRITE"),
-        ("aws3", "// REDACTED-AWS-BY-HISTORY-REWRITE leaked in a comment"),
-        // Rule 3 — GitHub token
-        ("gh1", "REDACTED-GITHUB-BY-HISTORY-REWRITE"),
-        ("gh2", "token: REDACTED-GITHUB-BY-HISTORY-REWRITE"),
-        ("gh3", "GH_TOKEN=REDACTED-GITHUB-BY-HISTORY-REWRITE"),
-        // Rule 4 — Slack token
-        ("slack1", "REDACTED-SLACK-BY-HISTORY-REWRITE"),
-        ("slack2", "SLACK_TOKEN=REDACTED-SLACK-BY-HISTORY-REWRITE"),
-        ("slack3", "REDACTED-SLACK-BY-HISTORY-REWRITE"),
-        // Rule 5 — Stripe live key
-        ("stripe1", "REDACTED-STRIPE-BY-HISTORY-REWRITE"),
-        ("stripe2", "STRIPE_KEY=REDACTED-STRIPE-BY-HISTORY-REWRITE"),
-        ("stripe3", "REDACTED-STRIPE-BY-HISTORY-REWRITE"),
-        // Rule 6 — Google API key (exactly 35 chars after AIza)
-        ("google1", "REDACTED-GOOGLE-BY-HISTORY-REWRITE"),
-        ("google2", "GOOGLE_API_KEY=REDACTED-GOOGLE-BY-HISTORY-REWRITE"),
-        // Rule 7 — OpenAI key
-        ("openai1", "REDACTED-OPENAI-BY-HISTORY-REWRITE"),
-        ("openai2", "OPENAI_API_KEY=REDACTED-OPENAI-BY-HISTORY-REWRITE"),
-        // Rule 8 — Anthropic key
-        ("anthropic1", "REDACTED-ANTHROPIC-BY-HISTORY-REWRITE"),
-        ("anthropic2", "ANTHROPIC_API_KEY=REDACTED-ANTHROPIC-BY-HISTORY-REWRITE"),
-        // Rule 9 — JWT
-        (
-            "jwt1",
-            "REDACTED-JWT-BY-HISTORY-REWRITE.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PYE",
-        ),
-        (
-            "jwt2",
-            "Authorization: Bearer REDACTED-JWT-BY-HISTORY-REWRITE.abcdefghij1234567890",
-        ),
-        // Rule 10 — connection string (userinfo only)
-        ("conn1", "DATABASE_URL=postgres://admin:hunter2@db.internal:5432/app"),
-        ("conn2", "mongodb://root:s3cr3tPass@cluster0.example.net:27017/app"),
-        ("conn3", "mysql://svc_user:p@ssw0rd@10.0.0.5:3306/prod"),
-        // Rule 11 — assignment heuristic
-        ("assign1", r#"API_KEY="abcdefgh12345678""#),
-        ("assign2", "password: 'SuperSecretValue1'"),
-        ("assign3", "auth_token = zzzzzzzzzzzzzzzz"),
-        ("assign4", "MY_SECRET=qwertyuiop1234"),
-        // Rule 12 — high-entropy quoted literal (>=24 chars, >=3 classes, >=4.0 bits/char)
-        ("entropy1", r#"const token = "aB3$kL9!pQ2&mZ7@wR4^tY1*";"#),
-        ("entropy2", r#"apiSecret = 'zQ9#vX2$mK7!pL4&nR8^wT3@';"#),
-        ("entropy3", r#"const blob = "Xk2$Qw9!Zp4&Rt7@Lm3^Vn8*Bh1";"#),
-        // Rule 12, backtick delimiter — Phase 13 M4. `blob`, not `token`:
-        // a KEY/TOKEN-ish name would be caught by rule 11 first and this
-        // entry would pass without rule 12 ever seeing a template literal.
-        ("entropy4", "const blob = `Xk2$Qw9!Zp4&Rt7@Lm3^Vn8*Bh1`;"),
-        // Rule 13 — HTTP auth headers (each demonstrated by the Phase 13
-        // audit as surviving rules 1-12 untouched).
-        (
-            "auth1",
-            "Authorization: Basic YWRtaW46c3VwZXJzZWNyZXRwYXNzd29yZA==",
-        ),
-        (
-            "auth2",
-            "Authorization: Bearer abcdef1234567890abcdef1234567890",
-        ),
-        (
-            "auth3",
-            r#"headers = { authorization: "Bearer sV9pQ2xR7tL4zK8mN3bW" }"#,
-        ),
-        // Rule 14 — hex-only blobs, which rule 12 structurally cannot reach
-        // (two character classes, ~3.8 bits/char).
-        (
-            "hex1",
-            r#"const s = "d41d8cd98f00b204e9800998ecf8427e5f2a3b4c";"#,
-        ),
-        ("hex2", "webhookSignature = 5f2a3b4c5d6e7f809a0b1c2d3e4f5061"),
-        // Rule 15 — a PEM body pasted without its BEGIN/END markers, which
-        // rule 1 keys off and therefore never sees.
-        (
-            "pembody1",
-            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ",
-        ),
-    ];
+    /// The corpus. Credential-shaped entries come from
+    /// `privacy::fake_secrets`, the one place such strings are assembled —
+    /// see that module for why no contiguous literal appears in any source
+    /// file. Entries that are not credential-shaped (connection strings,
+    /// assignment heuristics, entropy blobs, auth headers, hex blobs, PEM
+    /// bodies) stay literal: no scanner matches them, so splitting would be
+    /// indirection for nothing.
+    fn planted_credential_secrets() -> Vec<(&'static str, String)> {
+        use crate::privacy::fake_secrets as fake;
+        vec![
+            // Rule 2 — AWS access key id
+            (
+                "aws1",
+                format!("aws_access_key_id = {}", fake::aws_example_key_id()),
+            ),
+            (
+                "aws2",
+                format!("export AWS_KEY={}", fake::aws_synthetic_key_id()),
+            ),
+            (
+                "aws3",
+                format!("// {} leaked in a comment", fake::aws_comment_key_id()),
+            ),
+            // Rule 3 — GitHub token
+            ("gh1", fake::github_pat()),
+            ("gh2", format!("token: {}", fake::github_server_token())),
+            ("gh3", format!("GH_TOKEN={}", fake::github_pat_upper())),
+            // Rule 4 — Slack token
+            ("slack1", fake::slack_bot_token()),
+            (
+                "slack2",
+                format!("SLACK_TOKEN={}", fake::slack_user_token()),
+            ),
+            ("slack3", fake::slack_app_token()),
+        ]
+    }
 
+    /// Rules 5-9 (Stripe onward). Split purely for the 49-line function cap.
+    fn planted_credential_secrets_b() -> Vec<(&'static str, String)> {
+        use crate::privacy::fake_secrets as fake;
+        vec![
+            // Rule 5 — Stripe live key
+            ("stripe1", fake::stripe_secret_key()),
+            (
+                "stripe2",
+                format!("STRIPE_KEY={}", fake::stripe_restricted_key()),
+            ),
+            ("stripe3", fake::stripe_publishable_key()),
+            // Rule 6 — Google API key (exactly 35 chars after AIza)
+            ("google1", fake::google_api_key()),
+            (
+                "google2",
+                format!("GOOGLE_API_KEY={}", fake::google_api_key_repeated()),
+            ),
+            // Rule 7 — OpenAI key
+            ("openai1", fake::openai_key()),
+            (
+                "openai2",
+                format!("OPENAI_API_KEY={}", fake::openai_key_upper()),
+            ),
+            // Rule 8 — Anthropic key
+            ("anthropic1", fake::anthropic_key()),
+            (
+                "anthropic2",
+                format!("ANTHROPIC_API_KEY={}", fake::anthropic_key_upper()),
+            ),
+            // Rule 9 — JWT
+            ("jwt1", fake::jwt_hs256()),
+            (
+                "jwt2",
+                format!("Authorization: Bearer {}", fake::jwt_hs256_with_typ()),
+            ),
+        ]
+    }
+
+    /// Rules 10-15: entries that are NOT credential-shaped, so no scanner
+    /// matches them and none needs splitting. Split from the
+    /// credential-shaped half only to stay under the 49-line function cap.
+    fn planted_non_credential_secrets() -> Vec<(&'static str, String)> {
+        vec![
+            // Rule 10 — connection string (userinfo only)
+            (
+                "conn1",
+                "DATABASE_URL=postgres://admin:hunter2@db.internal:5432/app".to_string(),
+            ),
+            (
+                "conn2",
+                "mongodb://root:s3cr3tPass@cluster0.example.net:27017/app".to_string(),
+            ),
+            (
+                "conn3",
+                "mysql://svc_user:p@ssw0rd@10.0.0.5:3306/prod".to_string(),
+            ),
+        ]
+    }
+
+    /// Rules 11-15 (assignment heuristic onward). Split purely for the
+    /// 49-line function cap.
+    fn planted_heuristic_secrets() -> Vec<(&'static str, String)> {
+        vec![
+            // Rule 11 — assignment heuristic
+            ("assign1", r#"API_KEY="abcdefgh12345678""#.to_string()),
+            ("assign2", "password: 'SuperSecretValue1'".to_string()),
+            ("assign3", "auth_token = zzzzzzzzzzzzzzzz".to_string()),
+            ("assign4", "MY_SECRET=qwertyuiop1234".to_string()),
+            // Rule 12 — high-entropy quoted literal (>=24 chars, >=3 classes, >=4.0 bits/char)
+            (
+                "entropy1",
+                r#"const token = "aB3$kL9!pQ2&mZ7@wR4^tY1*";"#.to_string(),
+            ),
+            (
+                "entropy2",
+                r#"apiSecret = 'zQ9#vX2$mK7!pL4&nR8^wT3@';"#.to_string(),
+            ),
+            (
+                "entropy3",
+                r#"const blob = "Xk2$Qw9!Zp4&Rt7@Lm3^Vn8*Bh1";"#.to_string(),
+            ),
+            // Rule 12, backtick delimiter — Phase 13 M4. `blob`, not `token`:
+            // a KEY/TOKEN-ish name would be caught by rule 11 first and this
+            // entry would pass without rule 12 ever seeing a template literal.
+            (
+                "entropy4",
+                "const blob = `Xk2$Qw9!Zp4&Rt7@Lm3^Vn8*Bh1`;".to_string(),
+            ),
+            // Rule 13 — HTTP auth headers (each demonstrated by the Phase 13
+            // audit as surviving rules 1-12 untouched).
+            (
+                "auth1",
+                "Authorization: Basic YWRtaW46c3VwZXJzZWNyZXRwYXNzd29yZA==".to_string(),
+            ),
+            (
+                "auth2",
+                "Authorization: Bearer abcdef1234567890abcdef1234567890".to_string(),
+            ),
+            (
+                "auth3",
+                r#"headers = { authorization: "Bearer sV9pQ2xR7tL4zK8mN3bW" }"#.to_string(),
+            ),
+            // Rule 14 — hex-only blobs, which rule 12 structurally cannot reach
+            // (two character classes, ~3.8 bits/char).
+            (
+                "hex1",
+                r#"const s = "d41d8cd98f00b204e9800998ecf8427e5f2a3b4c";"#.to_string(),
+            ),
+            (
+                "hex2",
+                "webhookSignature = 5f2a3b4c5d6e7f809a0b1c2d3e4f5061".to_string(),
+            ),
+            // Rule 15 — a PEM body pasted without its BEGIN/END markers, which
+            // rule 1 keys off and therefore never sees.
+            (
+                "pembody1",
+                "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ".to_string(),
+            ),
+        ]
+    }
+
+    /// The full corpus: credential-shaped entries plus the rest.
+    fn planted_secrets() -> Vec<(&'static str, String)> {
+        let mut all = planted_credential_secrets();
+        all.extend(planted_credential_secrets_b());
+        all.extend(planted_non_credential_secrets());
+        all.extend(planted_heuristic_secrets());
+        all
+    }
+
+    /// Five lines that must survive redaction byte-for-byte. None is
+    /// credential-shaped, so none needs splitting.
     const NEGATIVE_CONTROLS: &[(&str, &str)] = &[
         ("neg1", "// this is just a comment explaining the code"),
         ("neg2", r#"const label = "hello world";"#),
@@ -371,17 +459,17 @@ mod tests {
     #[test]
     fn redaction_corpus_has_at_least_thirty_planted_secrets_and_five_negatives() {
         assert!(
-            PLANTED_SECRETS.len() >= 30,
+            planted_secrets().len() >= 30,
             "only {} planted secrets",
-            PLANTED_SECRETS.len()
+            planted_secrets().len()
         );
         assert_eq!(NEGATIVE_CONTROLS.len(), 5);
     }
 
     #[test]
     fn every_planted_secret_is_redacted() {
-        for (name, line) in PLANTED_SECRETS {
-            let result = snippets_result(&[(name, line)]);
+        for (name, line) in planted_secrets().iter() {
+            let result = snippets_result(&[(*name, line.as_str())]);
             let redacted =
                 redact(&result, &[]).unwrap_or_else(|e| panic!("{name}: redact() aborted: {e:?}"));
             let sent = redacted.to_request_snippets();
@@ -397,7 +485,7 @@ mod tests {
     #[test]
     fn every_negative_control_survives_intact() {
         for (name, line) in NEGATIVE_CONTROLS {
-            let result = snippets_result(&[(name, line)]);
+            let result = snippets_result(&[(*name, *line)]);
             let redacted =
                 redact(&result, &[]).unwrap_or_else(|e| panic!("{name}: redact() aborted: {e:?}"));
             let sent = redacted.to_request_snippets();
@@ -411,8 +499,8 @@ mod tests {
 
     #[test]
     fn line_counts_are_preserved_exactly_for_every_planted_secret() {
-        for (name, line) in PLANTED_SECRETS {
-            let result = snippets_result(&[(name, line)]);
+        for (name, line) in planted_secrets().iter() {
+            let result = snippets_result(&[(*name, line.as_str())]);
             let redacted = redact(&result, &[]).unwrap();
             let sent = redacted.to_request_snippets();
             let original_lines = line.split('\n').count();
@@ -480,7 +568,11 @@ mod tests {
 
     #[test]
     fn full_corpus_round_trip_is_idempotent() {
-        for (name, line) in PLANTED_SECRETS.iter().chain(NEGATIVE_CONTROLS.iter()) {
+        for (name, line) in planted_secrets()
+            .iter()
+            .map(|(n, l)| (*n, l.as_str()))
+            .chain(NEGATIVE_CONTROLS.iter().copied())
+        {
             let once = apply_r2_pipeline(line);
             let twice = apply_r2_pipeline(&once);
             assert_eq!(

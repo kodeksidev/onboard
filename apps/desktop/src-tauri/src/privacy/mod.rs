@@ -5,6 +5,7 @@
 //! what is on it.
 
 pub mod caps;
+pub mod fake_secrets;
 pub mod patterns;
 pub mod redact;
 pub mod verify_citations;
