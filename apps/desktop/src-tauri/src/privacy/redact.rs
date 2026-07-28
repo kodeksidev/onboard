@@ -777,3 +777,54 @@ mod per_rule_non_vacuity {
         let _ = apply_single_line_rules_except("anything", "not-a-real-rule");
     }
 }
+
+/// M4's measurement: how much of the corpus rests on R2.12 alone.
+///
+/// Section 8.9's rule 12 (high-entropy quoted literal) is the only catch-all
+/// in the rule set — every other rule keys off a recognisable prefix or
+/// structure. The Phase 13 audit's M4 finding accepted the corpus as proving
+/// SHAPE coverage rather than completeness, and noted that R3 idempotence is
+/// not coverage. This turns "how exposed are we if the catch-all misses" from
+/// a judgement into a number.
+#[cfg(test)]
+mod r2_12_reliance {
+    use super::tests::planted_secrets_for_rule_check;
+    use crate::privacy::patterns::{
+        apply_single_line_rules, apply_single_line_rules_except, REDACTED_PLACEHOLDER,
+    };
+
+    const ENTROPY_RULE: &str = "entropy";
+
+    #[test]
+    fn measure_entries_caught_only_by_the_high_entropy_catch_all() {
+        let corpus = planted_secrets_for_rule_check();
+        let mut only_entropy: Vec<&str> = Vec::new();
+
+        for (name, line) in &corpus {
+            let with_all = apply_single_line_rules(line).contains(REDACTED_PLACEHOLDER);
+            let without_entropy =
+                apply_single_line_rules_except(line, ENTROPY_RULE).contains(REDACTED_PLACEHOLDER);
+            if with_all && !without_entropy {
+                only_entropy.push(name);
+            }
+        }
+
+        println!(
+            "  R2.12 reliance: {} of {} corpus entries are caught ONLY by the high-entropy rule: {:?}",
+            only_entropy.len(),
+            corpus.len(),
+            only_entropy
+        );
+
+        // Pinned so the measurement is a regression check, not just a print.
+        // If a future rule change moves an entry onto or off the catch-all,
+        // this fails and the SECURITY_AUDIT.md figure gets revisited rather
+        // than silently going stale.
+        assert_eq!(
+            only_entropy.len(),
+            2,
+            "R2.12 reliance changed: {only_entropy:?}. Update docs/SECURITY_AUDIT.md's \
+             criterion-16 evidence before changing this number."
+        );
+    }
+}
