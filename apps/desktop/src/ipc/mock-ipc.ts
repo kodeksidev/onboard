@@ -45,7 +45,8 @@ const SAMPLE_ENVELOPE: AnalysisEnvelope = AnalysisEnvelope.parse(rawSampleAnalys
 const MOCK_REPO_PATH = '/mock/acme-billing-api';
 const PROGRESS_PHASES = ['walk', 'parse', 'resolve', 'graph', 'rank', 'persist'] as const;
 const MOCK_TEST_KEY_LATENCY_MS = 42;
-const MOCK_SENT_BYTE_COUNT = 256;
+/** Stands in for the real snippet payload's size (Section 8.9's caps apply on the Rust side). */
+const MOCK_SENT_BYTES_PER_FILE = 2_048;
 
 interface MockIpcState {
   progressListeners: AnalysisProgressListener[];
@@ -168,25 +169,105 @@ async function testAiKey(state: MockIpcState, request: TestAiKeyRequest): Promis
   return { isOk: true, latencyMs: MOCK_TEST_KEY_LATENCY_MS, modelEcho: request.model };
 }
 
-async function runAiAction(state: MockIpcState): Promise<AiActionResult> {
-  if (!state.settings.ai.isEnabled) {
+/**
+ * The provider-aware gate the Rust side enforces (`ai::permit`, Section 10's
+ * "AI toggle on, no key stored" row): every `ai_*` command is `E_AI_DISABLED`
+ * while the master toggle is off or a credentialed provider has no key. The
+ * mock enforces it too, so the UI's gating is exercised against the same
+ * refusal in development that it will meet in production.
+ */
+function aiPermitError(state: MockIpcState): AppError | null {
+  const { isEnabled, provider, hasStoredKey } = state.settings.ai;
+  if (isEnabled && (provider === 'ollama' || hasStoredKey)) {
+    return null;
+  }
+  return {
+    code: 'E_AI_DISABLED',
+    message: ERRORS.aiDisabled().description,
+    detail: null,
+    path: null,
+  };
+}
+
+/**
+ * Builds a fixture answer whose citations are, by construction, exactly the
+ * paths in `citedPaths` — the same invariant Section 8.10's verifier
+ * guarantees in production. The mock never emits a `[[…]]` token for a path
+ * it does not also return as cited, because the UI is entitled to assume the
+ * backend already rejected any answer where that was untrue.
+ */
+function buildAiAnswer(markdown: string, citedPaths: readonly string[]): AiActionResult {
+  return {
+    markdown,
+    citedPaths,
+    sentFileCount: citedPaths.length,
+    sentByteCount: citedPaths.length * MOCK_SENT_BYTES_PER_FILE,
+  };
+}
+
+function topPaths(count: number): readonly string[] {
+  const ranked = [
+    ...SAMPLE_ENVELOPE.result.importantFilePaths,
+    ...SAMPLE_ENVELOPE.result.entryPoints.map((entry) => entry.path),
+  ];
+  return [...new Set(ranked)].slice(0, count);
+}
+
+async function aiProjectSummary(state: MockIpcState): Promise<AiActionResult> {
+  const permitError = aiPermitError(state);
+  if (permitError !== null) {
+    return rejectWith(permitError);
+  }
+  const paths = topPaths(3);
+  const markdown = [
+    '## What this project is',
+    '',
+    `${SAMPLE_ENVELOPE.result.repo.name} is a ${SAMPLE_ENVELOPE.result.repo.detectedType}.`,
+    '',
+    ...paths.map((path, index) => `${index + 1}. Start at [[${path}:1]].`),
+  ].join('\n');
+  return buildAiAnswer(markdown, paths);
+}
+
+async function aiExplainModule(state: MockIpcState, moduleId: string): Promise<AiActionResult> {
+  const permitError = aiPermitError(state);
+  if (permitError !== null) {
+    return rejectWith(permitError);
+  }
+  const module = SAMPLE_ENVELOPE.result.modules.find((candidate) => candidate.id === moduleId);
+  if (module === undefined) {
     return rejectWith({
-      code: 'E_AI_DISABLED',
-      message: 'Turn on AI in Settings and store a key to use this feature.',
-      detail: null,
+      code: 'E_UNEXPECTED',
+      message: 'That module is not part of the analysed repository.',
+      detail: `No module with id ${moduleId}`,
       path: null,
     });
   }
-  const citedPath =
-    SAMPLE_ENVELOPE.result.importantFilePaths[0] ??
-    SAMPLE_ENVELOPE.result.entryPoints[0]?.path ??
-    '';
-  return {
-    markdown: `This project centers on [[${citedPath}:1]].`,
-    citedPaths: [citedPath],
-    sentFileCount: 1,
-    sentByteCount: MOCK_SENT_BYTE_COUNT,
-  };
+  const paths = module.keyFilePaths.slice(0, 2);
+  const markdown = [
+    `## ${module.name}`,
+    '',
+    `${module.purposeByConvention} It holds ${module.fileCount} analysed files under \`${module.dirPath}\`.`,
+    '',
+    ...paths.map((path) => `- [[${path}:1]] is one of its key files.`),
+  ].join('\n');
+  return buildAiAnswer(markdown, paths);
+}
+
+async function aiAsk(state: MockIpcState, question: string): Promise<AiActionResult> {
+  const permitError = aiPermitError(state);
+  if (permitError !== null) {
+    return rejectWith(permitError);
+  }
+  const paths = topPaths(2);
+  const markdown = [
+    `**${question}**`,
+    '',
+    `The most relevant files for that are below.`,
+    '',
+    ...paths.map((path) => `- [[${path}:1]]`),
+  ].join('\n');
+  return buildAiAnswer(markdown, paths);
 }
 
 function addListener<T>(listeners: T[], listener: T): T[] {
@@ -210,9 +291,9 @@ export function createMockIpc(): OnboardIpc {
     storeAiKey: async (request) => storeAiKey(state, request),
     clearAiKey: async () => clearAiKey(state),
     testAiKey: (request) => testAiKey(state, request),
-    aiProjectSummary: () => runAiAction(state),
-    aiExplainModule: () => runAiAction(state),
-    aiAsk: () => runAiAction(state),
+    aiProjectSummary: () => aiProjectSummary(state),
+    aiExplainModule: (request) => aiExplainModule(state, request.moduleId),
+    aiAsk: (request) => aiAsk(state, request.question),
     onAnalysisProgress: (listener): Unsubscribe => {
       state.progressListeners = addListener(state.progressListeners, listener);
       return () => {

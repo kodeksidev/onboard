@@ -56,6 +56,12 @@ pub enum AppErrorCode {
     EAiRateLimited,
     /// Phase 12 step 2: the provider responded 404 for the configured model.
     EAiModelNotFound,
+    /// Phase 12 step 6 (Section 8.10): the model's answer cited a path that
+    /// is not in the index, cited a line that does not exist in a file that
+    /// IS in the index, or cited nothing verifiable at all. The WHOLE
+    /// answer is withheld — Section 8.10 step 3: "Never show a partially
+    /// verified answer."
+    EAiCitationRejected,
     /// Phase 12 step 5: Ollama specifically (never Anthropic/openai-compatible)
     /// could not be reached at all — reclassified from a generic
     /// `E_AI_NETWORK` transport failure by `ai::ollama`, since for a
@@ -88,6 +94,7 @@ impl AppErrorCode {
             AppErrorCode::EAiKeyInvalid => "E_AI_KEY_INVALID",
             AppErrorCode::EAiRateLimited => "E_AI_RATE_LIMITED",
             AppErrorCode::EAiModelNotFound => "E_AI_MODEL_NOT_FOUND",
+            AppErrorCode::EAiCitationRejected => "E_AI_CITATION_REJECTED",
             AppErrorCode::EAiOllamaUnreachable => "E_AI_OLLAMA_UNREACHABLE",
         }
     }
@@ -253,6 +260,21 @@ impl AppError {
         )
     }
 
+    /// Phase 12 step 6: `ai::pipeline`'s fail-closed gate found that a step
+    /// of Section 12's mandatory ordered pipeline was skipped or ran out of
+    /// order ("Skipping any step is a CRITICAL review finding"). This is the
+    /// same family as R3's abort — the safety pipeline did not complete, so
+    /// nothing is sent — hence the same code. `detail` carries which steps
+    /// actually ran, for the local log; `message` never does. Logged in
+    /// `docs/DECISIONS.md`.
+    pub fn ai_pipeline_incomplete(detail: impl Into<String>) -> Self {
+        Self::new(
+            AppErrorCode::EAiPayloadUnsafe,
+            "Onboard could not complete its privacy checks for this request, so nothing was sent. Restart Onboard and try again.",
+        )
+        .with_detail(detail.into())
+    }
+
     /// Section 12: "`settings.ai.isEnabled === true` **and** a key is
     /// retrievable; otherwise `E_AI_DISABLED` before any other work." No
     /// literal Section 10 copy exists for this exact string (only the
@@ -309,6 +331,32 @@ impl AppError {
         .with_detail(raw_detail.into())
     }
 
+    /// Phase 12 step 6: Onboard's OWN limit (Section 12:
+    /// `AI_MAX_REQUESTS_PER_MINUTE = 10`), not a provider 429. Section 10's
+    /// literal copy for this code names the provider ("{provider} is
+    /// rate-limiting Onboard"), which would be a false statement here —
+    /// nothing was sent, and the provider has no opinion. Same code (the
+    /// UI's `E_AI_RATE_LIMITED` affordance is the right one: wait, then
+    /// retry), honest description. Logged in `docs/DECISIONS.md`.
+    pub fn ai_rate_limited_locally(retry_after_seconds: u64) -> Self {
+        Self::new(
+            AppErrorCode::EAiRateLimited,
+            format!(
+                "Onboard limits AI requests to 10 per minute. Wait {retry_after_seconds}s and try again. Nothing was sent."
+            ),
+        )
+    }
+
+    /// Phase 12 step 6: Section 12's `AI_MAX_CONCURRENT = 1`. Same code and
+    /// same reasoning as [`Self::ai_rate_limited_locally`] — see that
+    /// constructor's doc comment.
+    pub fn ai_request_already_in_flight() -> Self {
+        Self::new(
+            AppErrorCode::EAiRateLimited,
+            "Onboard runs one AI request at a time. Wait for the current one to finish, then try again. Nothing was sent.",
+        )
+    }
+
     /// No literal Section 10 copy exists for this exact string (the row
     /// documents `E_AI_MODEL_NOT_FOUND` only in Section 7.4's error-code
     /// column, not in Section 10's table) — conventional phrasing, logged
@@ -319,6 +367,49 @@ impl AppError {
             format!("{provider} doesn't have a model named \"{model}\". Check the model name in Settings."),
         )
         .with_detail(raw_detail.into())
+    }
+
+    /// Section 10's literal copy for "Model cites a path not in the index",
+    /// verbatim, with the offending path interpolated exactly as
+    /// `apps/desktop/src/copy/messages.ts`'s `ERRORS.aiCitationRejected`
+    /// does. `.path` carries the same offending path so the UI can show it
+    /// without re-parsing `message` (acceptance criterion 18).
+    pub fn ai_citation_rejected(offending_path: &str) -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            format!(
+                "The model referenced {offending_path}, which is not in the index. Onboard never shows paths it can't verify. Try a narrower question."
+            ),
+        )
+        .with_path(offending_path.to_string())
+    }
+
+    /// The deliberate strengthening of Section 8.10 step 3 (logged in
+    /// `docs/DECISIONS.md`): a path that IS in the index but carries a line
+    /// number the file does not have is a citation that resolves to
+    /// nothing, which is exactly the plausible-but-unresolvable case a bare
+    /// membership check waves through. `.path` is the full offending
+    /// citation (`path:line`), not just the path — the line is the part
+    /// that failed, so hiding it would make the message unactionable.
+    pub fn ai_citation_line_out_of_range(path: &str, line: u64, real_line_count: u64) -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            format!(
+                "The model referenced {path}:{line}, but that file has {real_line_count} lines. Onboard never shows citations it can't resolve. Try a narrower question."
+            ),
+        )
+        .with_path(format!("{path}:{line}"))
+    }
+
+    /// Section 8.10's non-vacuousness case: "every citation resolves" is
+    /// trivially true of an answer containing no citations at all, so an
+    /// uncited answer is withheld rather than reported as verified. No
+    /// offending path exists here, so `.path` stays `None`.
+    pub fn ai_answer_uncited() -> Self {
+        Self::new(
+            AppErrorCode::EAiCitationRejected,
+            "The model's answer pointed at no files, so none of it could be checked against the index. Onboard only shows answers whose claims resolve to real code. Try a narrower question.",
+        )
     }
 
     /// Section 10's literal copy for "Ollama not running":

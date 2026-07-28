@@ -12,6 +12,8 @@
 //!   - `MALFORMED_ON=<method>`  print one invalid JSON line, then exit
 //!   - `HANG_ON=<method>`       never reply to that method (sleeps)
 //!   - `VERSION_MISMATCH=1`     `engine.version` reports a wrong schema version
+//!   - `SNIPPET_SECRET=1`       every `engine.snippets` snippet carries a planted Section 8.9 secret
+//!   - `SNIPPET_BYTES=<n>`      each snippet's content is at least `<n>` bytes (drives R4's caps)
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
@@ -75,6 +77,49 @@ fn main() {
     }
 }
 
+/// Section 7.3's `engine.snippets`: one snippet per requested path. The
+/// content is synthetic but REAL text (not an empty string), so the Rust
+/// side's redaction, caps, transcript and citation steps have something to
+/// operate on. `SNIPPET_SECRET` plants a Section 8.9 rule-2 match;
+/// `SNIPPET_BYTES` sizes each snippet so R4's caps can be driven.
+fn build_snippets(params: &Value, toggles: &HashMap<String, String>) -> Value {
+    let paths = params
+        .get("paths")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let filler_bytes: usize = toggles
+        .get("SNIPPET_BYTES")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let snippets: Vec<Value> = paths
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|path| {
+            let mut content = format!("// {path}\nexport const value = 1;\n");
+            if toggles.contains_key("SNIPPET_SECRET") {
+                content.push_str("const awsKey = \"REDACTED-AWS-BY-HISTORY-REWRITE\";\n");
+            }
+            if filler_bytes > 0 {
+                // Many short lines, so the per-file LINE cap bites too.
+                let line = "const filler = 1;\n";
+                while content.len() < filler_bytes {
+                    content.push_str(line);
+                }
+            }
+            let line_count = content.matches('\n').count().max(1);
+            json!({
+                "path": path,
+                "startLine": 1,
+                "endLine": line_count,
+                "content": content,
+            })
+        })
+        .collect();
+    json!({ "snippets": snippets })
+}
+
 fn parse_toggles<I: Iterator<Item = String>>(args: I) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for arg in args {
@@ -85,7 +130,7 @@ fn parse_toggles<I: Iterator<Item = String>>(args: I) -> HashMap<String, String>
     map
 }
 
-fn handle(method: &str, _params: Value, toggles: &HashMap<String, String>) -> Value {
+fn handle(method: &str, params: Value, toggles: &HashMap<String, String>) -> Value {
     match method {
         "engine.version" => {
             let contract_schema_version = if toggles.contains_key("VERSION_MISMATCH") {
@@ -115,7 +160,7 @@ fn handle(method: &str, _params: Value, toggles: &HashMap<String, String>) -> Va
             "isTruncated": false,
             "content": "",
         }),
-        "engine.snippets" => json!({ "snippets": [] }),
+        "engine.snippets" => build_snippets(&params, toggles),
         "engine.shutdown" => json!({}),
         _ => Value::Null,
     }
