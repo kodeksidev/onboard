@@ -1162,7 +1162,7 @@ mod tests {
 
         let text = String::from_utf8_lossy(&received_body);
         assert!(
-            !text.contains("REDACTED-AWS-BY-HISTORY-REWRITE"),
+            !text.contains(&crate::privacy::fake_secrets::aws_example_key_id()),
             "a planted secret reached the wire: {text}"
         );
         assert!(text.contains("<redacted>"));

@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn the_transcript_records_the_redacted_text_not_the_original() {
         let dir = tempfile::tempdir().unwrap();
-        let secret = "REDACTED-AWS-BY-HISTORY-REWRITE";
+        let secret = crate::privacy::fake_secrets::aws_example_key_id();
         let prompt = prompt_with(
             AiFeature::ProjectSummary,
             &[("config/aws.ts", &format!("aws_access_key_id = {secret}"))],
@@ -299,7 +299,10 @@ mod tests {
         )
         .unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains(secret), "the transcript leaked a secret");
+        assert!(
+            !text.contains(secret.as_str()),
+            "the transcript leaked a secret"
+        );
         assert!(text.contains("<redacted>"));
     }
 
@@ -395,8 +398,8 @@ mod connectivity_tests {
             "timestampMs": 0,
             "kind": "connectivity",
             "provider": "anthropic",
-            "headers": { "x-api-key": "REDACTED-ANTHROPIC-BY-HISTORY-REWRITE" },
-            "authorization": "Bearer REDACTED-ANTHROPIC-BY-HISTORY-REWRITE",
+            "headers": { "x-api-key": crate::privacy::fake_secrets::anthropic_key_short() },
+            "authorization": format!("Bearer {}", crate::privacy::fake_secrets::anthropic_key_short()),
         });
         let raw = leaked.to_string().to_lowercase();
         let mut fired = Vec::new();

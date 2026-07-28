@@ -539,7 +539,10 @@ mod tests {
 
     #[test]
     fn r1_excludes_files_matching_a_user_exclude_glob() {
-        let result = snippets_result(&[("fixtures/data.snap", "REDACTED-AWS-BY-HISTORY-REWRITE")]);
+        let result = snippets_result(&[(
+            "fixtures/data.snap",
+            &crate::privacy::fake_secrets::aws_example_key_id(),
+        )]);
         let redacted = redact(&result, &["**/*.snap".to_string()]).unwrap();
         assert_eq!(redacted.sent_file_count(), 0);
     }
@@ -629,7 +632,10 @@ mod tests {
 
     #[test]
     fn debug_and_display_never_print_the_secret_or_raw_content() {
-        let result = snippets_result(&[("aws.ts", "REDACTED-AWS-BY-HISTORY-REWRITE")]);
+        let result = snippets_result(&[(
+            "aws.ts",
+            &crate::privacy::fake_secrets::aws_example_key_id(),
+        )]);
         let redacted = redact(&result, &[]).unwrap();
         let debug_output = format!("{redacted:?}");
         let display_output = format!("{redacted}");

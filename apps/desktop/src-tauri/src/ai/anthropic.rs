@@ -390,7 +390,7 @@ mod tests {
         let (settings_path, ai_keys, _cleanup) = enable_real_anthropic(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
-        let planted_secret = "REDACTED-AWS-BY-HISTORY-REWRITE"; // Section 8.9 rule 2 (AWS key)
+        let planted_secret = crate::privacy::fake_secrets::aws_example_key_id(); // Section 8.9 rule 2 (AWS key)
         let redacted_payload = crate::privacy::redact::redact(
             &EngineSnippetsResult {
                 snippets: vec![EngineSnippet {
@@ -433,7 +433,7 @@ mod tests {
             "expected <redacted> in the bytes actually sent, got: {received_text}"
         );
         assert!(
-            !received_text.contains(planted_secret),
+            !received_text.contains(planted_secret.as_str()),
             "the planted secret leaked into the bytes actually sent: {received_text}"
         );
 
