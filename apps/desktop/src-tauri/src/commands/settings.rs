@@ -20,8 +20,18 @@ pub enum Theme {
     Dark,
 }
 
+/// Wire form is `"anthropic"` / `"ollama"`, pinned by
+/// `ai_provider_serializes_to_exactly_these_bytes` below and mirrored on the
+/// TS side by `settings-schema.test.ts`.
+///
+/// This is `"lowercase"` rather than `"kebab-case"` because `"kebab-case"`
+/// was only ever adopted to spell an out-of-scope third variant
+/// (`OpenAiCompatible` -> `"openai-compatible"`); with that variant deleted,
+/// both rules produce identical bytes for these two single-word names, and
+/// the spec's own value is `"lowercase"`. See the SUPERSEDED markers on the
+/// two step-3B/step-5 entries in `docs/DECISIONS.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "lowercase")]
 pub enum AiProvider {
     Anthropic,
     Ollama,
@@ -339,6 +349,55 @@ mod tests {
         assert!(crate::secrets::ai_key::eventually(|| {
             !get_settings_core(&path, &ai_keys).ai.has_stored_key
         }));
+    }
+
+    /// Pins the SERIALIZED BYTES of every `AiProvider` variant.
+    ///
+    /// This test exists because its absence is what let the wire
+    /// representation drift for a reason unrelated to the wire: the
+    /// `rename_all` attribute was switched from `"lowercase"` to
+    /// `"kebab-case"` purely to spell an out-of-scope third variant, and
+    /// nothing anywhere asserted what bytes reached `settings.json`. A
+    /// `#[serde(rename_all = ...)]` change is invisible to every test that
+    /// only round-trips a value through serde, because both directions move
+    /// together — the only way to catch it is to assert the literal text.
+    ///
+    /// Both directions are pinned: the exact bytes out, and the exact bytes
+    /// in (so a settings file written by any prior version still loads).
+    #[test]
+    fn ai_provider_serializes_to_exactly_these_bytes() {
+        for (variant, expected) in [
+            (AiProvider::Anthropic, "\"anthropic\""),
+            (AiProvider::Ollama, "\"ollama\""),
+        ] {
+            let encoded = serde_json::to_string(&variant).expect("must serialize");
+            assert_eq!(
+                encoded, expected,
+                "AiProvider's wire form is a compatibility surface: it is what \
+                 lands in settings.json and what the TS AiProvider zod enum \
+                 parses. Changing it silently breaks every existing settings file."
+            );
+            let decoded: AiProvider = serde_json::from_str(expected).expect("must deserialize");
+            assert_eq!(decoded, variant);
+        }
+    }
+
+    /// The variant set itself, pinned as bytes. Complements
+    /// `validate_provider_rejects_anything_outside_the_two_v1_adapters`:
+    /// that one guards the string validator, this one guards the enum a
+    /// future contributor would have to edit to add an adapter.
+    #[test]
+    fn ai_provider_has_exactly_two_variants_on_the_wire() {
+        let all = [AiProvider::Anthropic, AiProvider::Ollama];
+        let encoded: Vec<String> = all
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("must serialize"))
+            .collect();
+        assert_eq!(encoded, vec!["\"anthropic\"", "\"ollama\""]);
+        assert!(
+            serde_json::from_str::<AiProvider>("\"openai-compatible\"").is_err(),
+            "A4: v1 ships exactly Anthropic and Ollama"
+        );
     }
 
     #[test]
