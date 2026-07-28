@@ -62,10 +62,41 @@
  *   WhereIsSearch.test                2043ms  41%
  *   FileViewer.test                   1660ms  33%
  *
- * Honest note on what this constant is currently doing: under the load above,
- * NOTHING exceeded 5s. These timeouts are therefore insurance against worse
- * contention than could be reproduced here, not the reason the suite is
- * green. If a test in this list ever does exceed 15s, that is a real hang and
- * should be investigated, not raised.
+ * CORRECTION — the load figures above were the WRONG worst case, and the list
+ * they produced was too small. Synthetic CPU load is not the harshest thing
+ * this suite meets. Two harsher cases showed up in practice:
+ *
+ *   1. A real parallel `rustc` build (the src-tauri crate compiling in the
+ *      background) is heavier than 12 busy-spin processes, and pushed two
+ *      files past even the 15s headroom.
+ *   2. A COLD Vite dep-optimization cache — which is exactly what CI gets,
+ *      because CI installs dependencies and then runs the suite once. The
+ *      first run after any `bun install` pays full transform cost.
+ *
+ * Cold-cache worst test per file, no other load (% of the 5s default):
+ *
+ *   App.test                       7789ms  156%
+ *   DependencyGraph.test           7497ms  150%
+ *   RoadmapPanel.graphIntegration  6641ms  133%
+ *   DependencyGraph.axe            5710ms  114%
+ *   WhereIsSearch.axe              5197ms  104%
+ *   FileViewer.axe                 4860ms   97%
+ *   ModuleMap.axe                  4620ms   92%
+ *   WhereIsSearch.test             3818ms   76%   <- had no headroom
+ *   FileViewer.test                3802ms   76%   <- had no headroom
+ *   RoadmapPanel.axe               3064ms   61%
+ *
+ * Seven files exceed 90% of the default from cold start alone, and the two
+ * marked above were the ones that actually failed a real run. They mount
+ * CodeMirror, so the ENGINE-MOUNT principle would have caught them; the
+ * measured-under-warm-load rule did not. When the principle and the
+ * measurement disagree, prefer the principle — a file that mounts CodeMirror,
+ * Cytoscape, or axe-core is expensive whether or not one sampling caught it
+ * being expensive.
+ *
+ * Honest note on what this constant does: on a warm cache with no contention,
+ * nothing here exceeds 5s. The headroom earns its keep on the cold first run
+ * and under real build load. If a test in this list ever exceeds 15s, that is
+ * a hang to investigate, not a number to raise.
  */
 export const SLOW_MOUNT_TIMEOUT_MS = 15_000;

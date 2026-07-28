@@ -21,6 +21,10 @@
     "format": "prettier --write .",
     "test": "bun run --cwd \"packages/contract\" test && bun run --cwd \"packages/engine\" test && bun run --cwd \"apps/desktop\" test"
   },
+  "overrides": {
+    "brace-expansion": ">=5.0.8",
+    "serialize-javascript": ">=7.0.7"
+  },
   "devDependencies": {
     "@eslint/js": "~9.39.0",
     "@typescript-eslint/eslint-plugin": "~8.65.0",

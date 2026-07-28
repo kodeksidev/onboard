@@ -5,12 +5,13 @@ import { AnalysisEnvelope } from '@onboard/contract';
 import type { AnalysisResult } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { FileViewer } from './FileViewer';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const REPO_ID = '9f3c1a7b2e5d4086';
 const RESULT: AnalysisResult = AnalysisEnvelope.parse(rawSampleAnalysis).result;
 const AUTH_SERVICE_PATH = 'src/services/auth.service.ts';
 
-describe('FileViewer', () => {
+describe('FileViewer', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('with no path open, renders the exact "No file open" empty state', () => {
     render(<FileViewer repoId={REPO_ID} result={RESULT} path={null} />);
 

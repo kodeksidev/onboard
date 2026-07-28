@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { SearchResponse } from '@onboard/contract';
 import { ipc } from '@/ipc/ipc';
 import { WhereIsSearch } from './WhereIsSearch';
+import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
 const REPO_ID = '9f3c1a7b2e5d4086';
 
@@ -25,7 +26,7 @@ beforeEach(() => {
   });
 });
 
-describe('WhereIsSearch', () => {
+describe('WhereIsSearch', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   test('typing a real query renders genuinely ranked results with expanded terms shown', async () => {
     const user = userEvent.setup();
     render(<WhereIsSearch repoId={REPO_ID} />);
