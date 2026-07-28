@@ -26,21 +26,50 @@ SHA_PATTERN = re.compile(r"(?<![0-9a-zA-Z])([0-9a-f]{7,40})(?![0-9a-zA-Z])")
 # unresolvable; that is the whole point of publishing the translation.
 EXEMPT_FILES = {"docs/COMMIT_MAP.md"}
 
-# Hex tokens that are NOT commit SHAs, each with the reason it is exempt.
+# Exemption by CONTEXT, not by value.
 #
-# An allowlist rather than a looser pattern, deliberately. Relaxing the match
-# to exclude these would also stop catching real stale commit references that
-# happen to be written the same way — and the failure mode of this check is
-# supposed to be a false ALARM a human dismisses, never a false pass. Adding an
-# entry here is a decision someone has to write down.
-EXEMPT_TOKENS = {
-    # `scripts/build-sidecar.ts` injects a 12-char sha256 prefix of the engine
-    # bundle as ONBOARD_BUILD_HASH; DECISIONS.md's Phase 11 entry quotes two
-    # observed values while retracting a claim about them. Build artefact
-    # identity, unrelated to git.
-    "a042c6ca35b6": "engine ONBOARD_BUILD_HASH, not a commit",
-    "4b1c400fd59f": "engine ONBOARD_BUILD_HASH, not a commit",
-}
+# The first version of this check allowlisted two literal hashes —
+# `a042c6ca35b6` and `4b1c400fd59f` — as "engine ONBOARD_BUILD_HASH, not a
+# commit". That was wrong in a way worth recording: a build hash is
+# CONTENT-ADDRESSED, so it changes whenever the engine source changes. This
+# project demonstrated exactly that when a measurement seam was added and
+# removed (`5228916446d5` -> `f252441bb078` -> `5228916446d5`). A by-value
+# allowlist therefore goes stale on the next engine change, someone appends a
+# new entry, and the old ones sit there matching nothing — the same defect as
+# an allowed path that no longer exists, which the corpus guard already checks
+# for and this file did not.
+#
+# The collision is structural, not incidental: a 12-hex build hash sits inside
+# the 7-40 hex range a short SHA occupies, so no pattern can separate them by
+# shape. Only context can.
+#
+# `DISQUALIFYING_CONTEXT` marks prose that is discussing a build hash.
+# `CITING_CONTEXT` marks prose that is citing a commit. A token is only checked
+# when the second is present and the first is not.
+# Exactly the phrases that appear in the prose being excused — no more. Six
+# were written first and three matched nothing; the inert-exemption check below
+# caught them immediately. Speculative entries are not harmless here: they are
+# indistinguishable from an exemption whose target has moved.
+DISQUALIFYING_CONTEXT = (
+    "hash-scan",
+    "the hash from",
+    "hash both times",
+)
+
+CITING_CONTEXT = (
+    "commit",
+    "head",
+    "deleted in",
+    "reverted in",
+    "superseded",
+    "landed in",
+    "fixed in",
+    "at `main`",
+)
+
+# How far back to look for the words above. Citations wrap across lines in
+# these documents, so the window spans newlines rather than stopping at one.
+CONTEXT_WINDOW = 220
 
 
 def is_commit(candidate: str) -> bool:
@@ -53,36 +82,46 @@ def is_commit(candidate: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "commit"
 
 
-def looks_like_a_sha_reference(line: str, token: str) -> bool:
-    """Only treat a hex run as a SHA reference when it is written as code or
-    prefixed by a word that means "commit" — otherwise a content hash, a build
-    id or a hex blob in an example would be swept in and fail forever."""
-    idx = line.find(token)
-    before = line[max(0, idx - 24) : idx].lower()
-    after = line[idx + len(token) : idx + len(token) + 2]
-    in_backticks = before.endswith("`") and after.startswith("`")
-    named = any(word in before for word in ("commit", "head", "sha", "at ", "in "))
-    return in_backticks or named
+def classify(text: str, position: int) -> tuple[bool, str]:
+    """Decide whether the token at `position` is citing a commit.
+
+    Returns (should_check, matched_context). The window spans newlines because
+    citations in these documents wrap — `DECISIONS.md`'s "deleted in\\n
+    `fa1fe5c`" puts the verb on the previous line.
+    """
+    window = text[max(0, position - CONTEXT_WINDOW) : position].lower()
+    for phrase in DISQUALIFYING_CONTEXT:
+        if phrase in window:
+            return False, phrase
+    for phrase in CITING_CONTEXT:
+        if phrase in window:
+            return True, phrase
+    return False, ""
 
 
 def main() -> int:
     unresolved: list[str] = []
     checked = 0
+    disqualified_used: set[str] = set()
+    citing_used: set[str] = set()
 
     for path in sorted((REPO_ROOT / "docs").rglob("*.md")):
         rel = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
         if rel in EXEMPT_FILES:
             continue
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            for match in SHA_PATTERN.finditer(line):
-                token = match.group(1)
-                if token in EXEMPT_TOKENS:
-                    continue
-                if not looks_like_a_sha_reference(line, token):
-                    continue
-                checked += 1
-                if not is_commit(token):
-                    unresolved.append(f"{rel}:{lineno}: {token} does not resolve to a commit")
+        text = path.read_text(encoding="utf-8")
+        for match in SHA_PATTERN.finditer(text):
+            token = match.group(1)
+            should_check, phrase = classify(text, match.start())
+            if not should_check:
+                if phrase:
+                    disqualified_used.add(phrase)
+                continue
+            citing_used.add(phrase)
+            lineno = text.count("\n", 0, match.start()) + 1
+            checked += 1
+            if not is_commit(token):
+                unresolved.append(f"{rel}:{lineno}: {token} does not resolve to a commit")
 
     print(f"docs:check — examined {checked} SHA-shaped reference(s) in docs/")
 
@@ -90,6 +129,21 @@ def main() -> int:
     # known to cite commits in DECISIONS.md and SECURITY_AUDIT.md.
     if checked == 0:
         print("REFUSING: no SHA references examined — the scan is broken", file=sys.stderr)
+        return 1
+
+    # Non-vacuity for the exemption itself: a DISQUALIFYING phrase that never
+    # matches anything is dead weight pretending to be a safeguard. This is the
+    # check the corpus guard has for allowed paths and this file originally
+    # lacked — an inert exemption hides the fact that its real target moved.
+    inert = [p for p in DISQUALIFYING_CONTEXT if p not in disqualified_used]
+    if inert:
+        print(
+            "\nFAILED — exemption phrases that matched nothing:\n  "
+            + "\n  ".join(inert)
+            + "\n\nAn exemption that excuses nothing is stale. Delete it, or correct it to "
+            "match the prose it was written for.",
+            file=sys.stderr,
+        )
         return 1
 
     if unresolved:
