@@ -554,3 +554,54 @@ upstream fails at the boundary instead of laundering into a smaller number.
 
 **Acceptance criterion 26 remains PARTIAL** until a re-audit is performed with a method
 that can see fail-open behaviour.
+
+---
+
+## 7. M4 — what the redaction corpus proves, measured — added 2026-07-28
+
+### The corpus proves shape coverage, not completeness
+
+M4 accepted the corpus on the grounds that it demonstrates the SHAPES it contains are
+caught, and explicitly not that the rule set is complete. Two things sharpen that,
+both now measured rather than asserted.
+
+**R3 idempotence is not coverage.** It detects a rule that fails to converge, never a
+rule that never matched. Unchanged from M4's original statement, repeated here because
+it is the most common misreading of what the property test buys.
+
+### Criterion 16's evidence is the dependence proof, not the entry count
+
+Acceptance criterion 16 asks for "≥ 30 planted secrets ... all replaced". The corpus
+has 37 entries and they all pass — but **entry count is the weaker claim**, because
+entries overlap. Measured directly: `aws1` (`aws_access_key_id = AKIA...`) stays
+redacted with the AWS rule disabled, because rule 11's assignment heuristic also
+catches it. An entry can therefore be present, passing, and never exercise the rule it
+was written for.
+
+The stronger evidence is `privacy::redact::per_rule_non_vacuity`: for each of the
+eight scanner-relevant families, **at least one corpus entry survives when that
+family's rule alone is disabled**. That is what proves each rule is genuinely
+exercised. Eight families, eight demonstrations. Cite that test for criterion 16, not
+the entry count.
+
+### R2.12 is the only catch-all, and exactly two entries depend on it
+
+Every rule except R2.12 (high-entropy quoted literal) keys off a recognisable prefix
+or structure, so R2.12 is the whole of the corpus's defence against a secret shape
+nobody enumerated.
+
+Measured by `privacy::redact::r2_12_reliance`, which disables R2.12 alone and counts
+what escapes:
+
+> **2 of 37 corpus entries are caught ONLY by R2.12: `entropy3` and `entropy4`.**
+
+Both use the variable name `blob`. `entropy1` and `entropy2` use `token` and
+`apiSecret`, so rule 11 catches them first — which is why the corpus deliberately
+includes `blob` variants. Without them, R2.12 would have no uniquely-dependent entry
+and the catch-all would be untested.
+
+**Read that number as a floor on exposure, not a reassurance.** It says the corpus
+exercises R2.12 through two entries. It says nothing about the space of real secret
+shapes that only R2.12 could catch, which is unbounded and unenumerated — that is
+precisely M4's point. The figure is pinned by an assertion so a future rule change
+fails the test rather than silently invalidating this section.
