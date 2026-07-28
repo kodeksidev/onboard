@@ -61,6 +61,18 @@ pub enum PipelineStep {
     TranscriptRecorded,
     Sent,
     CitationsVerified,
+    /// The connectivity check's stand-in for `SnippetsFetched`/`Redacted`/
+    /// `Capped`.
+    ///
+    /// It is a DISTINCT step, not a reuse of `Redacted`, because a
+    /// connectivity probe carries no repo content: `run_test` builds its
+    /// payload from an empty snippet set, so recording `Redacted` there
+    /// would attest that redaction happened over nothing. A control that
+    /// reports without holding is the defect class this pipeline exists to
+    /// prevent — and the failure mode is delayed, not immediate: if someone
+    /// later adds content to the probe, a `Redacted` step would keep
+    /// claiming the content was redacted when nothing had re-examined it.
+    ConnectivityProbeBuilt,
 }
 
 /// The full pipeline, in Section 12's order. `RateLimitAcquired` is the one
@@ -88,42 +100,117 @@ pub const STEPS_BEFORE_SEND: &[PipelineStep] = &[
     PipelineStep::TranscriptRecorded,
 ];
 
-#[derive(Debug, Default)]
-pub struct PipelineTrace(Vec<PipelineStep>);
+/// A connectivity check's order. Shorter than [`REQUIRED_ORDER`] because a
+/// probe has no repo, no snippets and no answer to verify.
+pub const CONNECTIVITY_ORDER: &[PipelineStep] = &[
+    PipelineStep::PermitAcquired,
+    PipelineStep::RateLimitAcquired,
+    PipelineStep::ConnectivityProbeBuilt,
+    PipelineStep::TranscriptRecorded,
+    PipelineStep::Sent,
+];
+
+pub const CONNECTIVITY_STEPS_BEFORE_SEND: &[PipelineStep] = &[
+    PipelineStep::PermitAcquired,
+    PipelineStep::RateLimitAcquired,
+    PipelineStep::ConnectivityProbeBuilt,
+    PipelineStep::TranscriptRecorded,
+];
+
+/// Which pipeline a trace belongs to. Chosen at CONSTRUCTION and never
+/// afterwards — see [`PipelineTrace`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TraceKind {
+    Feature,
+    Connectivity,
+}
+
+/// Proof that [`PipelineTrace::ensure_ready_to_send`] ran and passed.
+///
+/// This is the H1 lesson applied to the egress door. A scanner asserting
+/// "every call site carries a `PipelineTrace` parameter" would pass a
+/// function that takes the parameter, records nothing and gates nothing —
+/// the same error as "the virtualization library is a dependency" versus
+/// "the lists are virtualized". So the guarantee is structural instead:
+/// the field is private, there is no public constructor, and the ONLY way
+/// to obtain one is a successful `ensure_ready_to_send`. `ai::http::send`
+/// requires `&SendApproval`, so an ungated call does not compile. Same move
+/// as `EgressPermit`, and it needs no static analysis to hold.
+#[derive(Debug)]
+pub struct SendApproval(());
+
+/// The trace, with its required order fixed at construction.
+///
+/// Two orders are two grammars, and H1 showed that a fix which keeps two
+/// grammars DISJOINT beats one that lets them converge. If
+/// `ensure_ready_to_send` selected an order at validation time — trying the
+/// feature order, falling back to the connectivity order — then a feature
+/// request missing `SnippetsFetched`, `Redacted` and `Capped` would satisfy
+/// the connectivity rules and send anyway. The downgrade is prevented by
+/// construction: a trace is born `Feature` or `Connectivity` and is only
+/// ever checked against the set it was born with. There is no fallback and
+/// no runtime selection.
+#[derive(Debug)]
+pub struct PipelineTrace {
+    kind: TraceKind,
+    steps: Vec<PipelineStep>,
+}
 
 impl PipelineTrace {
-    pub fn new() -> Self {
-        PipelineTrace(Vec::new())
+    /// A full Section 12 feature request (`ai_project_summary` / `ai_explain_module` / `ai_ask`).
+    pub fn new_feature() -> Self {
+        PipelineTrace { kind: TraceKind::Feature, steps: Vec::new() }
+    }
+
+    /// A `test_ai_key` connectivity probe.
+    pub fn new_connectivity() -> Self {
+        PipelineTrace { kind: TraceKind::Connectivity, steps: Vec::new() }
     }
 
     pub(crate) fn record(&mut self, step: PipelineStep) {
-        self.0.push(step);
+        self.steps.push(step);
     }
 
     pub fn steps(&self) -> &[PipelineStep] {
-        &self.0
+        &self.steps
+    }
+
+    fn before_send(&self) -> &'static [PipelineStep] {
+        match self.kind {
+            TraceKind::Feature => STEPS_BEFORE_SEND,
+            TraceKind::Connectivity => CONNECTIVITY_STEPS_BEFORE_SEND,
+        }
+    }
+
+    fn full_order(&self) -> &'static [PipelineStep] {
+        match self.kind {
+            TraceKind::Feature => REQUIRED_ORDER,
+            TraceKind::Connectivity => CONNECTIVITY_ORDER,
+        }
     }
 
     /// The fail-closed gate: called immediately before the provider call.
     /// Refuses the request (nothing sent) if any earlier step was skipped
-    /// or performed out of order.
-    pub fn ensure_ready_to_send(&self) -> Result<(), AppError> {
-        self.ensure_matches(STEPS_BEFORE_SEND, "before sending")
+    /// or performed out of order. Returns the [`SendApproval`] that
+    /// `ai::http::send` requires, so the gate cannot be skipped.
+    pub fn ensure_ready_to_send(&self) -> Result<SendApproval, AppError> {
+        self.ensure_matches(self.before_send(), "before sending")?;
+        Ok(SendApproval(()))
     }
 
     /// The closing check: the whole pipeline ran, in order, before an
     /// answer is handed back to the webview.
     pub fn ensure_complete_and_ordered(&self) -> Result<(), AppError> {
-        self.ensure_matches(REQUIRED_ORDER, "before returning an answer")
+        self.ensure_matches(self.full_order(), "before returning an answer")
     }
 
     fn ensure_matches(&self, expected: &[PipelineStep], when: &str) -> Result<(), AppError> {
-        if self.0 == expected {
+        if self.steps == expected {
             return Ok(());
         }
         Err(AppError::ai_pipeline_incomplete(format!(
             "privacy pipeline check failed {when}: expected {expected:?}, ran {:?}",
-            self.0
+            self.steps
         )))
     }
 }
@@ -133,7 +220,7 @@ mod tests {
     use super::*;
 
     fn trace(steps: &[PipelineStep]) -> PipelineTrace {
-        let mut t = PipelineTrace::new();
+        let mut t = PipelineTrace::new_feature();
         for step in steps {
             t.record(*step);
         }
@@ -215,7 +302,67 @@ mod tests {
 
     #[test]
     fn an_empty_run_is_refused_rather_than_treated_as_trivially_fine() {
-        assert!(PipelineTrace::new().ensure_ready_to_send().is_err());
-        assert!(PipelineTrace::new().ensure_complete_and_ordered().is_err());
+        assert!(PipelineTrace::new_feature().ensure_ready_to_send().is_err());
+        assert!(PipelineTrace::new_feature().ensure_complete_and_ordered().is_err());
+    }
+
+    fn record_all(trace: &mut PipelineTrace, steps: &[PipelineStep]) {
+        for step in steps {
+            trace.record(*step);
+        }
+    }
+
+    /// The connectivity order, run on a connectivity trace, passes.
+    #[test]
+    fn a_connectivity_run_satisfies_its_own_order() {
+        let mut trace = PipelineTrace::new_connectivity();
+        record_all(&mut trace, CONNECTIVITY_STEPS_BEFORE_SEND);
+        assert!(trace.ensure_ready_to_send().is_ok());
+        trace.record(PipelineStep::Sent);
+        assert!(trace.ensure_complete_and_ordered().is_ok());
+    }
+
+    /// THE DOWNGRADE, refused by construction.
+    ///
+    /// This is the test that matters. A feature request that skipped
+    /// `SnippetsFetched`, `Redacted` and `Capped` runs exactly the
+    /// connectivity step list — so if `ensure_ready_to_send` selected an
+    /// order at validation time, or fell back to the shorter one, this
+    /// would pass and three privacy steps would be silently optional. The
+    /// trace's kind is fixed at construction, so it is checked against the
+    /// feature order and refused.
+    #[test]
+    fn a_feature_trace_running_only_the_connectivity_steps_is_refused() {
+        let mut trace = PipelineTrace::new_feature();
+        record_all(&mut trace, CONNECTIVITY_STEPS_BEFORE_SEND);
+        assert!(
+            trace.ensure_ready_to_send().is_err(),
+            "a feature request must not be allowed to send on the connectivity order"
+        );
+    }
+
+    /// The symmetric half. A redundant layer without its own test decays to
+    /// one layer while looking like two, so the reverse direction is
+    /// asserted as well: connectivity rules are not merely a subset that
+    /// anything longer satisfies.
+    #[test]
+    fn a_connectivity_trace_running_the_full_feature_steps_is_refused() {
+        let mut trace = PipelineTrace::new_connectivity();
+        record_all(&mut trace, STEPS_BEFORE_SEND);
+        assert!(
+            trace.ensure_ready_to_send().is_err(),
+            "a connectivity probe must not pass by running the feature order"
+        );
+    }
+
+    /// `ConnectivityProbeBuilt` and `Redacted` are distinct values, so a
+    /// probe cannot attest to a redaction that never examined any content.
+    #[test]
+    fn the_connectivity_order_never_claims_redaction_happened() {
+        assert!(!CONNECTIVITY_ORDER.contains(&PipelineStep::Redacted));
+        assert!(!CONNECTIVITY_ORDER.contains(&PipelineStep::Capped));
+        assert!(!CONNECTIVITY_ORDER.contains(&PipelineStep::SnippetsFetched));
+        assert!(CONNECTIVITY_ORDER.contains(&PipelineStep::ConnectivityProbeBuilt));
+        assert!(!REQUIRED_ORDER.contains(&PipelineStep::ConnectivityProbeBuilt));
     }
 }

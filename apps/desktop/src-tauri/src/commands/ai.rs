@@ -338,7 +338,7 @@ async fn run_ai_feature(
     // not least because it becomes a transcript file name.
     crate::commands::search::validate_repo_id(repo_id)?;
 
-    let mut trace = PipelineTrace::new();
+    let mut trace = PipelineTrace::new_feature();
 
     // (1) permit::acquire — Section 12: "E_AI_DISABLED before any other
     // work." The one gate; `ai::permit::acquire` is also what each adapter
