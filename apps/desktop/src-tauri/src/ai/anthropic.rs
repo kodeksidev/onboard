@@ -115,17 +115,24 @@ impl AnthropicProvider {
 /// literal `true`, not `boolean`), never a generic "false."
 async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
     let headers = build_headers(&ctx.key);
-    let empty_payload = crate::privacy::redact::redact(
-        &crate::contract::EngineSnippetsResult { snippets: vec![] },
-        &[],
-    )?;
+    // The same `PromptSpec` path a real feature takes (Section 12: "Test
+    // key" must prove the real chokepoint, not a lighter-weight variant) —
+    // `ConnectivityCheck` is a fixed feature with an empty, genuinely
+    // `redact()`-produced payload and no subject.
+    let ping = crate::ai::prompt::build(
+        crate::ai::prompt::AiFeature::ConnectivityCheck,
+        crate::privacy::redact::redact(
+            &crate::contract::EngineSnippetsResult { snippets: vec![] },
+            &[],
+        )?,
+    );
     http::send(
         &ctx.permit,
         &ctx.endpoint,
         &headers,
         ProviderShape::Anthropic,
         &ctx.model,
-        &empty_payload,
+        &ping,
     )?;
     Ok(TestResult { is_ok: true })
 }
@@ -169,11 +176,10 @@ fn parse_completion_response(raw_body: &str) -> Result<CompletionResponse, AppEr
 }
 
 impl AiProvider for AnthropicProvider {
-    /// `req.instructions` is not yet threaded into the outbound request —
-    /// see `ai::http`'s doc comment ("No free-form body"): real prompt
-    /// content is `prompt.rs`'s job, a later, not-yet-reviewed step.
-    /// `http::send` builds the body itself from `ProviderShape::Anthropic`
-    /// + `ctx.model` + `req.payload` only.
+    /// `http::send` builds the body itself from `ProviderShape::Anthropic`,
+    /// `ctx.model` and `req.prompt` only — `CompletionRequest` carries no
+    /// free-form instructions field for anything else to ride in on (see
+    /// `ai::prompt`'s doc comment).
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, AppError> {
         let ctx = self.resolve_context(None)?;
         let headers = build_headers(&ctx.key);
@@ -183,7 +189,7 @@ impl AiProvider for AnthropicProvider {
             &headers,
             ProviderShape::Anthropic,
             &ctx.model,
-            &req.payload,
+            &req.prompt,
         )?;
         parse_completion_response(&response.body)
     }
@@ -402,8 +408,10 @@ mod tests {
         let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let result = block_on_never_pending(provider.complete(CompletionRequest {
-            instructions: "Summarize this code.".to_string(),
-            payload: redacted_payload,
+            prompt: crate::ai::prompt::build(
+                crate::ai::prompt::AiFeature::ProjectSummary,
+                redacted_payload,
+            ),
         }));
         assert!(result.is_ok(), "complete() failed: {:?}", result.err());
 
@@ -436,6 +444,7 @@ mod tests {
             &received_json,
             "claude-test-model",
             &expected_snippets,
+            None,
         );
     }
 
@@ -466,8 +475,10 @@ mod tests {
             crate::privacy::redact::redact(&EngineSnippetsResult { snippets: vec![] }, &[])
                 .unwrap();
         let result = block_on_never_pending(provider.complete(CompletionRequest {
-            instructions: "Summarize this code.".to_string(),
-            payload: empty_payload,
+            prompt: crate::ai::prompt::build(
+                crate::ai::prompt::AiFeature::ProjectSummary,
+                empty_payload,
+            ),
         }));
         assert_eq!(result.unwrap_err().code, "E_AI_DISABLED");
     }

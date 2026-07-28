@@ -23,6 +23,7 @@ fn test_state() -> AppState {
         supervisor: SidecarSupervisor::new(config),
         sessions: Mutex::new(HashMap::new()),
         ai_keys: AiKeyStore::new(),
+        ai_rate_limiter: onboard_lib::ai::rate_limit::AiRateLimiter::new(),
         logger: RotatingLogger::open(&temp_log.path().join("onboard.log")).unwrap(),
     }
 }

@@ -74,17 +74,33 @@ fn an_adapter_shaped_caller_cannot_reach_the_wire_without_a_real_endpoint() {
     assert_fails_with_error_code("missing_endpoint", "E0308", "ResolvedEndpoint");
 }
 
+/// Phase 12 step 6 changed `send`'s WHAT slot from `&RedactedPayload` to
+/// `&PromptSpec`. The slot is still closed to anything a caller can build
+/// itself; `a_prompt_cannot_be_built_from_raw_text` below proves the other
+/// half (that the only producer of a `PromptSpec` still demands a
+/// `RedactedPayload`), so the two together are strictly stronger than the
+/// single check they replace.
 #[test]
-fn an_adapter_shaped_caller_cannot_reach_the_wire_without_a_real_payload() {
-    assert_fails_with_error_code("missing_payload", "E0308", "RedactedPayload");
+fn an_adapter_shaped_caller_cannot_reach_the_wire_without_a_real_prompt() {
+    assert_fails_with_error_code("missing_payload", "E0308", "PromptSpec");
+}
+
+#[test]
+fn a_prompt_cannot_be_built_from_raw_text() {
+    assert_fails_with_error_code("prompt_from_raw_text", "E0308", "RedactedPayload");
 }
 
 /// Guards against the fixture crate silently rotting — see the identical
 /// guard in the other three compile-fail suites.
 #[test]
-fn all_three_fixture_binaries_exist_on_disk() {
+fn all_four_fixture_binaries_exist_on_disk() {
     let bin_dir = crate_root().join("tests/fixtures/ai-provider-triad-violations/src/bin");
-    for name in ["missing_permit", "missing_endpoint", "missing_payload"] {
+    for name in [
+        "missing_permit",
+        "missing_endpoint",
+        "missing_payload",
+        "prompt_from_raw_text",
+    ] {
         let path = bin_dir.join(format!("{name}.rs"));
         assert!(
             Path::new(&path).exists(),

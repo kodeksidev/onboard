@@ -7,6 +7,16 @@ import type { SettingsPatch } from '@/ipc/settings-schema';
 export interface SettingsState {
   readonly settings: Settings;
   readonly isLoaded: boolean;
+  /**
+   * Whether the Settings dialog is open. It lives here rather than in
+   * `AppShell`'s local state because Settings is the fix for states diagnosed
+   * elsewhere — the AI panel's "AI is off" / "no key stored" screens
+   * (Phase 12 step 6) offer a button that opens it. One flag, one dialog; the
+   * alternative was a second ad-hoc mechanism for reaching the same window.
+   */
+  readonly isSettingsOpen: boolean;
+  openSettings: () => void;
+  closeSettings: () => void;
   loadSettings: () => Promise<void>;
   updateSettings: (patch: SettingsPatch) => Promise<void>;
   /**
@@ -35,6 +45,11 @@ export interface SettingsState {
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   isLoaded: false,
+  isSettingsOpen: false,
+
+  openSettings: () => set({ isSettingsOpen: true }),
+
+  closeSettings: () => set({ isSettingsOpen: false }),
 
   loadSettings: async () => {
     const raw = await ipc.getSettings();
