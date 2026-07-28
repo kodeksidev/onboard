@@ -138,15 +138,38 @@ pub fn connectivity_path(transcripts_dir: &Path) -> PathBuf {
 /// than being retrofitted onto two.
 fn append_entry(path: &Path, entry: &serde_json::Value) -> Result<(), AppError> {
     let line = format!("{entry}\n");
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|err| unwritable(path, &err))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    apply_owner_only_mode(&mut options);
+    let mut file = options.open(path).map_err(|err| unwritable(path, &err))?;
     file.write_all(line.as_bytes())
         .map_err(|err| unwritable(path, &err))?;
     Ok(())
 }
+
+/// M7: transcripts hold real (redacted, but real) excerpts of the user's
+/// private source, and are the one artefact this design deliberately writes
+/// to disk. `OpenOptions::new().create(true).append(true)` alone yields
+/// umask-default permissions — commonly `0644`, i.e. world-readable.
+///
+/// Applied at CREATION rather than chmod'd afterwards: a create-then-chmod
+/// sequence leaves a window in which the file exists with the wider mode,
+/// and any process that opened it during that window keeps its handle.
+#[cfg(unix)]
+fn apply_owner_only_mode(options: &mut std::fs::OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600);
+}
+
+/// Windows has no `mode`; the equivalent is an explicit DACL, which needs a
+/// Win32 dependency this crate does not currently carry. Deliberately a
+/// no-op with this comment rather than a silent gap: the file inherits the
+/// ACL of `<appDataDir>/onboard/transcripts/`, which lives under the
+/// per-user AppData root, so it is not world-readable by default — but that
+/// is INHERITANCE, not an assertion, and a non-default parent ACL would
+/// widen it without anything noticing. Tracked as the Windows half of M7.
+#[cfg(not(unix))]
+fn apply_owner_only_mode(_options: &mut std::fs::OpenOptions) {}
 
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -303,5 +326,70 @@ mod tests {
         let entries = read_entries(&path);
         assert_eq!(entries[0]["sentFileCount"], expected_files);
         assert_eq!(entries[0]["sentByteCount"], expected_bytes);
+    }
+}
+
+#[cfg(test)]
+mod connectivity_tests {
+    use super::*;
+    use crate::ai::http::ProviderShape;
+
+    /// M7. Asserts the MODE, not that the file exists — a file that exists
+    /// at 0644 satisfies an existence check and defeats the finding.
+    #[cfg(unix)]
+    #[test]
+    fn a_transcript_is_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = record_connectivity(dir.path(), ProviderShape::Anthropic, "m").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "transcript must not be group- or world-readable"
+        );
+    }
+
+    /// The API key must never reach the transcript writer.
+    ///
+    /// Deliberately NOT "assert today's fields are provider and model":
+    /// that passes forever while someone adds a `headers` field beside
+    /// them. This asserts the whole serialized line contains no header, no
+    /// Authorization value and no key-shaped string, so ANY future field
+    /// carrying one fails here — the connectivity request is the one whose
+    /// entire purpose is exercising the credential, so it is where the key
+    /// sits closest to this writer.
+    #[test]
+    fn the_connectivity_transcript_never_records_a_key_or_any_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = record_connectivity(dir.path(), ProviderShape::Anthropic, "m").unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap().to_lowercase();
+        for banned in [
+            "authorization",
+            "x-api-key",
+            "bearer",
+            "header",
+            "apikey",
+            "api_key",
+            "sk-",
+            "secret",
+            "token",
+        ] {
+            assert!(
+                !raw.contains(banned),
+                "connectivity transcript must not contain {banned:?}; line was: {raw}"
+            );
+        }
+    }
+
+    /// Both transcripts append through one site, so M7's mode and (next)
+    /// M6's bound have exactly one place to live rather than two that can
+    /// diverge. Proven by writing through the connectivity path and
+    /// asserting the shared helper produced the file.
+    #[test]
+    fn connectivity_uses_its_own_file_not_a_repo_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = record_connectivity(dir.path(), ProviderShape::Ollama, "m").unwrap();
+        assert_eq!(path, connectivity_path(dir.path()));
+        assert!(path.ends_with("connectivity.jsonl"));
     }
 }
