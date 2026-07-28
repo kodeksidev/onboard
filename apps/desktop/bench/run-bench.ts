@@ -544,7 +544,25 @@ async function main(): Promise<void> {
   );
   printMeasurementIntegrityNote();
 
-  if (!allEnginePassed) {
+  /**
+   * BOTH halves gate the exit code.
+   *
+   * `graphHasFail` was previously computed, printed, and then discarded —
+   * so `bun run bench` printed "bench:graph budgets: AT LEAST ONE FAIL" and
+   * exited 0. Measured directly: `graphPanP95_1kMs` at 33.3ms against a
+   * 22ms budget and `graphPanP95_5kMs` at 33.4ms against a 33ms budget,
+   * both reported, exit code 0. A gate that reports failure and returns
+   * success is worse than no gate — it produces a green checkmark that
+   * actively certifies the opposite of what was measured, which is exactly
+   * how these two budgets stayed red across thirteen phases without anyone
+   * having to argue for them.
+   *
+   * This makes Phase 11's gate honest, and it makes it RED today. That is
+   * the correct state: the budgets are Section 11's, they are not met, and
+   * the fix belongs in the renderer (or in a re-derived budget backed by a
+   * trustworthy instrument), never in this line.
+   */
+  if (!allEnginePassed || graphHasFail) {
     process.exitCode = 1;
   }
 }
