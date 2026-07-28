@@ -5,5 +5,14 @@
 // types ... expected `&str`, found `&serde_json::Value`").
 fn main() {
     let raw_content = serde_json::json!({ "content": "raw unredacted content" });
-    let _ = onboard_lib::ai::http::send(todo!(), todo!(), todo!(), todo!(), &raw_content, todo!());
+    let _ = onboard_lib::ai::http::send(
+        todo!(),
+        todo!(),
+        todo!(),
+        todo!(),
+        todo!(),
+        todo!(),
+        &raw_content,
+        todo!(),
+    );
 }

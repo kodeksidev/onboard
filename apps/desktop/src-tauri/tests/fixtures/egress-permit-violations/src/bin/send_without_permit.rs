@@ -14,5 +14,7 @@ fn main() {
         todo!(),
         todo!(),
         todo!(),
+        todo!(),
+        todo!(),
     );
 }

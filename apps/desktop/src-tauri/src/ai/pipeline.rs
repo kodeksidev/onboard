@@ -171,6 +171,14 @@ impl SendApproval {
     pub fn kind(&self) -> TraceKind {
         self.kind
     }
+
+    /// Test-only mint, so tests can drive `send` and exercise its mismatch
+    /// branch without standing up a full pipeline. `#[cfg(test)]` so it
+    /// cannot exist in any shipped build.
+    #[cfg(test)]
+    pub(crate) fn forge_for_test(kind: TraceKind) -> Self {
+        SendApproval { kind }
+    }
 }
 
 /// The trace, with its required order fixed at construction.

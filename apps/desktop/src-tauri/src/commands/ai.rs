@@ -66,7 +66,7 @@ use serde::Serialize;
 use crate::ai::anthropic::AnthropicProvider;
 use crate::ai::http::ProviderShape;
 use crate::ai::ollama::OllamaProvider;
-use crate::ai::pipeline::{PipelineStep, PipelineTrace};
+use crate::ai::pipeline::{PipelineStep, PipelineTrace, SendApproval};
 use crate::ai::prompt::{AiFeature, ModuleId, PromptSpec, UserQuestion};
 use crate::ai::provider::{AiProvider as AiProviderTrait, CompletionRequest};
 use crate::ai::{permit, snippets, transcript};
@@ -136,18 +136,19 @@ pub async fn test_ai_key_core(
     transcript::record_connectivity(transcripts_dir, shape, model)?;
     trace.record(PipelineStep::TranscriptRecorded);
 
-    // (5) the fail-closed gate.
-    trace.ensure_ready_to_send()?;
+    // (5) the fail-closed gate. The approval it mints is consumed by the
+    // send below — one approval, one request.
+    let approval = trace.ensure_ready_to_send()?;
 
     match provider {
         "anthropic" => {
             AnthropicProvider::new(settings_path, ai_keys)
-                .test_with_model(model, &mut trace)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         "ollama" => {
             OllamaProvider::new(settings_path, ai_keys)
-                .test_with_model(model, &mut trace)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         // `validate_provider` above already rejected anything else.
@@ -186,20 +187,22 @@ async fn test_ai_key_core_against_test_endpoint(
     let started = Instant::now();
     // The twin exercises adapter dispatch only; the traced pipeline itself
     // is covered by `test_ai_key_core`. A connectivity trace is still built
-    // so `run_test` has somewhere to record `Sent`.
+    // so `run_test` has somewhere to record `Sent`, and the approval is
+    // forged rather than minted — there is no pipeline here to mint one.
     let mut trace = PipelineTrace::new_connectivity();
+    let approval = SendApproval::forge_for_test(crate::ai::pipeline::TraceKind::Connectivity);
 
     match provider {
         "anthropic" => {
             AnthropicProvider::new(settings_path, ai_keys)
                 .with_test_endpoint(test_endpoint)
-                .test_with_model(model, &mut trace)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         "ollama" => {
             OllamaProvider::new(settings_path, ai_keys)
                 .with_test_endpoint(test_endpoint)
-                .test_with_model(model, &mut trace)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         _ => unreachable!("validate_provider only accepts anthropic/ollama"),
@@ -336,10 +339,11 @@ async fn complete_with_provider(
     ctx: &AiCommandContext,
     provider: AiProvider,
     prompt: PromptSpec,
+    approval: SendApproval,
 ) -> Result<String, AppError> {
     let settings_path = ctx.settings_path.clone();
     let ai_keys = ctx.ai_keys.clone();
-    let req = CompletionRequest { prompt };
+    let req = CompletionRequest { prompt, approval };
 
     let response = match provider {
         AiProvider::Anthropic => {
@@ -431,10 +435,10 @@ async fn run_ai_feature(
     // The fail-closed gate: nothing leaves unless every step above ran, in
     // order (`ai::pipeline`'s doc comment explains why this exists even
     // though most of the chain is already type-enforced).
-    trace.ensure_ready_to_send()?;
+    let approval = trace.ensure_ready_to_send()?;
 
     // (6) send.
-    let answer_markdown = complete_with_provider(ctx, provider, prompt).await?;
+    let answer_markdown = complete_with_provider(ctx, provider, prompt, approval).await?;
     trace.record(PipelineStep::Sent);
 
     // (7) verify citations (8.10) — including this crate's two
