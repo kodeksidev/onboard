@@ -110,22 +110,42 @@ const CONTRACT_SOURCE = join(
   'analysis-result.ts',
 );
 
-function deriveRepoPathFields(): ReadonlySet<string> {
+/**
+ * `name: RepoPath`, `name: RepoPath.nullable()`, `name: z.array(RepoPath)`.
+ *
+ * Deliberately NOT anchored to line start: `workspacePackages` declares
+ * `dirPath: RepoPath` inline inside a nested `z.object({ ... })`, and a
+ * line-anchored pattern silently skipped it. `[^,\n{}]*` stops the scan at a
+ * comma or brace so a sibling field's name can never be captured instead.
+ */
+const DECLARATION = /(\w+)\s*:\s*[^,\n{}]*\bRepoPath\b/g;
+
+interface Derivation {
+  readonly fields: ReadonlySet<string>;
+  /** Every parsed declaration site, including repeats of the same field name. */
+  readonly parsedSites: number;
+  /** Every `RepoPath` mention that is not its own definition. */
+  readonly expectedSites: number;
+}
+
+function deriveRepoPathFields(): Derivation {
   const source = readFileSync(CONTRACT_SOURCE, 'utf8');
   const fields = new Set<string>();
-  // `name: RepoPath`, `name: RepoPath.nullable()`, `name: z.array(RepoPath)`,
-  // and any other expression that references RepoPath on the same line.
-  const declaration = /^\s*(\w+):\s*[^,\n]*\bRepoPath\b/gm;
-  for (const match of source.matchAll(declaration)) {
+  let parsedSites = 0;
+  for (const match of source.matchAll(DECLARATION)) {
     const name = match[1];
     if (name !== undefined) {
       fields.add(name);
+      parsedSites += 1;
     }
   }
-  return fields;
+  const allMentions = [...source.matchAll(/\bRepoPath\b/g)].length;
+  const definitions = [...source.matchAll(/export const RepoPath\b/g)].length;
+  return { fields, parsedSites, expectedSites: allMentions - definitions };
 }
 
-const REPO_PATH_FIELDS = deriveRepoPathFields();
+const DERIVATION = deriveRepoPathFields();
+const REPO_PATH_FIELDS = DERIVATION.fields;
 
 function isPathField(key: string): boolean {
   return REPO_PATH_FIELDS.has(key);
@@ -166,6 +186,26 @@ describe('criterion 4 — every path is repo-relative POSIX', () => {
     for (const required of ['path', 'parentPath', 'fromPath', 'toPath', 'dirPath', 'sourceRoots']) {
       expect(REPO_PATH_FIELDS.has(required)).toBe(true);
     }
+  });
+
+  /**
+   * COMPLETENESS, as distinct from the regression guard above.
+   *
+   * Naming the three fields the old hand-list missed proves the scanner
+   * catches THOSE — it says nothing about a fourth the scanner also cannot
+   * parse, which is the same "trusted because it looked right" shape the
+   * hand-list had. So: every `RepoPath` mention in the contract that is not
+   * its own definition must have been parsed into a declaration site. A
+   * reference the regex cannot read fails here loudly instead of being
+   * silently dropped from the checked set.
+   */
+  test('every RepoPath reference in the contract was parsed', () => {
+    console.log(
+      `  parsed ${String(DERIVATION.parsedSites)} declaration sites; ` +
+        `contract mentions RepoPath ${String(DERIVATION.expectedSites)} times (excluding its definition)`,
+    );
+    expect(DERIVATION.parsedSites).toBe(DERIVATION.expectedSites);
+    expect(DERIVATION.expectedSites).toBeGreaterThan(0);
   });
 
   for (const file of snapshotFiles()) {
