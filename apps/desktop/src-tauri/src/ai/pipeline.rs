@@ -119,25 +119,67 @@ pub const CONNECTIVITY_STEPS_BEFORE_SEND: &[PipelineStep] = &[
 
 /// Which pipeline a trace belongs to. Chosen at CONSTRUCTION and never
 /// afterwards — see [`PipelineTrace`].
+///
+/// `pub` because [`SendApproval`] carries it and callers must be able to
+/// state which kind of request they are making; the VALUE is still only ever
+/// set by `PipelineTrace`'s two constructors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TraceKind {
+pub enum TraceKind {
     Feature,
     Connectivity,
 }
 
-/// Proof that [`PipelineTrace::ensure_ready_to_send`] ran and passed.
+/// Proof that [`PipelineTrace::ensure_ready_to_send`] ran and passed, for
+/// ONE request of a stated kind.
 ///
 /// This is the H1 lesson applied to the egress door. A scanner asserting
 /// "every call site carries a `PipelineTrace` parameter" would pass a
 /// function that takes the parameter, records nothing and gates nothing —
 /// the same error as "the virtualization library is a dependency" versus
-/// "the lists are virtualized". So the guarantee is structural instead:
-/// the field is private, there is no public constructor, and the ONLY way
-/// to obtain one is a successful `ensure_ready_to_send`. `ai::http::send`
-/// requires `&SendApproval`, so an ungated call does not compile. Same move
-/// as `EgressPermit`, and it needs no static analysis to hold.
+/// "the lists are virtualized". So the guarantee is structural: the field is
+/// private, there is no public constructor, and the only way to obtain one
+/// is a successful `ensure_ready_to_send`.
+///
+/// ## Two properties the first version got wrong
+///
+/// **It carries its kind.** Making the two trace ORDERS disjoint at
+/// validation achieves nothing if the resulting tokens are
+/// interchangeable: a connectivity trace mints an approval after five steps
+/// with no `Redacted` and no `Capped`, and a kind-less token would then
+/// authorise a full feature payload. The approvals have to be as disjoint as
+/// the traces that mint them, so [`kind`](Self::kind) is checked at the send
+/// site.
+///
+/// **It is consumed, not borrowed.** A `&SendApproval` proves an approval
+/// happened at some point, not that THIS send is approved — one mint would
+/// authorise N sends, including a send issued after a later gate would have
+/// refused. Taking it by value makes "one approval, one request" a borrow-
+/// checker fact rather than a convention.
+///
+/// The minting surface is deliberately bare: no `Clone`, no `Copy`, no
+/// `Default`, no `Deserialize`, and no public constructor. A single derive
+/// would turn "unforgeable" into "unforgeable except by anyone who wants
+/// two", which is the whole guarantee.
 #[derive(Debug)]
-pub struct SendApproval(());
+pub struct SendApproval {
+    kind: TraceKind,
+}
+
+impl SendApproval {
+    /// The pipeline this approval was minted from. `ai::http::send` refuses
+    /// a mismatch.
+    pub fn kind(&self) -> TraceKind {
+        self.kind
+    }
+
+    /// Test-only forgery, so tests can exercise `send`'s mismatch branch
+    /// without a full pipeline. `#[cfg(test)]` so it cannot exist in any
+    /// shipped build.
+    #[cfg(test)]
+    pub(crate) fn forge_for_test(kind: TraceKind) -> Self {
+        SendApproval { kind }
+    }
+}
 
 /// The trace, with its required order fixed at construction.
 ///
@@ -195,7 +237,7 @@ impl PipelineTrace {
     /// `ai::http::send` requires, so the gate cannot be skipped.
     pub fn ensure_ready_to_send(&self) -> Result<SendApproval, AppError> {
         self.ensure_matches(self.before_send(), "before sending")?;
-        Ok(SendApproval(()))
+        Ok(SendApproval { kind: self.kind })
     }
 
     /// The closing check: the whole pipeline ran, in order, before an
@@ -353,6 +395,22 @@ mod tests {
             trace.ensure_ready_to_send().is_err(),
             "a connectivity probe must not pass by running the feature order"
         );
+    }
+
+    /// An approval carries the kind that minted it, so the two token types
+    /// are as disjoint as the two trace orders. Without this, a connectivity
+    /// approval — minted after five steps with no `Redacted` and no
+    /// `Capped` — would authorise a full feature payload, reopening at the
+    /// token layer exactly the downgrade the trace kinds closed.
+    #[test]
+    fn an_approval_carries_the_kind_that_minted_it() {
+        let mut feature = PipelineTrace::new_feature();
+        record_all(&mut feature, STEPS_BEFORE_SEND);
+        assert_eq!(feature.ensure_ready_to_send().unwrap().kind(), TraceKind::Feature);
+
+        let mut probe = PipelineTrace::new_connectivity();
+        record_all(&mut probe, CONNECTIVITY_STEPS_BEFORE_SEND);
+        assert_eq!(probe.ensure_ready_to_send().unwrap().kind(), TraceKind::Connectivity);
     }
 
     /// `ConnectivityProbeBuilt` and `Redacted` are distinct values, so a
