@@ -89,16 +89,63 @@ pub fn record(
         "sentByteCount": prompt.sent_byte_count(),
         "body": http::build_body(shape, model, prompt),
     });
-    let line = format!("{entry}\n");
+    append_entry(&path, &entry)?;
+    Ok(path)
+}
 
+/// `<transcriptsDir>/connectivity.jsonl` — the `test_ai_key` probe's
+/// transcript.
+///
+/// A connectivity check has no `repoId`, so it cannot use
+/// [`transcript_path`]'s per-repo file. It is a SEPARATE file rather than a
+/// `repoId: null` line in someone's repo transcript, so a user reading one
+/// repo's record is not shown unrelated credential tests.
+///
+/// No `PromptSpec` exists here because the probe carries no repo content —
+/// which is exactly why `ai::pipeline` records `ConnectivityProbeBuilt`
+/// rather than `Redacted`. What is recorded is what the request actually
+/// identifies: provider and model. Deliberately NOT recorded: any header.
+/// This is the one outbound request whose entire purpose is exercising the
+/// credential, so it is the closest the API key ever comes to the transcript
+/// writer — `record` has never written headers either (see this module's doc
+/// comment) and this must not become the exception.
+pub fn record_connectivity(
+    transcripts_dir: &Path,
+    shape: ProviderShape,
+    model: &str,
+) -> Result<PathBuf, AppError> {
+    let path = connectivity_path(transcripts_dir);
+    std::fs::create_dir_all(transcripts_dir).map_err(|err| unwritable(transcripts_dir, &err))?;
+
+    let entry = serde_json::json!({
+        "timestampMs": now_millis(),
+        "kind": "connectivity",
+        "provider": shape_label(shape),
+        "model": model,
+        "sentFileCount": 0,
+        "sentByteCount": 0,
+    });
+    append_entry(&path, &entry)?;
+    Ok(path)
+}
+
+pub fn connectivity_path(transcripts_dir: &Path) -> PathBuf {
+    transcripts_dir.join("connectivity.jsonl")
+}
+
+/// The single append path both transcripts use, so file-creation policy
+/// (M7's 0600 / owner-only ACL) has exactly one site to be applied at rather
+/// than being retrofitted onto two.
+fn append_entry(path: &Path, entry: &serde_json::Value) -> Result<(), AppError> {
+    let line = format!("{entry}\n");
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
-        .map_err(|err| unwritable(&path, &err))?;
+        .open(path)
+        .map_err(|err| unwritable(path, &err))?;
     file.write_all(line.as_bytes())
-        .map_err(|err| unwritable(&path, &err))?;
-    Ok(path)
+        .map_err(|err| unwritable(path, &err))?;
+    Ok(())
 }
 
 fn now_millis() -> u64 {

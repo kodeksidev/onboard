@@ -199,7 +199,6 @@ mod tests {
         assert_eq!(result.unwrap_err().code, "E_INVALID_SETTINGS");
     }
 
-
     /// The runtime half of "a caller-fabricated `AiSettings` with an
     /// attacker-controlled `base_url` must not produce a `ResolvedEndpoint`
     /// pointing at that host." The compile-time half

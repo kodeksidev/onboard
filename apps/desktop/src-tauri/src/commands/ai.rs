@@ -58,7 +58,7 @@
 //! adapter's `test_with_model`/`run_test` propagates the real `AppError`
 //! from `ai::http::send` for exactly this reason.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -92,7 +92,23 @@ pub struct TestAiKeyResponse {
 /// round-trip latency, and echoes back the exact `model` string that was
 /// tested (see this module's doc comment for why that is the caller's
 /// value, not necessarily whatever is currently persisted).
+/// M1: this used to reach `ai::http::send` with no `PipelineTrace`, no
+/// `transcript::record` and no `ai_rate_limiter.acquire()` — the one path
+/// that went around the traced pipeline while still using the single egress
+/// door, and the one path that transmits the API key. There is one door; a
+/// key test does not get to go around it.
+///
+/// The probe runs the connectivity order (`ai::pipeline`), not the feature
+/// order: it has no repo, no snippets and no answer to verify, so claiming
+/// `Redacted` over its empty payload would be an attestation about nothing.
+///
+/// Known consequence, recorded rather than discovered later: the rate
+/// limiter is the SHARED per-minute budget, so ten key tests exhaust it and
+/// the eleventh returns `E_AI_RATE_LIMITED`. That is correct — one door, one
+/// budget — but it interacts with criterion 15's "under 5 seconds".
 pub async fn test_ai_key_core(
+    state: &AppState,
+    transcripts_dir: &Path,
     settings_path: PathBuf,
     ai_keys: AiKeyStore,
     provider: &str,
@@ -100,6 +116,28 @@ pub async fn test_ai_key_core(
 ) -> Result<TestAiKeyResponse, AppError> {
     validate_provider(provider)?;
     let started = Instant::now();
+    let mut trace = PipelineTrace::new_connectivity();
+
+    // (1) permit — Section 12's "E_AI_DISABLED before any other work".
+    let stored = load_stored_ai_settings(&settings_path, &ai_keys);
+    let _permit = permit::acquire(stored.ai(), &ai_keys)?;
+    trace.record(PipelineStep::PermitAcquired);
+
+    // (2) rate limit, on the same shared budget as every feature request.
+    let _slot = state.ai_rate_limiter.acquire()?;
+    trace.record(PipelineStep::RateLimitAcquired);
+
+    // (3) the probe payload. Distinct from Redacted/Capped on purpose.
+    let shape = provider_shape(stored.ai().provider);
+    trace.record(PipelineStep::ConnectivityProbeBuilt);
+
+    // (4) transcript BEFORE the send, same ordering the feature path uses:
+    // an unrecorded request must not be possible.
+    transcript::record_connectivity(transcripts_dir, shape, model)?;
+    trace.record(PipelineStep::TranscriptRecorded);
+
+    // (5) the fail-closed gate.
+    trace.ensure_ready_to_send()?;
 
     match provider {
         "anthropic" => {
@@ -115,6 +153,8 @@ pub async fn test_ai_key_core(
         // `validate_provider` above already rejected anything else.
         _ => unreachable!("validate_provider only accepts anthropic/ollama"),
     }
+    trace.record(PipelineStep::Sent);
+    trace.ensure_complete_and_ordered()?;
 
     Ok(TestAiKeyResponse {
         is_ok: true,
@@ -623,7 +663,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings_path = dir.path().join("settings.json");
         let ai_keys = AiKeyStore::new();
+        let (state, _state_dir) = test_state_with_stub(Vec::new());
         let result = block_on_never_pending(test_ai_key_core(
+            &state,
+            dir.path(),
             settings_path,
             ai_keys,
             "not-a-real-provider",
@@ -637,7 +680,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings_path = dir.path().join("settings.json");
         let ai_keys = AiKeyStore::new();
+        let (state, _state_dir) = test_state_with_stub(Vec::new());
         let result = block_on_never_pending(test_ai_key_core(
+            &state,
+            dir.path(),
             settings_path,
             ai_keys,
             "anthropic",

@@ -171,14 +171,6 @@ impl SendApproval {
     pub fn kind(&self) -> TraceKind {
         self.kind
     }
-
-    /// Test-only forgery, so tests can exercise `send`'s mismatch branch
-    /// without a full pipeline. `#[cfg(test)]` so it cannot exist in any
-    /// shipped build.
-    #[cfg(test)]
-    pub(crate) fn forge_for_test(kind: TraceKind) -> Self {
-        SendApproval { kind }
-    }
 }
 
 /// The trace, with its required order fixed at construction.
@@ -201,12 +193,18 @@ pub struct PipelineTrace {
 impl PipelineTrace {
     /// A full Section 12 feature request (`ai_project_summary` / `ai_explain_module` / `ai_ask`).
     pub fn new_feature() -> Self {
-        PipelineTrace { kind: TraceKind::Feature, steps: Vec::new() }
+        PipelineTrace {
+            kind: TraceKind::Feature,
+            steps: Vec::new(),
+        }
     }
 
     /// A `test_ai_key` connectivity probe.
     pub fn new_connectivity() -> Self {
-        PipelineTrace { kind: TraceKind::Connectivity, steps: Vec::new() }
+        PipelineTrace {
+            kind: TraceKind::Connectivity,
+            steps: Vec::new(),
+        }
     }
 
     pub(crate) fn record(&mut self, step: PipelineStep) {
@@ -345,7 +343,9 @@ mod tests {
     #[test]
     fn an_empty_run_is_refused_rather_than_treated_as_trivially_fine() {
         assert!(PipelineTrace::new_feature().ensure_ready_to_send().is_err());
-        assert!(PipelineTrace::new_feature().ensure_complete_and_ordered().is_err());
+        assert!(PipelineTrace::new_feature()
+            .ensure_complete_and_ordered()
+            .is_err());
     }
 
     fn record_all(trace: &mut PipelineTrace, steps: &[PipelineStep]) {
@@ -406,11 +406,17 @@ mod tests {
     fn an_approval_carries_the_kind_that_minted_it() {
         let mut feature = PipelineTrace::new_feature();
         record_all(&mut feature, STEPS_BEFORE_SEND);
-        assert_eq!(feature.ensure_ready_to_send().unwrap().kind(), TraceKind::Feature);
+        assert_eq!(
+            feature.ensure_ready_to_send().unwrap().kind(),
+            TraceKind::Feature
+        );
 
         let mut probe = PipelineTrace::new_connectivity();
         record_all(&mut probe, CONNECTIVITY_STEPS_BEFORE_SEND);
-        assert_eq!(probe.ensure_ready_to_send().unwrap().kind(), TraceKind::Connectivity);
+        assert_eq!(
+            probe.ensure_ready_to_send().unwrap().kind(),
+            TraceKind::Connectivity
+        );
     }
 
     /// `ConnectivityProbeBuilt` and `Redacted` are distinct values, so a
