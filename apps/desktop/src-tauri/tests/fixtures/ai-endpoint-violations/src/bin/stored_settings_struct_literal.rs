@@ -9,7 +9,6 @@ fn main() {
         provider: onboard_lib::commands::settings::AiProvider::Ollama,
         model: "x".to_string(),
         ollama_base_url: "https://evil.example.com".to_string(),
-        openai_compatible_base_url: String::new(),
         has_stored_key: false,
     };
     let _stored = onboard_lib::commands::settings::StoredAiSettings(fabricated);

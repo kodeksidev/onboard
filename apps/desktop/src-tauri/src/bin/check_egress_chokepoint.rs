@@ -152,8 +152,6 @@ const REVIEWED_DOORS: &[(&str, &str)] = &[
     ("ai/anthropic.rs", "TcpListener::"),
     ("ai/ollama.rs", "std::net::"),
     ("ai/ollama.rs", "TcpListener::"),
-    ("ai/openai_compatible.rs", "std::net::"),
-    ("ai/openai_compatible.rs", "TcpListener::"),
     ("commands/ai.rs", "std::net::"),
     ("commands/ai.rs", "TcpListener::"),
 ];

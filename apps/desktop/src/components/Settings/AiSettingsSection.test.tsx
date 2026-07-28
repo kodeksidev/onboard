@@ -19,13 +19,22 @@ describe('AiSettingsSection', () => {
     expect(screen.getByRole('checkbox', { name: 'Enable AI features' })).not.toBeChecked();
   });
 
-  test('lists exactly the three v1 providers', () => {
+  /**
+   * A4 / §3 non-goal 2, enforced at the one place a user could actually
+   * pick a provider. This asserts the exact list rather than "contains
+   * Anthropic and Ollama", so re-adding an out-of-scope adapter to the
+   * dropdown fails here instead of shipping.
+   */
+  test('lists exactly the two v1 providers and offers no out-of-scope adapter', () => {
     render(<AiSettingsSection />);
     const select = screen.getByRole('combobox', { name: 'Provider' });
     const optionLabels = Array.from(select.querySelectorAll('option')).map(
       (option) => option.textContent,
     );
-    expect(optionLabels).toEqual(['Anthropic', 'Ollama (local)', 'OpenAI-compatible']);
+    expect(optionLabels).toEqual(['Anthropic', 'Ollama (local)']);
+    for (const banned of ['OpenAI', 'DeepSeek', 'Azure', 'Bedrock']) {
+      expect(optionLabels.join(' ')).not.toContain(banned);
+    }
   });
 
   test('hides the API key field entirely for Ollama — it needs no credential', async () => {
@@ -40,21 +49,22 @@ describe('AiSettingsSection', () => {
     expect(screen.getByLabelText('Ollama address')).toBeInTheDocument();
   });
 
-  test('shows the base URL field only for openai-compatible', async () => {
+  /**
+   * The generic "Base URL" field existed only to configure the removed
+   * out-of-scope adapter. Ollama keeps its own clearly-named "Ollama
+   * address" field; no provider should surface a bare "Base URL".
+   */
+  test('offers no generic base URL field for either v1 provider', async () => {
     const user = userEvent.setup();
     render(<AiSettingsSection />);
 
     expect(screen.queryByLabelText('Base URL')).not.toBeInTheDocument();
 
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Provider' }),
-      'openai-compatible',
-    );
-
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Provider' }), 'ollama');
     await waitFor(() => {
-      expect(screen.getByLabelText('Base URL')).toBeInTheDocument();
+      expect(screen.getByLabelText('Ollama address')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('API key')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Base URL')).not.toBeInTheDocument();
   });
 
   test('saving a key stores it and shows the already-stored hint, without ever displaying the key value anywhere', async () => {

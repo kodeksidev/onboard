@@ -50,7 +50,6 @@ pub fn transcript_path(transcripts_dir: &Path, repo_id: &str) -> PathBuf {
 fn shape_label(shape: ProviderShape) -> &'static str {
     match shape {
         ProviderShape::Anthropic => "anthropic",
-        ProviderShape::OpenAiCompatible => "openai-compatible",
         ProviderShape::Ollama => "ollama",
     }
 }

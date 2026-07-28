@@ -151,7 +151,7 @@ function clearAiKey(state: MockIpcState): Record<string, never> {
 /**
  * Mirrors the Rust side's provider-aware credential rule (Phase 12 step 5:
  * `AiProvider::requires_stored_key` — Ollama is local/unauthenticated and
- * needs no key; Anthropic/openai-compatible do). `message` is the long
+ * needs no key; Anthropic does). `message` is the long
  * Section 10 description (Section 12's convention, identical to how the
  * real backend builds `AppError.message` — `resolveErrorCopy` treats it as
  * the description, never re-deriving it from the title).

@@ -25,7 +25,6 @@ pub enum Theme {
 pub enum AiProvider {
     Anthropic,
     Ollama,
-    OpenAiCompatible,
 }
 
 impl AiProvider {
@@ -38,7 +37,6 @@ impl AiProvider {
         match self {
             AiProvider::Anthropic => "anthropic",
             AiProvider::Ollama => "ollama",
-            AiProvider::OpenAiCompatible => "openai-compatible",
         }
     }
 
@@ -46,7 +44,7 @@ impl AiProvider {
     /// be considered "on" for it (Phase 12 step 5, owner's ruling). The
     /// single, provider-aware answer `ai::permit::acquire` consults — not
     /// "AI on + key always," but "AI on + the credentials THIS provider
-    /// requires." Anthropic and `openai-compatible` are cloud APIs and need
+    /// requires." Anthropic is a cloud API and needs
     /// one; Ollama is local and unauthenticated by default, so gating it
     /// behind a key that is never transmitted (see
     /// `ai::ollama`'s doc comment) would be backwards. This is the ONE
@@ -54,7 +52,7 @@ impl AiProvider {
     /// provider-conditional branch of its own; it just asks this.
     pub fn requires_stored_key(self) -> bool {
         match self {
-            AiProvider::Anthropic | AiProvider::OpenAiCompatible => true,
+            AiProvider::Anthropic => true,
             AiProvider::Ollama => false,
         }
     }
@@ -75,14 +73,6 @@ pub struct AiSettings {
     pub provider: AiProvider,
     pub model: String,
     pub ollama_base_url: String,
-    /// `openai-compatible`'s stored base URL (Phase 12 step 3B) — covers
-    /// DeepSeek/OpenAI/Groq/OpenRouter/Together and similar. Empty by
-    /// default (there is no single correct default across providers);
-    /// `ai::endpoint::resolve` rejects it exactly the way it already
-    /// rejects a malformed `ollama_base_url`. `#[serde(default)]` so
-    /// settings files written before this field existed still deserialize.
-    #[serde(default)]
-    pub openai_compatible_base_url: String,
     pub has_stored_key: bool,
 }
 
@@ -93,7 +83,6 @@ impl Default for AiSettings {
             provider: AiProvider::Anthropic,
             model: "claude-sonnet-4-5".to_string(),
             ollama_base_url: "http://127.0.0.1:11434".to_string(),
-            openai_compatible_base_url: String::new(),
             has_stored_key: false,
         }
     }
@@ -139,7 +128,6 @@ pub struct AiSettingsPatch {
     pub provider: Option<AiProvider>,
     pub model: Option<String>,
     pub ollama_base_url: Option<String>,
-    pub openai_compatible_base_url: Option<String>,
 }
 
 fn read_settings_file(path: &Path) -> Settings {
@@ -215,9 +203,6 @@ fn apply_patch(current: Settings, patch: SettingsPatch) -> Settings {
                 ollama_base_url: ai_patch
                     .ollama_base_url
                     .unwrap_or(current.ai.ollama_base_url),
-                openai_compatible_base_url: ai_patch
-                    .openai_compatible_base_url
-                    .unwrap_or(current.ai.openai_compatible_base_url),
                 has_stored_key: current.ai.has_stored_key,
             },
         },
@@ -266,10 +251,12 @@ pub fn clear_ai_key_core(ai_keys: &AiKeyStore, provider: &str) -> Result<(), App
 }
 
 /// Validated so a caller cannot pass an arbitrary string as `provider`
-/// beyond the three v1 adapters (A4, extended by Phase 12 step 3B to add
-/// `openai-compatible`).
+/// beyond the two v1 adapters (A4: "v1 ships exactly two AI adapters:
+/// Anthropic and Ollama"; non-goal #2 names DeepSeek/OpenAI/Azure/Bedrock
+/// and any other adapter explicitly). `openai-compatible` was built here in
+/// violation of both and has been removed — see `docs/V2_BACKLOG.md`.
 pub fn validate_provider(provider: &str) -> Result<(), AppError> {
-    if provider == "anthropic" || provider == "ollama" || provider == "openai-compatible" {
+    if provider == "anthropic" || provider == "ollama" {
         Ok(())
     } else {
         Err(AppError::new(
@@ -355,62 +342,72 @@ mod tests {
     }
 
     #[test]
-    fn validate_provider_rejects_anything_outside_the_three_v1_adapters() {
+    fn validate_provider_rejects_anything_outside_the_two_v1_adapters() {
         assert!(validate_provider("anthropic").is_ok());
         assert!(validate_provider("ollama").is_ok());
-        assert!(validate_provider("openai-compatible").is_ok());
-        assert!(validate_provider("openai").is_err());
+        // A4 / non-goal #2. Each of these was either shipped in violation
+        // (`openai-compatible`) or is named explicitly in the non-goal.
+        for banned in [
+            "openai-compatible",
+            "openai",
+            "deepseek",
+            "azure",
+            "bedrock",
+            "groq",
+            "openrouter",
+        ] {
+            assert!(
+                validate_provider(banned).is_err(),
+                "provider {banned} must be rejected: v1 ships exactly Anthropic and Ollama (A4)"
+            );
+        }
     }
 
+    /// A settings file written by the version that shipped the
+    /// out-of-scope `openai-compatible` adapter must not break the app.
+    /// The stale `openaiCompatibleBaseUrl` key is simply ignored (serde
+    /// tolerates unknown fields), and the rest of the file loads intact.
     #[test]
-    fn openai_compatible_base_url_defaults_to_empty_and_round_trips() {
-        assert_eq!(AiSettings::default().openai_compatible_base_url, "");
-
+    fn a_settings_file_carrying_the_removed_base_url_field_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let ai_keys = AiKeyStore::new();
-        let updated = update_settings_core(
+        std::fs::write(
             &path,
-            &ai_keys,
-            SettingsPatch {
-                ai: Some(AiSettingsPatch {
-                    provider: Some(AiProvider::OpenAiCompatible),
-                    openai_compatible_base_url: Some("https://api.deepseek.com".to_string()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
+            r#"{"settingsVersion":1,"recentRepos":[],"excludeGlobs":[],"theme":"dark",
+                "ai":{"isEnabled":false,"provider":"ollama","model":"x",
+                      "ollamaBaseUrl":"http://127.0.0.1:11434",
+                      "openaiCompatibleBaseUrl":"https://api.deepseek.com",
+                      "hasStoredKey":false}}"#,
         )
         .unwrap();
-        assert_eq!(
-            updated.ai.openai_compatible_base_url,
-            "https://api.deepseek.com"
-        );
-
-        let reloaded = get_settings_core(&path, &ai_keys);
-        assert_eq!(
-            reloaded.ai.openai_compatible_base_url,
-            "https://api.deepseek.com"
-        );
+        let ai_keys = AiKeyStore::new();
+        let settings = get_settings_core(&path, &ai_keys);
+        assert!(matches!(settings.ai.provider, AiProvider::Ollama));
+        assert_eq!(settings.ai.ollama_base_url, "http://127.0.0.1:11434");
+        assert!(matches!(settings.theme, Theme::Dark));
     }
 
-    /// A settings file written before this field existed (no
-    /// `openaiCompatibleBaseUrl` key at all) must still deserialize —
-    /// `#[serde(default)]` on the field, not a hard requirement.
+    /// The harder half of the same migration: a settings file whose stored
+    /// `provider` IS the removed adapter. `AiProvider` no longer has that
+    /// variant, so deserialization fails and `read_settings_file` falls back
+    /// to `Settings::default()` — which has `isEnabled: false`. Fail-safe by
+    /// construction: the one thing that must never happen is silently
+    /// continuing to send snippets to a provider that no longer exists.
     #[test]
-    fn a_settings_file_without_the_openai_compatible_field_still_deserializes() {
+    fn a_settings_file_pinned_to_the_removed_provider_falls_back_to_ai_off() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(
             &path,
             r#"{"settingsVersion":1,"recentRepos":[],"excludeGlobs":[],"theme":"system",
-                "ai":{"isEnabled":false,"provider":"anthropic","model":"x",
-                      "ollamaBaseUrl":"http://127.0.0.1:11434","hasStoredKey":false}}"#,
+                "ai":{"isEnabled":true,"provider":"openai-compatible","model":"x",
+                      "ollamaBaseUrl":"http://127.0.0.1:11434","hasStoredKey":true}}"#,
         )
         .unwrap();
         let ai_keys = AiKeyStore::new();
         let settings = get_settings_core(&path, &ai_keys);
-        assert_eq!(settings.ai.openai_compatible_base_url, "");
+        assert!(!settings.ai.is_enabled, "AI must fall back to OFF");
+        assert!(matches!(settings.ai.provider, AiProvider::Anthropic));
     }
 
     #[test]
