@@ -62,7 +62,16 @@ import type { GraphBenchResult } from './browser-harness/harness';
 const GRAPH_FIRST_PAINT_BUDGET_MS = 1500;
 const GRAPH_PAN_P95_BUDGET_1K_MS = 22;
 const GRAPH_PAN_P95_BUDGET_5K_MS = 33;
-const BENCH_NODE_COUNTS = [1000, 5000] as const;
+/**
+ * Section 9 Phase 8's two scenarios. Overridable via `BENCH_GRAPH_NODE_COUNTS`
+ * (comma-separated) so the INSTRUMENT can be validated independently of the
+ * budgets — sweeping the node count is the only way to tell a real renderer
+ * cost from a pinned frame source. Not used by the default run.
+ */
+const BENCH_NODE_COUNTS: readonly number[] = (process.env.BENCH_GRAPH_NODE_COUNTS ?? '1000,5000')
+  .split(',')
+  .map((raw) => Number.parseInt(raw.trim(), 10))
+  .filter((value) => Number.isFinite(value) && value > 0);
 
 const EDGE_CANDIDATE_PATHS = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
