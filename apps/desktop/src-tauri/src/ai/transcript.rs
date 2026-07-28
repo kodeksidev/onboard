@@ -381,6 +381,50 @@ mod connectivity_tests {
         }
     }
 
+    /// NON-VACUITY for the test above.
+    ///
+    /// That test passes today because the writer serializes provider and
+    /// model only — so a green result proves nothing until the scan is shown
+    /// to FIRE on the thing it exists to catch. This feeds the same scan a
+    /// line that carries a header and an Authorization value, exactly as a
+    /// future `headers` field would, and asserts every banned term is
+    /// detected. Without this, the guard is green-means-nothing.
+    #[test]
+    fn the_key_leak_scan_fires_on_a_line_that_does_carry_a_header() {
+        let leaked = serde_json::json!({
+            "timestampMs": 0,
+            "kind": "connectivity",
+            "provider": "anthropic",
+            "headers": { "x-api-key": "REDACTED-ANTHROPIC-BY-HISTORY-REWRITE" },
+            "authorization": "Bearer REDACTED-ANTHROPIC-BY-HISTORY-REWRITE",
+        });
+        let raw = leaked.to_string().to_lowercase();
+        let mut fired = Vec::new();
+        for banned in [
+            "authorization",
+            "x-api-key",
+            "bearer",
+            "header",
+            "apikey",
+            "api_key",
+            "sk-",
+            "secret",
+            "token",
+        ] {
+            if raw.contains(banned) {
+                fired.push(banned);
+            }
+        }
+        assert!(
+            fired.contains(&"authorization")
+                && fired.contains(&"x-api-key")
+                && fired.contains(&"bearer")
+                && fired.contains(&"header")
+                && fired.contains(&"sk-"),
+            "the scan must detect a leaked header; it only fired on {fired:?}"
+        );
+    }
+
     /// Both transcripts append through one site, so M7's mode and (next)
     /// M6's bound have exactly one place to live rather than two that can
     /// diverge. Proven by writing through the connectivity path and
