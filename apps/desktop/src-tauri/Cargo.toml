@@ -2,7 +2,7 @@
 name = "onboard"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 license = "MIT"
 description = "Onboard desktop shell (Tauri) — sidecar supervision, IPC, settings, keychain"
 repository = "https://github.com/onboard/onboard"
