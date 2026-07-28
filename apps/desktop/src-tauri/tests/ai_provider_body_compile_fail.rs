@@ -68,7 +68,7 @@ fn assert_fails_with_error_code(bin_name: &str, expected_error_code: &str, expec
 /// seventh (standing in for the deleted `body` argument) doesn't fit.
 #[test]
 fn an_extra_body_argument_does_not_fit_sends_signature_at_all() {
-    assert_fails_with_error_code("extra_body_argument", "E0061", "6 arguments");
+    assert_fails_with_error_code("extra_body_argument", "E0061", "8 arguments");
 }
 
 /// The type proof: even trying to smuggle raw content into an EXISTING

@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use crate::ai::endpoint::{self, ResolvedEndpoint};
 use crate::ai::http::{self, ProviderShape, RequestHeaders};
 use crate::ai::permit::{self, EgressPermit};
-use crate::ai::pipeline::{PipelineStep, PipelineTrace};
+use crate::ai::pipeline::{PipelineStep, PipelineTrace, SendApproval, TraceKind};
 use crate::ai::provider::{AiProvider, CompletionRequest, CompletionResponse, TestResult};
 use crate::commands::settings::{load_stored_ai_settings, AiProvider as ProviderKind};
 use crate::error::AppError;
@@ -104,9 +104,10 @@ impl AnthropicProvider {
         &self,
         model: &str,
         trace: &mut PipelineTrace,
+        approval: SendApproval,
     ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(Some(model))?;
-        run_test(&ctx, trace).await
+        run_test(&ctx, trace, approval).await
     }
 }
 
@@ -121,6 +122,7 @@ impl AnthropicProvider {
 async fn run_test(
     ctx: &ResolvedContext,
     trace: &mut PipelineTrace,
+    approval: SendApproval,
 ) -> Result<TestResult, AppError> {
     let headers = build_headers(&ctx.key);
     // The same `PromptSpec` path a real feature takes (Section 12: "Test
@@ -136,6 +138,8 @@ async fn run_test(
     );
     http::send(
         &ctx.permit,
+        approval,
+        TraceKind::Connectivity,
         &ctx.endpoint,
         &headers,
         ProviderShape::Anthropic,
@@ -197,6 +201,8 @@ impl AiProvider for AnthropicProvider {
         let headers = build_headers(&ctx.key);
         let response = http::send(
             &ctx.permit,
+            req.approval,
+            TraceKind::Feature,
             &ctx.endpoint,
             &headers,
             ProviderShape::Anthropic,
@@ -206,9 +212,13 @@ impl AiProvider for AnthropicProvider {
         parse_completion_response(&response.body)
     }
 
-    async fn test(&self, trace: &mut PipelineTrace) -> Result<TestResult, AppError> {
+    async fn test(
+        &self,
+        trace: &mut PipelineTrace,
+        approval: SendApproval,
+    ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(None)?;
-        run_test(&ctx, trace).await
+        run_test(&ctx, trace, approval).await
     }
 }
 
@@ -402,6 +412,7 @@ mod tests {
         let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let result = block_on_never_pending(provider.complete(CompletionRequest {
+            approval: SendApproval::forge_for_test(TraceKind::Feature),
             prompt: crate::ai::prompt::build(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 redacted_payload,
@@ -451,7 +462,10 @@ mod tests {
         let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let mut trace = PipelineTrace::new_connectivity();
-        let result = block_on_never_pending(provider.test(&mut trace));
+        let result = block_on_never_pending(provider.test(
+            &mut trace,
+            SendApproval::forge_for_test(TraceKind::Connectivity),
+        ));
         let received = rx
             .recv_timeout(std::time::Duration::from_secs(15))
             .expect("the local listener never received a request");
@@ -470,6 +484,7 @@ mod tests {
             crate::privacy::redact::redact(&EngineSnippetsResult { snippets: vec![] }, &[])
                 .unwrap();
         let result = block_on_never_pending(provider.complete(CompletionRequest {
+            approval: SendApproval::forge_for_test(TraceKind::Feature),
             prompt: crate::ai::prompt::build(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 empty_payload,

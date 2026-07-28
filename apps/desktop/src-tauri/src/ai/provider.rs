@@ -47,6 +47,10 @@ use crate::error::AppError;
 #[derive(Debug)]
 pub struct CompletionRequest {
     pub prompt: PromptSpec,
+    /// Consumed by `ai::http::send`. Carried on the request rather than
+    /// passed alongside it so a completion cannot be constructed without
+    /// the gate having run — one approval, one request.
+    pub approval: crate::ai::pipeline::SendApproval,
 }
 
 /// What comes back from a real completion — provider-specific response
@@ -88,5 +92,6 @@ pub trait AiProvider {
     fn test(
         &self,
         trace: &mut crate::ai::pipeline::PipelineTrace,
+        approval: crate::ai::pipeline::SendApproval,
     ) -> impl std::future::Future<Output = Result<TestResult, AppError>> + Send;
 }

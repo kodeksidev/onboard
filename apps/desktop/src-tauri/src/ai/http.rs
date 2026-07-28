@@ -77,6 +77,7 @@ use reqwest::StatusCode;
 
 use crate::ai::endpoint::ResolvedEndpoint;
 use crate::ai::permit::EgressPermit;
+use crate::ai::pipeline::{SendApproval, TraceKind};
 use crate::ai::prompt::PromptSpec;
 use crate::error::AppError;
 
@@ -235,12 +236,29 @@ pub struct AiResponse {
 /// because `send` never accepts a body from its caller at all.
 pub fn send(
     _permit: &EgressPermit,
+    approval: SendApproval,
+    expected_kind: TraceKind,
     endpoint: &ResolvedEndpoint,
     headers: &RequestHeaders,
     shape: ProviderShape,
     model: &str,
     prompt: &PromptSpec,
 ) -> Result<AiResponse, AppError> {
+    // Consumed BY VALUE: one approval, one request. A borrowed token would
+    // prove only that some gate passed at some point, letting a single mint
+    // authorise N sends — including one issued after a later gate would have
+    // refused.
+    //
+    // The kind check is the other half: trace orders being disjoint achieves
+    // nothing if their tokens are interchangeable. A connectivity approval is
+    // minted after five steps with no Redacted and no Capped, so without this
+    // it would authorise a full feature payload.
+    if approval.kind() != expected_kind {
+        return Err(AppError::ai_pipeline_incomplete(format!(
+            "send refused: approval minted for {:?} but this is a {expected_kind:?} request",
+            approval.kind()
+        )));
+    }
     let body = build_body(shape, model, prompt);
     let header_map = build_header_map(headers, "the AI provider")?;
 
