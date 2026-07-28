@@ -124,6 +124,7 @@ mod tests {
             supervisor: SidecarSupervisor::new(config),
             sessions: Mutex::new(HashMap::new()),
             ai_keys: crate::secrets::ai_key::AiKeyStore::new(),
+            ai_rate_limiter: crate::ai::rate_limit::AiRateLimiter::new(),
             logger: crate::util::logging::RotatingLogger::open(
                 &temp_log.path().join("onboard.log"),
             )

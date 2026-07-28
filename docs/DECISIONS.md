@@ -2136,3 +2136,139 @@ decided; it only records choices the spec left open.
   `"openaicompatible"`; `"kebab-case"` produces `"openai-compatible"`
   while leaving `Anthropic`/`Ollama`'s wire values unchanged (both are
   single words, identical under either rule).
+- **Phase 12 step 6 — Section 8.10 step 3 is deliberately STRENGTHENED: a
+  citation that names a line must name a line the file actually has.**
+  Step 3 as written checks path MEMBERSHIP only, which admits
+  `src/services/auth.service.ts:9999` in a 40-line file — a path that
+  genuinely is in the index carrying a line number that resolves to
+  nothing. That is exactly the plausible-but-unresolvable citation the
+  feature exists to refuse: the user clicks it and lands nowhere, so
+  "Onboard never shows paths it can't verify" would be false in the one
+  case they would notice. `privacy::verify_citations::CitationIndex`
+  therefore carries each indexed file's real `lineCount` (projected from
+  `AnalysisResult.files` when the analysis is recorded), and a citation
+  outside `1..=lineCount` rejects the WHOLE answer via the new
+  `AppError::ai_citation_line_out_of_range`, whose `.path` is the full
+  offending `path:line` — the line is the part that failed, so hiding it
+  would make the message unactionable. Section 8.9's line-count-preserving
+  redaction is what makes this check meaningful in the first place.
+- **Phase 12 step 6 — an UNCITED answer is rejected, not reported as
+  verified, and that is made unrepresentable rather than merely tested.**
+  "Every citation resolves" is trivially true of an answer containing zero
+  citations, so a literal reading of 8.10 returns a "verified" answer that
+  was never checked against anything. `VerifiedAnswer::citation_count()`
+  returns `NonZeroUsize` and the only constructor builds it through
+  `NonZeroUsize::new(..).ok_or_else(AppError::ai_answer_uncited)`, so a
+  `VerifiedAnswer` that cites nothing cannot exist. Prose mentions outside
+  a backtick span or markdown link are not candidates (8.10 step 1 is
+  explicit about where candidates come from), so they also do not satisfy
+  non-vacuousness — an answer that only gestures at files in prose is
+  withheld.
+- **Phase 12 step 6 — real prompts arrived WITHOUT re-opening the
+  free-form-body channel: `ai::http::send`'s WHAT slot went from
+  `&RedactedPayload` to `&PromptSpec`, and `CompletionRequest`'s
+  `instructions: String` field was DELETED.** The obvious way to add
+  prompts (`send(.., instructions: &str, ..)`) is the same defect pattern
+  as the `body: &Value` parameter deleted in step 3A — a caller-controlled
+  path that can carry anything. `ai::prompt::PromptSpec` has private
+  fields, no `new`/`Default`/`Deserialize`/`From`, and exactly one producer,
+  `ai::prompt::build(feature: AiFeature, payload: RedactedPayload)`, so the
+  task copy is a `&'static str` a caller can neither author nor override,
+  and the redaction guarantee is inherited rather than replaced. `send`'s
+  arity is unchanged at six and it still assembles the JSON itself. The
+  only caller-authored text that can reach a request is `ai_ask`'s question
+  and `ai_explain_module`'s module id, each behind a validating newtype
+  (`UserQuestion`/`ModuleId`) and each emitted as its OWN JSON leaf, never
+  concatenated into the task string — so `ai::http`'s "every string leaf is
+  exactly one thing" property survives. Proven by five new compile-fail
+  fixtures in `ai-provider-body-violations` plus `prompt_from_raw_text` in
+  `ai-provider-triad-violations`; `missing_payload`'s expected type changed
+  from `&RedactedPayload` to `&PromptSpec` accordingly.
+- **Phase 12 step 6 — the R5 transcript records `ai::http::build_body`'s
+  own output, and a failed write ABORTS the request.** "Precisely what left
+  the machine" is only true if the recorded value IS the outbound body, so
+  `ai::transcript::record` calls the same `build_body` that `send` calls,
+  with the same `shape`/`model`/`prompt`, and writes it verbatim under
+  `"body"`. A hand-built summary would be a second implementation free to
+  drift, and a drifted audit file is worse than none because it looks like
+  evidence. Request HEADERS are deliberately not recorded: the only header
+  any adapter builds is the auth header, Section 12 forbids logging a key
+  at any level, and the body carries all the repo content anyway. R5 is a
+  mandatory pipeline step, not a side effect, so a write failure returns
+  `Err` and nothing is sent. Section 12 has no code for "the transcript
+  could not be written"; `E_PERMISSION_DENIED` is the closest existing fit
+  (it IS an OS write failure) — the same judgement call, and the same
+  treatment here, as `AppError::system_root`.
+- **Phase 12 step 6 — Onboard's OWN rate limits reuse `E_AI_RATE_LIMITED`
+  with honest copy rather than Section 10's provider-specific sentence.**
+  Section 10's literal copy is "{provider} is rate-limiting Onboard", which
+  would be a false statement when the refusal is local and nothing was
+  sent. `AppError::ai_rate_limited_locally` and
+  `AppError::ai_request_already_in_flight` keep the code (the UI's
+  wait-then-retry affordance is the right one) and state what actually
+  happened. A refused request consumes no window capacity and sets no
+  in-flight flag, so retrying in a loop cannot extend a caller's own
+  lockout; the slot is an RAII guard, so an early `?` return anywhere in
+  the pipeline cannot leak the concurrency permit.
+- **Phase 12 step 6 — Section 12's ordered pipeline is enforced by a
+  fail-closed runtime gate (`ai::pipeline::PipelineTrace`), not only by
+  review.** Most of the chain is already impossible to reorder, because
+  each step's output is the next step's only possible input:
+  snippets → redact → prompt → send is a compile error to get wrong. Two
+  steps are not protected that way, and they are exactly the two a careless
+  edit would drop: `permit::acquire` (the adapter re-acquires internally,
+  so deleting the pipeline's early gate still compiles and still sends —
+  losing only Section 12's "E_AI_DISABLED before any other work") and
+  `transcript::record` (no downstream consumer at all). Every step records
+  itself; `ensure_ready_to_send()` runs immediately before the provider
+  call and refuses the request outright if the trace so far is not exactly
+  `STEPS_BEFORE_SEND`, so a deleted step breaks the feature loudly on every
+  real request instead of silently degrading the guarantee.
+  `ensure_complete_and_ordered()` closes the same way before an answer is
+  returned. A trace violation reuses `E_AI_PAYLOAD_UNSAFE`: it is the same
+  family as R3's abort — the safety pipeline did not complete, so nothing
+  is sent.
+- **Phase 12 step 6 — the three commands funnel through ONE private helper
+  (`commands::ai::run_ai_feature`), and candidate file lists are derived
+  from the recorded analysis, never supplied by the caller.** The webview
+  sends a `repoId`, a `moduleId` or a question — never a path list. Summary
+  uses `importantFilePaths`, module explanation a module card's
+  `keyFilePaths`, and Q&A `engine.search` hits in score order (falling back
+  to `importantFilePaths` when a question matches nothing, so the model is
+  grounded in real code rather than handed an empty payload it could only
+  answer uncited — which Section 8.10 would then reject). Section 8.9 R4's
+  "keep highest-ranked first, drop the tail" therefore operates on a
+  genuinely ranked list. `AppState`'s `RepoSession` keeps three small
+  PROJECTIONS of the analysis for this (`importantFilePaths`, module → key
+  files, path → `lineCount`) rather than retaining the whole
+  `AnalysisResult`; none of them is file CONTENT, which still only ever
+  comes from `engine.snippets`. A `moduleId` absent from the analysis is
+  refused with `E_INVALID_SETTINGS` before any egress (the closed
+  `AppErrorCode` set has no better fit, and it matches how
+  `validate_provider` reports a bad enum value). A question may be up to
+  500 characters while the ranking search is capped at 200
+  (`SEARCH_QUERY_MAX_LEN`), so the query is truncated for RANKING only —
+  the full question still travels as the prompt's `subject`.
+- **Phase 12 step 6 — the step-6 pipeline tests live in the lib's own
+  `#[cfg(test)]` tree and resolve the stub sidecar from `current_exe()`
+  instead of `CARGO_BIN_EXE_<name>`.** They need both the stub sidecar
+  (normally an integration-test-only path) and
+  `AiCommandContext::test_endpoint`, which — like every adapter's
+  `with_test_endpoint` — is `#[cfg(test)]` and therefore absent from the
+  library an integration test links against. Since `cargo test` builds
+  every `[[bin]]`, `target/<profile>/onboard_engine_stub` sits exactly one
+  directory above the unit-test binary in `deps/`; the helper asserts that
+  file exists rather than silently skipping. The stub gained two toggles,
+  `SNIPPET_SECRET` and `SNIPPET_BYTES`, so `engine.snippets` returns real
+  text for the redaction and cap tests instead of the empty array it
+  previously returned.
+- **Phase 12 step 6 — `VerifiedAnswer` needed `#[derive(Debug)]` before the
+  step's own RED tests could even compile.** The five tests written in the
+  previous (interrupted) run use `unwrap_err()`/`expect()`, which require
+  `T: Debug`, so `cargo build --tests` failed with 4x E0277 and those tests
+  had never actually executed. Deriving `Debug` was the whole fix; the RED
+  state was then verified for real (all five failing at `unimplemented!()`,
+  not vacuously passing and not erroring for an unrelated reason) before
+  any implementation was written. Recorded because a test that has never
+  run is not evidence of anything — the same trap the compile-fail suites'
+  specific-error-code assertions exist to avoid.

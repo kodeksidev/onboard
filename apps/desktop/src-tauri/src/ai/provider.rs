@@ -32,20 +32,21 @@
 //! requests (Section 9's own `AI_MAX_CONCURRENT = 1` suggests it may
 //! never need to).
 
+use crate::ai::prompt::PromptSpec;
 use crate::error::AppError;
-use crate::privacy::redact::RedactedPayload;
 
-/// The task to complete: already-redacted content plus plain task
-/// instructions. Neither field can carry raw, unredacted repo content —
-/// `instructions` is a static task description (never repo content; the
-/// actual prompt templates are `prompt.rs`, a later Phase 12 sub-step,
-/// deliberately not built here), and `payload` is a `RedactedPayload`,
-/// which by construction has already been through Section 8.9 R1-R4
-/// redaction and has no public constructor of its own.
+/// The task to complete. Phase 12 step 6 replaced this struct's earlier
+/// `instructions: String` + `payload: RedactedPayload` pair with a single
+/// [`PromptSpec`]: a free-form `String` field on the one type that reaches
+/// `ai::http::send` was the same caller-controlled channel the deleted
+/// `body: &Value` parameter was, and deleting it is the same fix. A
+/// `PromptSpec` has private fields, no public constructor, and can only be
+/// built by `ai::prompt::build` from a typed feature enum plus a
+/// `RedactedPayload` — so this struct can carry neither caller-authored
+/// instructions nor unredacted repo content.
 #[derive(Debug)]
 pub struct CompletionRequest {
-    pub instructions: String,
-    pub payload: RedactedPayload,
+    pub prompt: PromptSpec,
 }
 
 /// What comes back from a real completion — provider-specific response

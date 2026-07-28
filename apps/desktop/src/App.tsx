@@ -8,6 +8,7 @@ import { OverviewPanel } from '@/components/OverviewPanel/OverviewPanel';
 import { RoadmapPanel } from '@/components/RoadmapPanel/RoadmapPanel';
 import { ModuleMap } from '@/components/ModuleMap/ModuleMap';
 import { WhereIsSearch } from '@/components/WhereIsSearch/WhereIsSearch';
+import { AiPanel } from '@/components/AiPanel/AiPanel';
 import { ErrorState } from '@/components/ErrorState/ErrorState';
 import { LABELS, resolveErrorCopy } from '@/copy/messages';
 import { useRepoStore } from '@/state/repoStore';
@@ -15,7 +16,7 @@ import type { RepoState } from '@/state/repoStore';
 import { useSettingsStore } from '@/state/settingsStore';
 import { useGraphStore } from '@/state/graphStore';
 
-type ReadyView = 'overview' | 'graph' | 'roadmap' | 'modules' | 'search' | 'file';
+type ReadyView = 'overview' | 'graph' | 'roadmap' | 'modules' | 'search' | 'file' | 'ai';
 
 interface ReadyContentProps {
   readonly result: AnalysisResult;
@@ -49,6 +50,13 @@ const READY_TABS: ReadonlyArray<{ readonly id: ReadyView; readonly label: string
   { id: 'modules', label: 'Module map' },
   { id: 'search', label: 'Where is X?' },
   { id: 'file', label: 'File viewer' },
+  /**
+   * Phase 12 step 6. The tab is always present, including with AI off (the
+   * default): what it shows then is the reason it is off and the control that
+   * turns it on. Hiding it would make the feature undiscoverable; disabling
+   * it would leave a control that explains nothing.
+   */
+  { id: 'ai', label: 'Ask AI' },
 ];
 
 function tabClassName(isActive: boolean): string {
@@ -104,6 +112,9 @@ function ReadyViewPanel({ view, result, openFile, onOpenFile }: ReadyViewPanelPr
   }
   if (view === 'search') {
     return <WhereIsSearch repoId={result.repo.id} onOpenFile={onOpenFile} />;
+  }
+  if (view === 'ai') {
+    return <AiPanel result={result} onOpenFile={onOpenFile} />;
   }
   if (view === 'file') {
     return (

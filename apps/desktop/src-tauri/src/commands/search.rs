@@ -16,7 +16,11 @@ use crate::state::AppState;
 static REPO_ID_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new("^[0-9a-f]{16}$").expect("valid regex"));
 
-fn validate_repo_id(repo_id: &str) -> Result<(), AppError> {
+/// `pub(crate)` since Phase 12 step 6: `commands::ai` validates `repoId`
+/// at its own boundary too (Section 12), and it must be the SAME rule —
+/// among other things the id becomes a transcript file name, so a value
+/// that isn't 16 lowercase hex characters must never get that far.
+pub(crate) fn validate_repo_id(repo_id: &str) -> Result<(), AppError> {
     if REPO_ID_PATTERN.is_match(repo_id) {
         Ok(())
     } else {
@@ -98,6 +102,7 @@ mod tests {
             supervisor: SidecarSupervisor::new(config),
             sessions: Mutex::new(HashMap::new()),
             ai_keys: crate::secrets::ai_key::AiKeyStore::new(),
+            ai_rate_limiter: crate::ai::rate_limit::AiRateLimiter::new(),
             logger: crate::util::logging::RotatingLogger::open(
                 &temp_log.path().join("onboard.log"),
             )

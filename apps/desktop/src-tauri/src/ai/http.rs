@@ -36,12 +36,18 @@
 //! exactly the three shapes in [`ProviderShape`], so this module knowing
 //! all three costs little and buys back the closed channel.
 //!
-//! `TASK_INSTRUCTIONS_PLACEHOLDER` is fixed, baked-in copy, not adapter- or
-//! caller-supplied — real prompt templates (project summary, module
-//! explanations, the user's actual question for Q&A) are `prompt.rs`'s job,
-//! a later, not-yet-reviewed Phase 12 sub-step; wiring real instructions
-//! through will be reviewed together with that work rather than smuggled in
-//! here as a free string parameter today.
+//! Phase 12 step 6 replaced the old `TASK_INSTRUCTIONS_PLACEHOLDER`
+//! constant with real per-feature prompts — WITHOUT re-opening the channel
+//! this section exists to keep shut. The `payload: &RedactedPayload`
+//! parameter became `prompt: &`[`crate::ai::prompt::PromptSpec`], a type
+//! that (a) can only be constructed from a `RedactedPayload`, so the WHAT
+//! leg is inherited rather than replaced, and (b) has private fields and no
+//! public constructor of any kind, so a caller still cannot author the task
+//! text. `send`'s arity is unchanged at six, there is still no `body`
+//! parameter, and [`build_body`] still assembles the JSON itself — from
+//! [`ProviderShape`] + `model` + the `PromptSpec`'s own fixed `task`,
+//! validated `subject`, and redacted snippets. See `ai/prompt.rs`'s doc
+//! comment for the full writeup.
 //!
 //! Section 12 error hygiene: a response body, a provider error string, or
 //! an OS/transport error string is NEVER placed in `AppError.message` —
@@ -71,8 +77,8 @@ use reqwest::StatusCode;
 
 use crate::ai::endpoint::ResolvedEndpoint;
 use crate::ai::permit::EgressPermit;
+use crate::ai::prompt::PromptSpec;
 use crate::error::AppError;
-use crate::privacy::redact::RedactedPayload;
 
 /// Plain header name/value pairs an adapter wants sent — never
 /// `reqwest::header::HeaderMap` (see this module's doc comment). No
@@ -117,58 +123,62 @@ pub enum ProviderShape {
     Ollama,
 }
 
-/// Fixed, baked-in placeholder task copy — see this module's doc comment
-/// for why this is not (yet) adapter- or caller-supplied.
-pub(crate) const TASK_INSTRUCTIONS_PLACEHOLDER: &str =
-    "Review the following code snippets and answer only about what they show.";
-
 const ANTHROPIC_MAX_TOKENS: u32 = 1024;
 
-/// Every redacted snippet becomes its own content block — `text` (the
-/// snippet's own already-redacted content, verbatim) is never concatenated
-/// with `TASK_INSTRUCTIONS_PLACEHOLDER` or any other string, so each JSON
-/// string leaf in the final body is either exactly one snippet's content,
-/// exactly one snippet's path, or a fixed scaffolding literal — nothing is
-/// ever glued together into a leaf that could hide extra content inside a
-/// larger string. (`tests::a_planted_secret_...` in `ai/anthropic.rs` and
-/// `ai/ollama.rs` walk every leaf of a real received body and assert
-/// exactly this.)
-fn build_content_blocks(payload: &RedactedPayload) -> Vec<serde_json::Value> {
-    payload
-        .to_request_snippets()
-        .into_iter()
-        .map(|snippet| {
-            serde_json::json!({
-                "type": "text",
-                "path": snippet.path,
-                "startLine": snippet.start_line,
-                "endLine": snippet.end_line,
-                "text": snippet.content,
-            })
-        })
-        .collect()
+/// Every redacted snippet becomes its own content block, and the prompt's
+/// `subject` (if any) becomes one more — `text` (the snippet's own
+/// already-redacted content, verbatim) is never concatenated with the task
+/// copy, the subject, or any other string, so each JSON string leaf in the
+/// final body is either exactly one snippet's content, exactly one
+/// snippet's path, exactly the validated subject, or a fixed scaffolding
+/// literal — nothing is ever glued together into a leaf that could hide
+/// extra content inside a larger string. (`tests::a_planted_secret_...` in
+/// `ai/anthropic.rs` and `ai/ollama.rs` walk every leaf of a real received
+/// body and assert exactly this.)
+fn build_content_blocks(prompt: &PromptSpec) -> Vec<serde_json::Value> {
+    let mut blocks: Vec<serde_json::Value> = Vec::new();
+    if let Some(subject) = prompt.subject() {
+        blocks.push(serde_json::json!({ "type": "text", "subject": subject }));
+    }
+    blocks.extend(
+        prompt
+            .payload()
+            .to_request_snippets()
+            .into_iter()
+            .map(|snippet| {
+                serde_json::json!({
+                    "type": "text",
+                    "path": snippet.path,
+                    "startLine": snippet.start_line,
+                    "endLine": snippet.end_line,
+                    "text": snippet.content,
+                })
+            }),
+    );
+    blocks
 }
 
-/// The only place any provider request body is built. `payload` is the
-/// only source of content; `shape`/`model` are plain, non-content
-/// scaffolding.
+/// The only place any provider request body is built. `prompt` is the only
+/// source of content (its fixed task copy, its validated subject, and its
+/// redacted snippets); `shape`/`model` are plain, non-content scaffolding.
 pub(crate) fn build_body(
     shape: ProviderShape,
     model: &str,
-    payload: &RedactedPayload,
+    prompt: &PromptSpec,
 ) -> serde_json::Value {
-    let blocks = build_content_blocks(payload);
+    let blocks = build_content_blocks(prompt);
+    let task = prompt.task();
     match shape {
         ProviderShape::Anthropic => serde_json::json!({
             "model": model,
             "max_tokens": ANTHROPIC_MAX_TOKENS,
-            "system": TASK_INSTRUCTIONS_PLACEHOLDER,
+            "system": task,
             "messages": [{ "role": "user", "content": blocks }],
         }),
         ProviderShape::OpenAiCompatible => serde_json::json!({
             "model": model,
             "messages": [
-                { "role": "system", "content": TASK_INSTRUCTIONS_PLACEHOLDER },
+                { "role": "system", "content": task },
                 { "role": "user", "content": blocks },
             ],
         }),
@@ -176,11 +186,25 @@ pub(crate) fn build_body(
             "model": model,
             "stream": false,
             "messages": [
-                { "role": "system", "content": TASK_INSTRUCTIONS_PLACEHOLDER },
+                { "role": "system", "content": task },
                 { "role": "user", "content": blocks },
             ],
         }),
     }
+}
+
+/// `#[cfg(test)]`-only re-export of [`build_body`], so `ai::transcript`'s
+/// tests can assert the transcript records the EXACT body `send` builds by
+/// calling the very same function rather than re-deriving it. Production
+/// code never needs this — `transcript::record` already calls `build_body`
+/// directly (both live in this crate).
+#[cfg(test)]
+pub(crate) fn build_body_for_test(
+    shape: ProviderShape,
+    model: &str,
+    prompt: &PromptSpec,
+) -> serde_json::Value {
+    build_body(shape, model, prompt)
 }
 
 /// Section 12: "per-request timeout 60s, no automatic retry on 429/5xx."
@@ -212,8 +236,9 @@ pub struct AiResponse {
 /// [`crate::ai::endpoint::resolve`], never a caller argument; `headers` is
 /// plain, `reqwest`-free data (see this module's doc comment); `shape`/
 /// `model` select and parameterize the body `send` builds itself;
-/// `payload` is the only source of the body's content. There is no way to
-/// reach the network with content that did not come from `payload`,
+/// `prompt` is the only source of the body's content, and is itself only
+/// constructible from a `RedactedPayload` (see `ai::prompt`). There is no
+/// way to reach the network with content that did not come from `prompt`,
 /// because `send` never accepts a body from its caller at all.
 pub fn send(
     _permit: &EgressPermit,
@@ -221,9 +246,9 @@ pub fn send(
     headers: &RequestHeaders,
     shape: ProviderShape,
     model: &str,
-    payload: &RedactedPayload,
+    prompt: &PromptSpec,
 ) -> Result<AiResponse, AppError> {
-    let body = build_body(shape, model, payload);
+    let body = build_body(shape, model, prompt);
     let header_map = build_header_map(headers, "the AI provider")?;
 
     let response = HTTP_CLIENT
@@ -337,8 +362,12 @@ mod tests {
         assert_eq!(AI_REQUEST_TIMEOUT_SECS, 60);
     }
 
-    fn redacted_payload_from(path: &str, content: &str) -> RedactedPayload {
-        crate::privacy::redact::redact(
+    pub(super) fn prompt_from(
+        feature: crate::ai::prompt::AiFeature,
+        path: &str,
+        content: &str,
+    ) -> PromptSpec {
+        let payload = crate::privacy::redact::redact(
             &crate::contract::EngineSnippetsResult {
                 snippets: vec![crate::contract::EngineSnippet {
                     path: path.to_string(),
@@ -349,13 +378,18 @@ mod tests {
             },
             &[],
         )
-        .expect("redacting a plain non-secret line cannot fail")
+        .expect("redacting a plain non-secret line cannot fail");
+        crate::ai::prompt::build(feature, payload)
     }
 
     #[test]
     fn build_body_never_concatenates_a_snippets_content_with_the_instructions() {
-        let payload = redacted_payload_from("a.ts", "const x = 1;");
-        let body = build_body(ProviderShape::Anthropic, "test-model", &payload);
+        let prompt = prompt_from(
+            crate::ai::prompt::AiFeature::ProjectSummary,
+            "a.ts",
+            "const x = 1;",
+        );
+        let body = build_body(ProviderShape::Anthropic, "test-model", &prompt);
         let content_text = body["messages"][0]["content"][0]["text"]
             .as_str()
             .expect("content block must carry a plain text leaf");
@@ -365,15 +399,46 @@ mod tests {
         );
     }
 
+    /// The subject (a user's question, or a module id) is its own leaf in
+    /// its own block — never appended to the task copy, and never glued to
+    /// a snippet's content.
+    #[test]
+    fn build_body_gives_the_prompt_subject_its_own_leaf() {
+        let prompt = prompt_from(
+            crate::ai::prompt::AiFeature::Question(
+                crate::ai::prompt::UserQuestion::parse("where is auth?").unwrap(),
+            ),
+            "a.ts",
+            "const x = 1;",
+        );
+        let body = build_body(ProviderShape::Anthropic, "test-model", &prompt);
+        assert_eq!(
+            body["messages"][0]["content"][0]["subject"],
+            "where is auth?"
+        );
+        assert_eq!(body["messages"][0]["content"][1]["text"], "const x = 1;");
+        assert!(
+            !body["system"]
+                .as_str()
+                .expect("system copy is a string")
+                .contains("where is auth?"),
+            "the question must not be concatenated into the task copy"
+        );
+    }
+
     #[test]
     fn build_body_produces_the_three_named_shapes_without_panicking() {
-        let payload = redacted_payload_from("a.ts", "const x = 1;");
         for shape in [
             ProviderShape::Anthropic,
             ProviderShape::OpenAiCompatible,
             ProviderShape::Ollama,
         ] {
-            let body = build_body(shape, "test-model", &payload);
+            let prompt = prompt_from(
+                crate::ai::prompt::AiFeature::ProjectSummary,
+                "a.ts",
+                "const x = 1;",
+            );
+            let body = build_body(shape, "test-model", &prompt);
             assert_eq!(body["model"], "test-model");
         }
     }
@@ -385,18 +450,21 @@ mod tests {
 /// none of it exists in a non-test build.
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::TASK_INSTRUCTIONS_PLACEHOLDER;
+    use crate::ai::prompt::ALL_TASK_STRINGS;
     use crate::privacy::redact::RequestSnippet;
     use std::collections::HashSet;
 
     /// Fixed, non-content scaffolding literals that legitimately appear as
     /// string leaves (or JSON object field names) in ANY of the three
-    /// shapes' outbound bodies. Deliberately does NOT include the model id
-    /// (varies per call) or any snippet path/content (varies per payload)
-    /// — [`assert_body_contains_nothing_beyond_scaffolding_and_snippets`]
+    /// shapes' outbound bodies — including every fixed per-feature task
+    /// string `ai::prompt` can produce (they are `&'static str` constants
+    /// chosen by `prompt::build`, never caller-authored). Deliberately does
+    /// NOT include the model id (varies per call), the prompt's `subject`
+    /// (varies per request), or any snippet path/content (varies per
+    /// payload) — [`assert_body_contains_nothing_beyond_scaffolding_and_snippets`]
     /// adds those separately, from the real values a test actually used.
     fn fixed_scaffolding_leaves() -> HashSet<&'static str> {
-        [
+        let mut leaves: HashSet<&'static str> = [
             "model",
             "max_tokens",
             "system",
@@ -407,13 +475,15 @@ pub(crate) mod test_support {
             "type",
             "text",
             "path",
+            "subject",
             "startLine",
             "endLine",
             "stream",
-            TASK_INSTRUCTIONS_PLACEHOLDER,
         ]
         .into_iter()
-        .collect()
+        .collect();
+        leaves.extend(ALL_TASK_STRINGS.iter().copied());
+        leaves
     }
 
     /// Recursively collects every JSON string leaf AND every object field
@@ -452,12 +522,16 @@ pub(crate) mod test_support {
         received_json: &serde_json::Value,
         model: &str,
         expected_snippets: &[RequestSnippet],
+        expected_subject: Option<&str>,
     ) {
         let mut leaves = Vec::new();
         collect_string_leaves(received_json, &mut leaves);
 
         let mut allowed = fixed_scaffolding_leaves();
         allowed.insert(model);
+        if let Some(subject) = expected_subject {
+            allowed.insert(subject);
+        }
         let snippet_paths: HashSet<&str> =
             expected_snippets.iter().map(|s| s.path.as_str()).collect();
         let snippet_contents: HashSet<&str> = expected_snippets

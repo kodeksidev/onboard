@@ -45,6 +45,25 @@ pub const AI_MAX_BYTES_PER_FILE: usize = 8192;
 pub const AI_MAX_FILES: usize = 24;
 pub const AI_MAX_TOTAL_BYTES: usize = 98_304;
 
+/// Section 9 Phase 12 / Section 12 rate limits for the `ai_*` family.
+pub const AI_MAX_REQUESTS_PER_MINUTE: usize = 10;
+pub const AI_MAX_CONCURRENT: usize = 1;
+pub const AI_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+
+/// Boundary caps for the two caller-supplied `ai_*` arguments (Section 12,
+/// "input validation at every boundary"). `moduleId` is a
+/// `ModuleCard.id`; `question` is `ai_ask`'s free text — the ONLY
+/// user-authored string the AI path transmits, so it is bounded here and
+/// carried as its own JSON leaf, never glued into the task copy.
+pub const AI_MODULE_ID_MAX_LEN: usize = 200;
+pub const AI_QUESTION_MAX_LEN: usize = 500;
+
+/// How many ranked paths each AI feature asks `engine.snippets` for before
+/// Section 8.9 R4's caps trim the set. Deliberately larger than
+/// `AI_MAX_FILES` so R4 has a real tail to drop (and so an excluded file
+/// dropped by R1 doesn't silently shrink the payload below the cap).
+pub const AI_SNIPPET_CANDIDATE_LIMIT: usize = 40;
+
 /// Section 8.9 R2 rule thresholds that aren't regex literals.
 pub const HIGH_ENTROPY_MIN_LEN: usize = 24;
 pub const HIGH_ENTROPY_MIN_CHAR_CLASSES: u32 = 3;

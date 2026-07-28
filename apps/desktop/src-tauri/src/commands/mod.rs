@@ -14,7 +14,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::error::AppError;
 use crate::state::AppState;
 
-use ai::{test_ai_key_core, TestAiKeyResponse};
+use ai::{
+    ai_ask_core, ai_explain_module_core, ai_project_summary_core, test_ai_key_core, AiAnswer,
+    AiCommandContext, TestAiKeyResponse,
+};
 use analyze::{analyze_repo_core, AnalyzeContext, AnalyzeRepoRequest};
 use read_file::read_repo_file_core;
 use search::search_repo_core;
@@ -197,4 +200,60 @@ pub async fn test_ai_key(
     let path = settings_path(&app)?;
     let ai_keys = state.ai_keys.clone();
     test_ai_key_core(path, ai_keys, &provider, &model).await
+}
+
+/// Section 12: the AI transcript lives at
+/// `<appDataDir>/onboard/transcripts/<repoId>.jsonl`.
+fn ai_command_context(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+) -> Result<AiCommandContext, AppError> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| AppError::invalid_settings("Could not resolve the app data directory."))?;
+    Ok(AiCommandContext {
+        settings_path: settings_path(app)?,
+        transcripts_dir: app_data_dir.join("onboard").join("transcripts"),
+        ai_keys: state.ai_keys.clone(),
+        #[cfg(test)]
+        test_endpoint: None,
+    })
+}
+
+/// Section 7.4: `ai_project_summary { repoId }` →
+/// `{ markdown, citedPaths, sentFileCount, sentByteCount }`.
+#[tauri::command]
+pub async fn ai_project_summary(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<AiAnswer, AppError> {
+    let ctx = ai_command_context(&app, &state)?;
+    ai_project_summary_core(&state, ctx, &repo_id).await
+}
+
+/// Section 7.4: `ai_explain_module { repoId, moduleId }` — same response
+/// shape.
+#[tauri::command]
+pub async fn ai_explain_module(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+    module_id: String,
+) -> Result<AiAnswer, AppError> {
+    let ctx = ai_command_context(&app, &state)?;
+    ai_explain_module_core(&state, ctx, &repo_id, &module_id).await
+}
+
+/// Section 7.4: `ai_ask { repoId, question }` — same response shape.
+#[tauri::command]
+pub async fn ai_ask(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+    question: String,
+) -> Result<AiAnswer, AppError> {
+    let ctx = ai_command_context(&app, &state)?;
+    ai_ask_core(&state, ctx, &repo_id, &question).await
 }

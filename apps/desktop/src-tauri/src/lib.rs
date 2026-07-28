@@ -1,7 +1,7 @@
 //! Onboard Tauri library crate. `main.rs` is a thin entry point; this file
 //! wires plugins, builds `AppState`, resolves the sidecar binary, and
-//! registers every Section 7.4 command Phase 6 owns (everything except the
-//! `ai_*` family — Phase 12).
+//! registers every Section 7.4 command — Phase 6's, plus Phase 12's
+//! `test_ai_key` and the three `ai_*` features.
 
 pub mod ai;
 pub mod commands;
@@ -121,6 +121,7 @@ fn build_app_state(app: &tauri::App) -> AppState {
         supervisor,
         sessions: Mutex::new(HashMap::new()),
         ai_keys: AiKeyStore::new(),
+        ai_rate_limiter: ai::rate_limit::AiRateLimiter::new(),
         logger,
     }
 }
@@ -145,6 +146,9 @@ pub fn run() {
             commands::store_ai_key,
             commands::clear_ai_key,
             commands::test_ai_key,
+            commands::ai_project_summary,
+            commands::ai_explain_module,
+            commands::ai_ask,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Onboard application");

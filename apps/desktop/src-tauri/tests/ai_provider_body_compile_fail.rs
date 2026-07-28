@@ -79,12 +79,58 @@ fn raw_json_content_cannot_be_smuggled_into_the_model_slot() {
     assert_fails_with_error_code("raw_content_into_model_slot", "E0308", "&str");
 }
 
+// -------------------------------------------------------------------------
+// Phase 12 step 6: `PromptSpec` is the WHAT slot now — prove it is closed
+// -------------------------------------------------------------------------
+//
+// Real prompts arrived in step 6, and the obvious implementation
+// (`send(.., instructions: &str, ..)`) would have re-opened exactly the
+// channel the deleted `body: &Value` parameter was. Instead the payload
+// slot became `&PromptSpec`: private fields, no public constructor,
+// producible only by `ai::prompt::build` from a typed feature enum plus a
+// `RedactedPayload`. These five fixtures prove each escape route is a
+// compile error, mirroring `tests/redaction_compile_fail.rs`'s technique
+// against `RedactedPayload`.
+
+#[test]
+fn constructing_a_prompt_spec_by_struct_literal_is_a_compile_error() {
+    assert_fails_with_error_code("prompt_spec_struct_literal", "E0451", "private");
+}
+
+#[test]
+fn calling_a_nonexistent_prompt_spec_constructor_is_a_compile_error() {
+    assert_fails_with_error_code("prompt_spec_no_constructor", "E0599", "new");
+}
+
+#[test]
+fn defaulting_a_prompt_spec_is_a_compile_error() {
+    assert_fails_with_error_code("prompt_spec_default", "E0277", "Default");
+}
+
+#[test]
+fn deserializing_a_prompt_spec_is_a_compile_error() {
+    assert_fails_with_error_code("prompt_spec_deserialize", "E0277", "Deserialize");
+}
+
+#[test]
+fn building_a_prompt_spec_from_a_string_is_a_compile_error() {
+    assert_fails_with_error_code("prompt_spec_from_string", "E0277", "From<String>");
+}
+
 /// Guards against the fixture crate silently rotting — see the identical
 /// guard in the other four compile-fail suites.
 #[test]
-fn both_fixture_binaries_exist_on_disk() {
+fn every_fixture_binary_exists_on_disk() {
     let bin_dir = crate_root().join("tests/fixtures/ai-provider-body-violations/src/bin");
-    for name in ["extra_body_argument", "raw_content_into_model_slot"] {
+    for name in [
+        "extra_body_argument",
+        "raw_content_into_model_slot",
+        "prompt_spec_struct_literal",
+        "prompt_spec_no_constructor",
+        "prompt_spec_default",
+        "prompt_spec_deserialize",
+        "prompt_spec_from_string",
+    ] {
         let path = bin_dir.join(format!("{name}.rs"));
         assert!(
             Path::new(&path).exists(),
