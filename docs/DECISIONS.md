@@ -1987,7 +1987,7 @@ decided; it only records choices the spec left open.
   different "AI is on" checks in the same crate — exactly the kind of
   asymmetry a bypass hides in).
 - **[OBSOLETE — the module this describes no longer exists; deleted in
-  `9936548` as an A4 / §3 non-goal 2 scope violation. Retained because a
+  `fa1fe5c` as an A4 / §3 non-goal 2 scope violation. Retained because a
   deleted entry teaches nothing.]** **Phase 12 step 3B —
   `openai-compatible`'s REST path is
   `{base_url}/chat/completions`, matching OpenAI/DeepSeek/Groq/OpenRouter/

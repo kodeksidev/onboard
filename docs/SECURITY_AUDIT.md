@@ -1,6 +1,6 @@
 # Security audit — Phase 13
 
-**Scope:** whole repository at `main` / HEAD `7d48980`.
+**Scope:** whole repository at `main` / HEAD `76f84be`.
 **Auditor:** `agent-security` (read-only; no source file was modified by this audit).
 **Method:** code reading plus targeted execution — `cargo test`, `cargo audit`, `bun audit`, and a
 throwaway probe crate *outside* the repo that links `onboard_lib` and calls the real
@@ -425,7 +425,7 @@ with mode `0700`.
 
 ## 4. Dependencies
 
-Re-verified at HEAD `7d48980`.
+Re-verified at HEAD `76f84be`.
 
 - **`bun audit`** (bun 1.3.14, repo root): **No vulnerabilities found.** The `overrides` block in
   `package.json:24-27` (`brace-expansion >= 5.0.8`, `serialize-javascript >= 7.0.7`) is what keeps it
