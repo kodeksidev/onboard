@@ -181,7 +181,10 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ai_keys = AiKeyStore::new();
         let provider_name = "onboard-phase12-permit-test-toggle-off";
-        let key = crate::secrets::ai_key::AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").unwrap();
+        let key = crate::secrets::ai_key::AiKey::parse(
+            &crate::privacy::fake_secrets::anthropic_key_permit('0'),
+        )
+        .unwrap();
         struct Cleanup<'a> {
             store: &'a AiKeyStore,
             provider: &'a str,
@@ -249,7 +252,10 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let ai_keys = AiKeyStore::new();
         let provider_name = "anthropic";
-        let key = crate::secrets::ai_key::AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").unwrap();
+        let key = crate::secrets::ai_key::AiKey::parse(
+            &crate::privacy::fake_secrets::anthropic_key_permit('1'),
+        )
+        .unwrap();
         struct Cleanup<'a> {
             store: &'a AiKeyStore,
             provider: &'a str,

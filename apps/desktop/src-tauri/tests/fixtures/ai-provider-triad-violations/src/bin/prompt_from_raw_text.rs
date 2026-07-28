@@ -6,7 +6,10 @@
 // found `&str`"). This is what keeps the WHAT leg intact across the
 // step-6 signature change.
 fn main() {
-    let raw_unredacted_content = "const apiKey = \"REDACTED-AWS-BY-HISTORY-REWRITE\";";
+    let raw_unredacted_content = format!(
+        "const apiKey = \"{}\";",
+        onboard_lib::privacy::fake_secrets::aws_example_key_id()
+    );
     let _ = onboard_lib::ai::prompt::build(
         onboard_lib::ai::prompt::AiFeature::ProjectSummary,
         raw_unredacted_content,

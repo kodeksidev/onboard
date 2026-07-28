@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn debug_and_display_never_reveal_the_raw_key() {
-        let key = AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").unwrap();
+        let key = AiKey::parse(&crate::privacy::fake_secrets::anthropic_key_short()).unwrap();
         assert_eq!(format!("{key:?}"), "<redacted>");
         assert_eq!(format!("{key}"), "<redacted>");
     }
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn parse_accepts_a_key_within_bounds() {
-        assert!(AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").is_ok());
+        assert!(AiKey::parse(&crate::privacy::fake_secrets::anthropic_key_short()).is_ok());
     }
 
     #[test]

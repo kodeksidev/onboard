@@ -286,7 +286,7 @@ Alternatively record an explicit deviation in `DECISIONS.md` if the owner judges
 | `MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA...` (PEM body, no markers) | **not redacted** |
 | `// key: sk-proj-Ab1Cd2...` | redacted (rule 11) |
 | `//registry.npmjs.org/:_authToken=npm_aBcD...` | redacted (rule 11) |
-| `REDACTED-ANTHROPIC-BY-HISTORY-REWRITE` | redacted (rule 8) |
+| `an `sk-ant-` prefix followed by 30 lowercase-alphanumeric characters (elided: the literal itself is credential-shaped and blocks push protection — see `privacy::fake_secrets::anthropic_key()`, which assembles it)` | redacted (rule 8) |
 
 Why each gap exists: rule 11's value group is a run of non-space, non-quote characters starting
 **immediately** after the `:`/`=`, so in `Authorization: Basic ...` the value it sees is `Basic`

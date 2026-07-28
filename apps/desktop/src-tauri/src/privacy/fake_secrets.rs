@@ -27,9 +27,9 @@
 //! from `@onboard/contract`'s. `fake_secrets.guard.rs` fails if a
 //! credential-shaped literal appears anywhere outside this file.
 //!
-//! ## `REDACTED-AWS-BY-HISTORY-REWRITE` specifically
+//! ## The AWS example key specifically
 //!
-//! That one is **not a secret and never was**: it is AWS's own published
+//! `aws_example_key_id()` is **not a secret and never was**: it is AWS's own published
 //! documentation example, printed in their IAM docs. It is split here for
 //! the same shape-matching reason as the rest, and this note exists so that
 //! a reader of the rewritten history does not conclude the repository once

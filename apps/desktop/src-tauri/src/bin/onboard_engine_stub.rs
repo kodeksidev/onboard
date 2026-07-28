@@ -99,7 +99,11 @@ fn build_snippets(params: &Value, toggles: &HashMap<String, String>) -> Value {
         .map(|path| {
             let mut content = format!("// {path}\nexport const value = 1;\n");
             if toggles.contains_key("SNIPPET_SECRET") {
-                content.push_str("const awsKey = \"REDACTED-AWS-BY-HISTORY-REWRITE\";\n");
+                content.push_str(&format!(
+                    "const awsKey = \"{}\";
+",
+                    onboard_lib::privacy::fake_secrets::aws_example_key_id()
+                ));
             }
             if filler_bytes > 0 {
                 // Many short lines, so the per-file LINE cap bites too.

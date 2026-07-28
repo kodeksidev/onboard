@@ -465,7 +465,10 @@ mod tests {
 
     #[test]
     fn redacts_aws_key() {
-        let out = apply_single_line_rules("key = REDACTED-AWS-BY-HISTORY-REWRITE");
+        let out = apply_single_line_rules(&format!(
+            "key = {}",
+            crate::privacy::fake_secrets::aws_synthetic_key_id()
+        ));
         assert_eq!(out, "key = <redacted>");
     }
 
@@ -629,9 +632,10 @@ mod tests {
     /// so the older corpus expectation is untouched.
     #[test]
     fn an_earlier_rule_still_wins_over_the_appended_ones() {
-        let out = apply_single_line_rules(
-            "Authorization: Bearer REDACTED-JWT-BY-HISTORY-REWRITE.abcdefghij1234567890",
-        );
+        let out = apply_single_line_rules(&format!(
+            "Authorization: Bearer {}",
+            crate::privacy::fake_secrets::jwt_hs256_with_typ()
+        ));
         assert_eq!(out, "Authorization: Bearer <redacted>");
     }
 
