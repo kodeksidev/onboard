@@ -85,5 +85,8 @@ pub trait AiProvider {
         req: CompletionRequest,
     ) -> impl std::future::Future<Output = Result<CompletionResponse, AppError>> + Send;
 
-    fn test(&self) -> impl std::future::Future<Output = Result<TestResult, AppError>> + Send;
+    fn test(
+        &self,
+        trace: &mut crate::ai::pipeline::PipelineTrace,
+    ) -> impl std::future::Future<Output = Result<TestResult, AppError>> + Send;
 }

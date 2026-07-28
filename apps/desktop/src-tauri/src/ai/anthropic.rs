@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use crate::ai::endpoint::{self, ResolvedEndpoint};
 use crate::ai::http::{self, ProviderShape, RequestHeaders};
 use crate::ai::permit::{self, EgressPermit};
+use crate::ai::pipeline::{PipelineStep, PipelineTrace};
 use crate::ai::provider::{AiProvider, CompletionRequest, CompletionResponse, TestResult};
 use crate::commands::settings::{load_stored_ai_settings, AiProvider as ProviderKind};
 use crate::error::AppError;
@@ -99,9 +100,13 @@ impl AnthropicProvider {
     /// whatever is currently persisted — so a caller can verify a model id
     /// they have not saved yet without a settings write. Not part of
     /// `AiProvider` (the trait's frozen `test(&self)` takes no arguments).
-    pub async fn test_with_model(&self, model: &str) -> Result<TestResult, AppError> {
+    pub async fn test_with_model(
+        &self,
+        model: &str,
+        trace: &mut PipelineTrace,
+    ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(Some(model))?;
-        run_test(&ctx).await
+        run_test(&ctx, trace).await
     }
 }
 
@@ -113,7 +118,10 @@ impl AnthropicProvider {
 /// rejects with the specific `E_AI_*` code (`{ isOk: true, latencyMs,
 /// modelEcho }` is the ONLY success shape — `isOk` is the TypeScript
 /// literal `true`, not `boolean`), never a generic "false."
-async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
+async fn run_test(
+    ctx: &ResolvedContext,
+    trace: &mut PipelineTrace,
+) -> Result<TestResult, AppError> {
     let headers = build_headers(&ctx.key);
     // The same `PromptSpec` path a real feature takes (Section 12: "Test
     // key" must prove the real chokepoint, not a lighter-weight variant) —
@@ -134,6 +142,10 @@ async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
         &ctx.model,
         &ping,
     )?;
+    // Recorded HERE, at the call that actually sends, rather than in the
+    // caller: a step recorded next to the thing it attests to cannot drift
+    // away from it.
+    trace.record(PipelineStep::Sent);
     Ok(TestResult { is_ok: true })
 }
 
@@ -194,9 +206,9 @@ impl AiProvider for AnthropicProvider {
         parse_completion_response(&response.body)
     }
 
-    async fn test(&self) -> Result<TestResult, AppError> {
+    async fn test(&self, trace: &mut PipelineTrace) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(None)?;
-        run_test(&ctx).await
+        run_test(&ctx, trace).await
     }
 }
 
@@ -456,7 +468,8 @@ mod tests {
 
         let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
-        let result = block_on_never_pending(provider.test());
+        let mut trace = PipelineTrace::new_connectivity();
+        let result = block_on_never_pending(provider.test(&mut trace));
         let received = rx
             .recv_timeout(std::time::Duration::from_secs(15))
             .expect("the local listener never received a request");

@@ -142,18 +142,18 @@ pub async fn test_ai_key_core(
     match provider {
         "anthropic" => {
             AnthropicProvider::new(settings_path, ai_keys)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace)
                 .await?;
         }
         "ollama" => {
             OllamaProvider::new(settings_path, ai_keys)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace)
                 .await?;
         }
         // `validate_provider` above already rejected anything else.
         _ => unreachable!("validate_provider only accepts anthropic/ollama"),
     }
-    trace.record(PipelineStep::Sent);
+    // `Sent` is recorded inside the adapter, next to the send itself.
     trace.ensure_complete_and_ordered()?;
 
     Ok(TestAiKeyResponse {
@@ -184,18 +184,22 @@ async fn test_ai_key_core_against_test_endpoint(
 ) -> Result<TestAiKeyResponse, AppError> {
     validate_provider(provider)?;
     let started = Instant::now();
+    // The twin exercises adapter dispatch only; the traced pipeline itself
+    // is covered by `test_ai_key_core`. A connectivity trace is still built
+    // so `run_test` has somewhere to record `Sent`.
+    let mut trace = PipelineTrace::new_connectivity();
 
     match provider {
         "anthropic" => {
             AnthropicProvider::new(settings_path, ai_keys)
                 .with_test_endpoint(test_endpoint)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace)
                 .await?;
         }
         "ollama" => {
             OllamaProvider::new(settings_path, ai_keys)
                 .with_test_endpoint(test_endpoint)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace)
                 .await?;
         }
         _ => unreachable!("validate_provider only accepts anthropic/ollama"),
