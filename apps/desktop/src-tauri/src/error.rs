@@ -260,6 +260,21 @@ impl AppError {
         )
     }
 
+    /// Phase 12 step 6: `ai::pipeline`'s fail-closed gate found that a step
+    /// of Section 12's mandatory ordered pipeline was skipped or ran out of
+    /// order ("Skipping any step is a CRITICAL review finding"). This is the
+    /// same family as R3's abort — the safety pipeline did not complete, so
+    /// nothing is sent — hence the same code. `detail` carries which steps
+    /// actually ran, for the local log; `message` never does. Logged in
+    /// `docs/DECISIONS.md`.
+    pub fn ai_pipeline_incomplete(detail: impl Into<String>) -> Self {
+        Self::new(
+            AppErrorCode::EAiPayloadUnsafe,
+            "Onboard could not complete its privacy checks for this request, so nothing was sent. Restart Onboard and try again.",
+        )
+        .with_detail(detail.into())
+    }
+
     /// Section 12: "`settings.ai.isEnabled === true` **and** a key is
     /// retrievable; otherwise `E_AI_DISABLED` before any other work." No
     /// literal Section 10 copy exists for this exact string (only the
@@ -314,6 +329,32 @@ impl AppError {
             format!("{provider} is rate-limiting Onboard. {wait_clause} Nothing was sent twice."),
         )
         .with_detail(raw_detail.into())
+    }
+
+    /// Phase 12 step 6: Onboard's OWN limit (Section 12:
+    /// `AI_MAX_REQUESTS_PER_MINUTE = 10`), not a provider 429. Section 10's
+    /// literal copy for this code names the provider ("{provider} is
+    /// rate-limiting Onboard"), which would be a false statement here —
+    /// nothing was sent, and the provider has no opinion. Same code (the
+    /// UI's `E_AI_RATE_LIMITED` affordance is the right one: wait, then
+    /// retry), honest description. Logged in `docs/DECISIONS.md`.
+    pub fn ai_rate_limited_locally(retry_after_seconds: u64) -> Self {
+        Self::new(
+            AppErrorCode::EAiRateLimited,
+            format!(
+                "Onboard limits AI requests to 10 per minute. Wait {retry_after_seconds}s and try again. Nothing was sent."
+            ),
+        )
+    }
+
+    /// Phase 12 step 6: Section 12's `AI_MAX_CONCURRENT = 1`. Same code and
+    /// same reasoning as [`Self::ai_rate_limited_locally`] — see that
+    /// constructor's doc comment.
+    pub fn ai_request_already_in_flight() -> Self {
+        Self::new(
+            AppErrorCode::EAiRateLimited,
+            "Onboard runs one AI request at a time. Wait for the current one to finish, then try again. Nothing was sent.",
+        )
     }
 
     /// No literal Section 10 copy exists for this exact string (the row

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { JSX, ReactNode } from 'react';
 import { useSettingsStore } from '@/state/settingsStore';
 import { SETTINGS_COPY } from '@/copy/messages';
@@ -18,7 +17,12 @@ export interface AppShellProps {
  */
 export function AppShell({ children }: AppShellProps): JSX.Element {
   const ai = useSettingsStore((state) => state.settings.ai);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // In `settingsStore` rather than local state so any panel that diagnoses a
+  // settings problem (the AI panel's "AI is off" screen) can open the one
+  // dialog instead of describing where to find it.
+  const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen);
+  const openSettings = useSettingsStore((state) => state.openSettings);
+  const closeSettings = useSettingsStore((state) => state.closeSettings);
 
   return (
     <div className="flex h-screen flex-col">
@@ -31,13 +35,13 @@ export function AppShell({ children }: AppShellProps): JSX.Element {
             model={ai.model}
             hasStoredKey={ai.hasStoredKey}
           />
-          <Button type="button" variant="ghost" size="sm" onClick={() => setIsSettingsOpen(true)}>
+          <Button type="button" variant="ghost" size="sm" onClick={openSettings}>
             {SETTINGS_COPY.dialogTitle}
           </Button>
         </div>
       </header>
       <main className="flex flex-1 flex-col overflow-auto">{children}</main>
-      <SettingsDialog isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <SettingsDialog isOpen={isSettingsOpen} onClose={closeSettings} />
     </div>
   );
 }

@@ -60,14 +60,60 @@ describe('createMockIpc', () => {
     });
   });
 
-  test('ai_* actions succeed and cite an indexed path once AI is enabled', async () => {
+  /**
+   * Section 9 Phase 12's gate is "every `ai_*` command returns E_AI_DISABLED
+   * when the toggle is off *OR* no key is stored" — two independent reasons.
+   * This case (toggle on, credentialed provider, no key) was previously
+   * allowed through by the mock, which meant development ran against a
+   * backend that was more permissive than the real one.
+   */
+  test('ai_* actions still reject with E_AI_DISABLED when the toggle is on but no key is stored', async () => {
     const ipc = createMockIpc();
+    await ipc.updateSettings({ ai: { ...(await ipc.getSettings()).ai, isEnabled: true } });
+
+    await expect(ipc.aiAsk({ repoId: '9f3c1a7b2e5d4086', question: 'What does this do?' })).rejects.toMatchObject(
+      { code: 'E_AI_DISABLED' },
+    );
+  });
+
+  /** Ollama needs no credential, so the same single rule lets it through with no key. */
+  test('ai_* actions succeed for Ollama with no key at all', async () => {
+    const ipc = createMockIpc();
+    await ipc.updateSettings({
+      ai: { ...(await ipc.getSettings()).ai, isEnabled: true, provider: 'ollama' },
+    });
+
+    const result = await ipc.aiAsk({ repoId: '9f3c1a7b2e5d4086', question: 'What does this do?' });
+
+    expect(result.citedPaths.length).toBeGreaterThan(0);
+  });
+
+  test('ai_* actions succeed and cite an indexed path once AI is enabled and a key is stored', async () => {
+    const ipc = createMockIpc();
+    await ipc.storeAiKey({ provider: 'anthropic', apiKey: 'sk-ant-test-key-0000000000000000000' });
     await ipc.updateSettings({ ai: { ...(await ipc.getSettings()).ai, isEnabled: true } });
 
     const result = await ipc.aiAsk({ repoId: '9f3c1a7b2e5d4086', question: 'What does this do?' });
 
     expect(result.citedPaths.length).toBeGreaterThan(0);
     expect(result.markdown).toContain(result.citedPaths[0]);
+  });
+
+  /**
+   * Section 8.10's invariant, mirrored by the fixture server: every `[[…]]`
+   * token in an answer is a path the response also reports as cited. The UI
+   * is entitled to assume the backend already rejected anything else.
+   */
+  test('every citation token in a mock answer is also reported in citedPaths', async () => {
+    const ipc = createMockIpc();
+    await ipc.storeAiKey({ provider: 'anthropic', apiKey: 'sk-ant-test-key-0000000000000000000' });
+    await ipc.updateSettings({ ai: { ...(await ipc.getSettings()).ai, isEnabled: true } });
+
+    const result = await ipc.aiProjectSummary({ repoId: '9f3c1a7b2e5d4086' });
+
+    const tokenPaths = [...result.markdown.matchAll(/\[\[([^\s[\]:]+):\d+\]\]/g)].map((m) => m[1]);
+    expect(tokenPaths.length).toBeGreaterThan(0);
+    expect(tokenPaths.every((path) => result.citedPaths.includes(path!))).toBe(true);
   });
 
   test('testAiKey rejects E_AI_KEY_INVALID until a key has been stored', async () => {

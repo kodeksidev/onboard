@@ -132,6 +132,33 @@ export const ERRORS = {
     description: `The model referenced ${path}, which is not in the index. Onboard never shows paths it can't verify. Try a narrower question.`,
   }),
   /**
+   * Gap: Section 10's "AI toggle on, no key stored" row specifies the
+   * behavior (every `ai_*` returns E_AI_DISABLED) but no literal copy.
+   * Filled with the most conventional phrasing consistent with the other
+   * AppError strings; see docs/DECISIONS.md.
+   */
+  aiDisabled: (): TitledCopy => ({
+    title: 'AI is off',
+    description:
+      'Onboard did not send anything. Turn on AI in Settings and store a key for your provider to use this.',
+  }),
+  /**
+   * Gap: Section 7.4 lists E_AI_NETWORK among `test_ai_key`'s error codes but
+   * Section 10 gives no literal copy. See docs/DECISIONS.md.
+   */
+  aiNetwork: (provider: string): TitledCopy => ({
+    title: `Onboard couldn't reach ${provider}`,
+    description: `The request never completed, so nothing was answered. Check your connection and try again. Static mode is unaffected — everything else still works.`,
+  }),
+  /**
+   * Gap: Section 7.4 lists E_AI_MODEL_NOT_FOUND but Section 10 gives no
+   * literal copy. See docs/DECISIONS.md.
+   */
+  aiModelNotFound: (model: string): TitledCopy => ({
+    title: `That model isn't available`,
+    description: `The provider does not recognise ${model}. Check the model name in Settings, then test again.`,
+  }),
+  /**
    * Gap: Section 10's "A secret survives redaction" row states the effect
    * (E_AI_PAYLOAD_UNSAFE, nothing sent) but gives no literal copy. See
    * docs/DECISIONS.md.
@@ -345,6 +372,63 @@ export const SETTINGS_COPY = {
 } as const;
 
 /**
+ * Section 9 Phase 12 step 6: the three optional AI surfaces (`ai_project_summary`,
+ * `ai_explain_module`, `ai_ask` — Section 7.4). A5/A20: none of this is
+ * reachable until the user turns AI on, and the "unavailable" copy below says
+ * WHICH of the two reasons applies rather than showing one dead panel for
+ * both.
+ */
+export const AI_PANEL_COPY = {
+  title: 'Ask AI',
+  description:
+    'Optional. Onboard sends a redacted, capped set of snippets and shows exactly how much left this machine. Every path an answer cites is verified against the index first.',
+  loadingLabel: 'Asking the model…',
+  /**
+   * Criterion 17: the ACTUAL `sentFileCount` / `sentByteCount` from the
+   * response, shown for every AI action, in plain sight — never rounded,
+   * never hidden behind a disclosure widget.
+   */
+  sentPayload: (provider: string, fileCount: number, byteCount: number): string =>
+    `Sent ${fileCount} file${fileCount === 1 ? '' : 's'} (${byteCount} bytes) to ${provider}.`,
+  /** "Succeeded but empty" — never the same blank panel as "nothing yet" or "failed". */
+  emptyAnswer: {
+    title: 'The model returned an empty answer',
+    description:
+      'Nothing was withheld — the response itself had no text. Ask again, or ask something narrower.',
+  },
+  summaryTitle: 'Project summary',
+  summaryAction: 'Summarise this project',
+  summaryIdle:
+    'Nothing requested yet. Onboard will send snippets from the highest-ranked files in this repo.',
+  moduleTitle: 'Explain a module',
+  moduleAction: 'Explain this module',
+  moduleSelectLabel: 'Module',
+  moduleIdle: 'Nothing requested yet. Pick a module, then ask for an explanation.',
+  moduleNone:
+    'There are no modules to explain — the module map found no directory with enough analysed files.',
+  askTitle: 'Ask a question',
+  askAction: 'Ask',
+  askInputLabel: 'Question',
+  askPlaceholder: 'e.g. Where does a request get authenticated?',
+  askIdle:
+    'Nothing asked yet. Answers cite files from this repo, and each citation is checked against the index before it is shown.',
+  /**
+   * Gap: Section 10 specifies the behavior for both unusable states (toggle
+   * off; toggle on with no key) but no literal UI copy for the panel itself.
+   * See docs/DECISIONS.md.
+   */
+  unavailableDisabled: (): TitledCopy => ({
+    title: 'AI is off',
+    description:
+      'Onboard runs static by default — nothing leaves this machine. Turn on "Enable AI features" in Settings to ask for summaries, module explanations, and answers.',
+  }),
+  unavailableMissingKey: (provider: string): TitledCopy => ({
+    title: `No key stored for ${provider}`,
+    description: `AI is on, but ${provider} needs a key before Onboard can send anything. Paste one in Settings and press "Test key" — nothing is sent until a key passes.`,
+  }),
+} as const;
+
+/**
  * Every literal title in Section 10 is static — none of them interpolate a
  * value, only the descriptions do. `AppError.message` (Section 7's error
  * envelope) is itself the fully-interpolated description string the
@@ -371,6 +455,15 @@ export const ERROR_TITLES: Readonly<Record<string, string>> = {
   // copy (Settings' Test key button).
   E_AI_KEY_INVALID: ERRORS.aiKeyInvalid('').title,
   E_AI_OLLAMA_UNREACHABLE: ERRORS.aiOllamaUnreachable('').title,
+  // Phase 12 step 6's codes. E_AI_CITATION_REJECTED and E_AI_PAYLOAD_UNSAFE
+  // have static titles too, so they resolve through the same lookup. The two
+  // codes whose TITLE interpolates a value — E_AI_RATE_LIMITED (provider) and
+  // E_AI_NETWORK (provider) — cannot, and are handled by
+  // `resolveAiErrorCopy` below, which knows the configured provider.
+  E_AI_DISABLED: ERRORS.aiDisabled().title,
+  E_AI_CITATION_REJECTED: ERRORS.aiCitationRejected('').title,
+  E_AI_PAYLOAD_UNSAFE: ERRORS.aiPayloadUnsafe().title,
+  E_AI_MODEL_NOT_FOUND: ERRORS.aiModelNotFound('').title,
 };
 
 const DEFAULT_ERROR_TITLE = 'Something went wrong';
@@ -399,4 +492,44 @@ export function resolveErrorCopy(error: {
     description: error.message,
     actionLabel: ERROR_ACTION_LABELS[error.code] ?? null,
   };
+}
+
+export interface AiErrorLike {
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string | null;
+}
+
+/**
+ * `resolveErrorCopy` for the AI surfaces, which have two rows Section 10's
+ * plain code→title lookup cannot serve on its own:
+ *
+ * - `E_AI_RATE_LIMITED` / `E_AI_NETWORK`: the TITLE interpolates the provider
+ *   name, so it cannot live in the static `ERROR_TITLES` map. The configured
+ *   provider is passed in. (The `0` below is a placeholder for a parameter
+ *   that appears only in the description, which comes from `error.message` —
+ *   the same idiom `ERROR_TITLES` already uses with `ERRORS.pathNotFound('')`.)
+ * - `E_AI_CITATION_REJECTED`: Section 8.10 step 3 returns the offending path
+ *   in `AppError.path`, and Section 10 requires it interpolated into the
+ *   description. The description is rebuilt here from that field so the real
+ *   path is shown even if a producer sent a message without it; `error.message`
+ *   remains the fallback.
+ */
+export function resolveAiErrorCopy(error: AiErrorLike, provider: string): ResolvedErrorCopy {
+  if (error.code === 'E_AI_RATE_LIMITED') {
+    return { title: ERRORS.aiRateLimited(provider, 0).title, description: error.message, actionLabel: null };
+  }
+  if (error.code === 'E_AI_NETWORK') {
+    return { title: ERRORS.aiNetwork(provider).title, description: error.message, actionLabel: null };
+  }
+  if (error.code === 'E_AI_CITATION_REJECTED') {
+    const offendingPath = error.path ?? '';
+    const copy = ERRORS.aiCitationRejected(offendingPath);
+    return {
+      title: copy.title,
+      description: offendingPath === '' ? error.message : copy.description,
+      actionLabel: null,
+    };
+  }
+  return resolveErrorCopy(error);
 }
