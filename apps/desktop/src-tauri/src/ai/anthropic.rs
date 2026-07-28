@@ -222,7 +222,7 @@ mod tests {
     use std::net::TcpListener;
     use std::pin::Pin;
     use std::sync::mpsc;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::task::{Context, Poll, Waker};
 
     // -----------------------------------------------------------------
     // A minimal single-poll executor — see this module's doc comment
@@ -233,28 +233,10 @@ mod tests {
     // first `poll`.
     // -----------------------------------------------------------------
 
-    fn noop_raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            noop_raw_waker()
-        }
-        fn no_op(_: *const ()) {}
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-
-    fn noop_waker() -> Waker {
-        // SAFETY: `noop_raw_waker`'s vtable functions (`clone`/`wake`/
-        // `wake_by_ref`/`drop`) never read or write through the data
-        // pointer — they ignore it entirely and either do nothing or
-        // return a fresh identical `RawWaker`. A null data pointer that is
-        // never dereferenced satisfies `Waker::from_raw`'s safety
-        // contract.
-        unsafe { Waker::from_raw(noop_raw_waker()) }
-    }
-
     fn block_on_never_pending<F: Future>(future: F) -> F::Output {
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
+        // `Waker::noop()` (stable since Rust 1.85) replaces a hand-rolled
+        // no-op vtable that was duplicated verbatim across three modules.
+        let mut cx = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
         loop {
             if let Poll::Ready(value) = Pin::new(&mut future).poll(&mut cx) {

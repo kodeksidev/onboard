@@ -228,29 +228,15 @@ mod tests {
     use std::net::TcpListener;
     use std::pin::Pin;
     use std::sync::mpsc;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::task::{Context, Poll, Waker};
 
     // Same hand-rolled single-poll executor as `ai::anthropic::tests` — see
     // that module's doc comment for why this crate doesn't add a
     // dependency to drive a future that never actually suspends.
-    fn noop_raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            noop_raw_waker()
-        }
-        fn no_op(_: *const ()) {}
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-
-    fn noop_waker() -> Waker {
-        // SAFETY: see `ai::anthropic::tests::noop_waker` — identical
-        // invariant, identical vtable shape.
-        unsafe { Waker::from_raw(noop_raw_waker()) }
-    }
-
     fn block_on_never_pending<F: Future>(future: F) -> F::Output {
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
+        // `Waker::noop()` (stable since Rust 1.85) replaces a hand-rolled
+        // no-op vtable that was duplicated verbatim across three modules.
+        let mut cx = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
         loop {
             if let Poll::Ready(value) = Pin::new(&mut future).poll(&mut cx) {

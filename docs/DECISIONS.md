@@ -2386,3 +2386,36 @@ decided; it only records choices the spec left open.
   `read_settings_file` falls back to `Settings::default()` — which has
   `isEnabled: false`. The one outcome that must never happen is continuing to
   send snippets to a provider that no longer exists; both paths are tested.
+- **AMENDMENT — Rust floor raised 1.82 -> 1.85 to delete the crate's only
+  `unsafe`.**
+  Authorised-by: product owner (chat), 2026-07-28
+  Departs-from: Section 4 — "Rust 1.82+"
+
+  `src-tauri` contained three `unsafe` blocks: `unsafe { Waker::from_raw(
+  noop_raw_waker()) }` in `ai/anthropic.rs`, `ai/ollama.rs` and
+  `commands/ai.rs`. They were not three uses of a shared helper — they were
+  the same hand-rolled no-op `RawWakerVTable`, copied verbatim into three
+  modules, with the second and third SAFETY comments citing the first rather
+  than restating the invariant. That citation reads as a convention and is
+  actually an admission of the duplication: the same shape as the
+  hand-rolled newline reader in `engine-rpc-client.ts`, this time in unsafe
+  code.
+
+  `Waker::noop()` makes all three unnecessary. Verified from the local
+  toolchain's own source rather than from memory —
+  `library/core/src/task/wake.rs:565` carries
+  `#[stable(feature = "noop_waker", since = "1.85.0")]`. Raising the floor
+  from 1.82 to 1.85 therefore trades a three-minor-version bump for the
+  removal of every `unsafe` block in the crate, plus ~30 lines of vtable
+  boilerplate and three imports.
+
+  Cost accepted: the floor is a declaration, not a build pin (see the CI
+  workflow's note — cargo enforces it by refusing to build with an older
+  toolchain), and 1.85 shipped in February 2025. Nothing in this repository
+  pins an older toolchain; the dev machine runs 1.97.1.
+
+  Consequence for the Windows DACL work that prompted this: the entry that
+  work needs is now accurate. It introduces the FIRST `unsafe` in the crate,
+  not the fourth — and the first in a shipped code path either way, since
+  all three deleted blocks were `#[cfg(test)]` and could never appear in a
+  release binary.
