@@ -174,45 +174,18 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 }
 
 /**
- * Splits an arbitrarily-chunked byte stream into newline-delimited text
- * lines. A JSON-RPC message is never guaranteed to arrive in one `read()`
- * chunk (or to be alone in one), so this buffers across chunks rather than
- * assuming one message per read.
+ * Re-exported so this module's existing importers (`main.ts`,
+ * `scripts/test-rpc.ts`, `scripts/build-sidecar.ts`,
+ * `scripts/verify-no-network.ts`) keep working unchanged.
  *
- * `scanFrom` tracks how much of `buffer` has already been confirmed
- * newline-free, so each `indexOf` call only scans the newly-appended tail
- * instead of re-scanning the whole (growing) buffer from index 0 every
- * time. Without this, one large single-line message (a 10,000-file
- * `AnalysisResult` is tens of megabytes on one JSON-RPC line) arriving
- * across many small `read()` chunks costs O(n^2) in the line's total
- * length — confirmed a real, measurable cost in Section 11's bench
- * investigation (see `docs/DECISIONS.md`), not a hypothetical.
+ * The implementation moved to `@onboard/contract`'s `line-framing.ts`
+ * because framing is part of the Section 7.3 transport contract, and because
+ * a SECOND, hand-rolled copy had diverged in
+ * `apps/desktop/bench/support/engine-rpc-client.ts` — that copy lacked the
+ * `scanFrom` fix and was quadratic in a single line's length. `apps/desktop`
+ * already depends on `@onboard/contract`, so both sides can now consume one
+ * implementation without `apps/desktop` taking a dependency on the engine.
+ * See `packages/contract/test/line-framing.guard.test.ts` for the check that
+ * fails if a third copy appears.
  */
-export async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let scanFrom = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let newlineIndex = buffer.indexOf('\n', scanFrom);
-      while (newlineIndex !== -1) {
-        yield buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-        scanFrom = 0;
-        newlineIndex = buffer.indexOf('\n', scanFrom);
-      }
-      scanFrom = buffer.length;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (buffer.length > 0) {
-    yield buffer;
-  }
-}
+export { readLines } from '@onboard/contract';
