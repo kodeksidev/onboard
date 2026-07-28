@@ -1986,7 +1986,10 @@ decided; it only records choices the spec left open.
   than silently adding a provider-conditional gate (which would mean two
   different "AI is on" checks in the same crate — exactly the kind of
   asymmetry a bypass hides in).
-- **Phase 12 step 3B — `openai-compatible`'s REST path is
+- **[OBSOLETE — the module this describes no longer exists; deleted in
+  `9936548` as an A4 / §3 non-goal 2 scope violation. Retained because a
+  deleted entry teaches nothing.]** **Phase 12 step 3B —
+  `openai-compatible`'s REST path is
   `{base_url}/chat/completions`, matching OpenAI/DeepSeek/Groq/OpenRouter/
   Together's shared convention when `base_url` includes the provider's own
   version segment (e.g. `https://api.openai.com/v1`).** Not verified
@@ -1994,7 +1997,14 @@ decided; it only records choices the spec left open.
   instruction); provisional like the rest of the body/response shapes in
   this sub-step, pending real-world confirmation whenever an actual key is
   available to test with.
-- **Phase 12 step 3B — `AiProvider`'s serde representation switched from
+- **[SUPERSEDED — reverted to `"lowercase"`. This entry and its duplicate
+  below are the two records of a wire-format change made solely to spell an
+  out-of-scope variant; with that variant deleted the justification is gone,
+  and inert residue is the form scope creep takes when it survives. The repr
+  is now a tested fact, not a floating choice:
+  `ai_provider_serializes_to_exactly_these_bytes` (Rust) and
+  `settings-schema.test.ts` (TS) pin the literal bytes in both directions.]**
+  **Phase 12 step 3B — `AiProvider`'s serde representation switched from
   `rename_all = "lowercase"` to `"kebab-case"`.** Adding
   `OpenAiCompatible` under `"lowercase"` would serialize as
   `"openaicompatible"` (concatenated, illegible); `"kebab-case"` produces
@@ -2130,7 +2140,12 @@ decided; it only records choices the spec left open.
   the same sentence twice — caught by wiring `TestKeyButton` to the real
   mock for the first time; nothing consumed `testAiKey`'s rejection shape
   before this step.
-- **Phase 12 step 5 — `AiProvider`'s Rust `#[serde(rename_all = ...)]`
+- **[SUPERSEDED — reverted to `"lowercase"`; see the identical step-3B entry
+  above. That the SAME change was recorded twice under two different step
+  numbers is itself the finding: neither record checked the other, and
+  nothing tested the serialized form, so the repr drifted for a reason
+  unrelated to the wire.]** **Phase 12 step 5 — `AiProvider`'s Rust
+  `#[serde(rename_all = ...)]`
   changed from `"lowercase"` to `"kebab-case"`.** Adding
   `OpenAiCompatible` under `"lowercase"` would serialize as
   `"openaicompatible"`; `"kebab-case"` produces `"openai-compatible"`
