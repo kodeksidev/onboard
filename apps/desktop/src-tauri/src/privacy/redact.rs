@@ -795,6 +795,32 @@ mod r2_12_reliance {
 
     const ENTROPY_RULE: &str = "entropy";
 
+    /// Derives the corpus size and its per-family breakdown rather than
+    /// restating a hand-counted figure. An inventory earlier in this work
+    /// said 33 and the real number is 37 — a hand count that nobody could
+    /// check. Criterion 16 is a COUNTING claim, so its evidence must be
+    /// derived.
+    #[test]
+    fn corpus_size_is_derived_not_asserted() {
+        let corpus = planted_secrets_for_rule_check();
+        let mut families: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for (name, _) in &corpus {
+            let family: String = name
+                .trim_end_matches(|c: char| c.is_ascii_digit())
+                .to_string();
+            *families.entry(family).or_insert(0) += 1;
+        }
+        println!("  corpus total: {}", corpus.len());
+        for (family, count) in &families {
+            println!("    {family}: {count}");
+        }
+        assert!(
+            corpus.len() >= 30,
+            "criterion 16 requires >= 30 planted secrets"
+        );
+    }
+
     #[test]
     fn measure_entries_caught_only_by_the_high_entropy_catch_all() {
         let corpus = planted_secrets_for_rule_check();
