@@ -2531,3 +2531,57 @@ decided; it only records choices the spec left open.
   nothing else. Criterion 23 stays not-CI-evidenced (see
   `docs/CRITERIA_MAP.md`), and `docs/MACOS_SMOKE.md` remains the only path to
   retiring it.
+- **CROSS-DOMAIN — the engine's no-overlap requirement was held by the Rust
+  shell being accidentally stricter than the spec. Now enforced on both sides.**
+  Domains: `ts-engine` (owns the constraint), `rust-tauri` (was silently
+  satisfying it), spec Section 7.4 / Phase 6 (permits the violation).
+
+  **Reachability: NOT reachable today. Settled by reading, not assumed.**
+  Spec Phase 6 says "one analysis at a time PER REPO (`E_ANALYSIS_IN_PROGRESS`)",
+  which would permit two repositories to analyse concurrently. The
+  implementation does not do that:
+  `apps/desktop/src-tauri/src/sidecar/supervisor.rs` keeps a single
+  `analysis_in_progress: bool` on `State`, and `begin_analysis()` takes NO
+  repository argument — it rejects any second concurrent analysis whatever it
+  targets. There is exactly one `SidecarSupervisor`, owned by the single
+  `AppState` built in `lib.rs`, and exactly one production call site for
+  `engine.analyze` (`commands/analyze.rs:94`), which acquires the guard on the
+  line before and holds it by RAII across the whole call.
+
+  So the shell CANNOT currently issue overlapping analyses for different
+  repoIds. **The product is safe because it does not implement its own spec.**
+  That is a weaker guarantee than it looks: the defect is one faithful
+  "implement Phase 6 as written" refactor away, and that refactor would look
+  like a bug fix.
+
+  **What overlap actually costs**, measured: identical fixture content analysed
+  concurrently from two paths disagreed on `edges`, `symbolCount`, `pageRank`,
+  `inDegree`/`outDegree`, `diagnostics` and `graph.componentCount` — 107
+  differing leaves. Sequentially: 3, all path-derived. This is the product's
+  core determinism guarantee, and `verify:determinism` cannot see it because all
+  four of its comparisons are sequential.
+
+  **Both sides now state the property instead of relying on the other.**
+  - `packages/engine/src/analyze.ts` refuses a re-entrant `analyze()` with
+    `E_ANALYSIS_IN_PROGRESS` — the same code the shell returns, so Section 10's
+    copy is identical whichever layer refuses. Guarded with `try/finally`, so a
+    failed analysis does not wedge the process.
+  - `packages/engine/test/analyze/no-overlap.test.ts` fails if someone makes
+    `analyze()` re-entrant without fixing the shared state, and separately
+    proves the guard RELEASES — both after success and after failure, which a
+    `try` without `finally` would pass every other test while breaking.
+  - `apps/desktop/src-tauri/tests/sidecar_supervisor.rs`'s
+    `the_analysis_guard_is_process_wide_not_per_repo` binds `begin_analysis` to
+    a function pointer of the exact expected type, so adding a repo parameter
+    fails to COMPILE rather than silently re-opening the defect.
+
+  **Still open, and deliberately not guessed at:** the shared mutable state has
+  not been located. Tree-sitter parser instances in `packages/engine/src/parse/`
+  are the first suspect. Until then the constraint is enforced, not removed —
+  the engine refuses concurrency rather than supporting it. Queued for
+  `ts-engine`.
+
+  **Spec disposition:** Section 7.4's table and Phase 6's prose say "per repo".
+  The code says per process. The code is right and the spec should be amended
+  when Section 7.4 is next revised; recorded here rather than editing a FROZEN
+  section unilaterally.

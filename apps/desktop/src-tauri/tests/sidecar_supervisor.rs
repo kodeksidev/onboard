@@ -112,6 +112,40 @@ fn a_second_concurrent_analysis_is_rejected() {
     }
 }
 
+/// CROSS-DOMAIN. The engine (`packages/engine`) does not survive two
+/// overlapping `analyze()` calls: identical content analysed concurrently
+/// disagrees on `edges`, `symbolCount`, `pageRank` and `diagnostics` (107
+/// differing leaves, against 3 sequentially — see `docs/DECISIONS.md`).
+///
+/// This guard is what keeps that unreachable from the shell, and it is
+/// DELIBERATELY STRICTER than the build spec's Phase 6 wording, "one analysis
+/// at a time per repo". Implementing that wording faithfully — keying the flag
+/// by `repoId` so two different repositories may run at once — would corrupt
+/// both results.
+///
+/// The no-repo-argument signature is therefore load-bearing, not incidental.
+/// Binding the method to a function pointer of the exact expected type means
+/// adding a repo parameter fails to COMPILE here, rather than silently
+/// re-opening the defect. `packages/engine` now refuses overlap on its own side
+/// too (`test/analyze/no-overlap.test.ts`); this is the other half.
+#[test]
+fn the_analysis_guard_is_process_wide_not_per_repo() {
+    let begin: for<'a> fn(
+        &'a SidecarSupervisor,
+    ) -> Result<onboard_lib::sidecar::supervisor::AnalysisGuard<'a>, onboard_lib::error::AppError> =
+        SidecarSupervisor::begin_analysis;
+
+    let supervisor = SidecarSupervisor::new(test_config(&[]));
+    let _held = begin(&supervisor).expect("first analysis should acquire the guard");
+
+    // No repository identity is involved anywhere in this rejection.
+    let second = begin(&supervisor);
+    match second {
+        Err(err) => assert_eq!(err.code, "E_ANALYSIS_IN_PROGRESS"),
+        Ok(_) => panic!("a second analysis must be rejected, whatever repo it targets"),
+    };
+}
+
 #[test]
 fn releasing_the_guard_allows_a_new_analysis() {
     let supervisor = SidecarSupervisor::new(test_config(&[]));

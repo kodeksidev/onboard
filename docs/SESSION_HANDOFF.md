@@ -94,46 +94,64 @@ that and have not each been re-derived.
 
 ---
 
-## 5. QUEUED WORK — derived 2026-07-29
+## 5. QUEUED WORK — re-derived 2026-07-29
 
-The criteria half of this queue is DERIVED from `docs/CRITERIA_MAP.md`,
-which is itself generated (`bun run criteria:map`) and drift-checked inside
-`verify`. Do not hand-edit either. Re-run the generator after any CI change
-and this list follows.
+DERIVED from `docs/CRITERIA_MAP.md`, which is generated (`bun run criteria:map`)
+and drift-checked inside `verify`. Do not hand-edit either. Re-run the generator
+after any CI change and this list follows.
 
-**9 of 28 acceptance criteria are not evidenced by CI today**, grouped by why:
+### CI-blocked, strictly
 
-- **CI-BLOCKED — gate exists, not wired** — #11 (bench: wall-clock budgets, deliberately off shared runners); #22 (e2e: wdio fixed-port race makes it unfit as a per-push gate); #23 (installers: no release job yet; see the darwin cross-compile entry)
-- **MANUAL** — #12 (10s cold-open on a fresh 1,000-file repo, with UI); #26 (audit is PARTIAL by its own §6 until a fail-open-aware re-audit)
-- **NO GATE** — #10 (coverage thresholds are not enforced anywhere); #28 (conventional-commit linting is not wired)
-- **NOT MET — missing README.md** — #25 (docs)
-- **NOT MET — missing docs/INSTALL.md, docs/SIGNING.md** — #24 (docs)
+> **CI-BLOCKED means: cannot be settled without a machine we do not have.**
+> A criterion waiting on an unconfigured tool, an unwritten document, or an
+> unfinished paragraph is not blocked — it is unfinished. Calling it blocked
+> launders ordinary remaining work into an external constraint.
 
-Work items that are not criteria, in order:
+**4 of 28** — #11, #12, #22, #23
 
-1. **Documentation criteria #24 and #25 are simply NOT MET** — `README.md`,
-   `docs/INSTALL.md` and `docs/SIGNING.md` do not exist. Cheapest items on
-   this list and they block two criteria outright.
-2. **`analyze()` is not concurrency-safe** (DECISIONS.md). Unreachable today
-   only because `rpc/server.ts` serializes requests. Find the shared mutable
-   state — tree-sitter parser instances first — then either make it
-   re-entrant or make the serialization explicit and asserted.
-3. **Coverage thresholds (#10) are enforced nowhere.** The only criterion with
-   no gate at all rather than an unwired one.
-4. **Conventional-commit linting (#28)** — same, and cheap.
-5. **`wdio.conf.ts` fixed-port race** — blocks #22. Allocate a free port per
-   session, or poll until the driver's port accepts, before `newSession`.
-6. M6 (transcript bound/rotation — reuse `util::logging`'s RotatingLogger;
+- **#11** — wall-clock budgets need a consistent runner; a shared one cannot measure them honestly
+- **#12** — 10s cold-open needs a real desktop session and a human with a stopwatch
+- **#22** — wdio port race is tooling, but the macOS smoke half needs a Mac
+- **#23** — LAUNCHING the .dmg needs a Mac; building it does not
+
+### Not blocked, under their real cause
+
+- **#26** (authoring) — PARTIAL by the audit's own §6 until a fail-open-aware re-audit is written
+- **#10** (tooling) — coverage thresholds are enforced nowhere
+- **#28** (tooling) — conventional-commit linting is not wired
+- **#24** (unwritten) — docs
+- **#25** (unwritten) — docs
+
+### Work items that are not criteria, in order
+
+1. **`analyze()` is not concurrency-safe** — now REFUSED on both sides rather
+   than left to luck (DECISIONS.md, cross-domain entry). Still open: locate the
+   shared mutable state (tree-sitter parser instances first) and make it
+   re-entrant, so the engine can support concurrency instead of rejecting it.
+2. **`wdio.conf.ts` fixed-port race** — the tooling half of #22. Allocate a free
+   port per session, or poll until the driver's port accepts, before
+   `newSession`.
+3. M6 (transcript bound/rotation — reuse `util::logging`'s RotatingLogger;
    **the transcript is not a log**, prefer a bound with a visible notice plus
    the Settings clear button over silent deletion).
-7. The Windows DACL (verify-only, `windows-sys` 0.61 authorised). Note the
+4. The Windows DACL (verify-only, `windows-sys` 0.61 authorised). Note the
    DECISIONS amendment that removed every `unsafe` from the crate: this work
    introduces the FIRST one, not the fourth.
-8. INV-2 / INV-4 / INV-5 / INV-6 / INV-7..INV-11.
-9. The guard-disposition sweep into `KNOWN_ISSUES.md` (the file does not exist
+5. INV-2 / INV-4 / INV-5 / INV-6 / INV-7..INV-11.
+6. The guard-disposition sweep into `KNOWN_ISSUES.md` (the file does not exist
    yet; `SECURITY_AUDIT.md` §6 forward-references it).
-10. The ~28 unread DECISIONS entries, and the DECISIONS.md restructure
-    (RECORDS / AMENDMENTS / INVALIDATES / CROSS-DOMAIN).
+7. The ~28 unread DECISIONS entries, and the DECISIONS.md restructure
+   (RECORDS / AMENDMENTS / INVALIDATES / CROSS-DOMAIN).
+
+### Closed this session
+
+- The ESLint 10 / brace-expansion decision, with all six repo rules proven to
+  still fire.
+- `--frozen-lockfile` everywhere, CI stage aggregation, `setup-python`.
+- The fixture files no clean checkout received, and machine-bound snapshots.
+- Criterion 3 PROVEN on three platforms; the pre-registration resolved.
+- The darwin cross-compile red job — by asking why it built darwin at all.
+- **#24 and #25** — README.md, docs/INSTALL.md and docs/SIGNING.md now exist.
 
 ---
 ## 6. PRE-REGISTERED PREDICTION — RESOLVED

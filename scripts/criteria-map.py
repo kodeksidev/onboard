@@ -35,6 +35,26 @@ JOB_HEADER = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 RUN_KEY = re.compile(r"^\s*-?\s*run:\s*(.*)$")
 
 
+# CI-BLOCKED, defined once and applied mechanically:
+#
+#   A criterion is CI-BLOCKED if and only if it CANNOT BE SETTLED WITHOUT A
+#   MACHINE WE DO NOT HAVE.
+#
+# Nothing else counts. A criterion waiting on a tool nobody has configured, on a
+# document nobody has written, or on an author finishing their own paragraph is
+# not blocked by CI — it is unfinished, and calling it "CI-blocked" launders
+# ordinary remaining work into an external constraint. That number has been
+# steering this project for several turns, so it is derived under one stated
+# definition rather than assembled by feel.
+BLOCKERS = {
+    "machine": "needs hardware or a runner this project does not have",
+    "tooling": "needs a tool configured; the machines exist",
+    "unwritten": "the artifact does not exist yet",
+    "authoring": "waits on someone finishing prose they own",
+    "none": "settled by CI",
+}
+
+
 @dataclass(frozen=True)
 class Evidence:
     """How a criterion would be proven, and by what."""
@@ -42,7 +62,13 @@ class Evidence:
     gate: str | None  # substring of the CI command that runs it, or None
     kind: str  # 'ci' | 'not-wired' | 'no-gate' | 'manual'
     note: str
-    requires: tuple[str, ...] = field(default=())  # repo-relative files that must exist
+    blocker: str = "none"
+    # {repo-relative file: topics its text must name}. Existence alone is the
+    # vacuity trap — a criterion naming "the exact Gatekeeper and SmartScreen
+    # steps" is not met by an empty INSTALL.md. This checks the artifact exists
+    # AND names what the criterion asks for. It does NOT review the prose, and
+    # the status string says so.
+    requires: tuple[tuple[str, tuple[str, ...]], ...] = field(default=())
 
 
 # The gate strings are matched against `run:` commands in ci.yml, so a job that
@@ -62,9 +88,9 @@ EVIDENCE: dict[int, Evidence] = {
     7: Evidence(VERIFY, "ci", "kitchen-sink snapshot assertions, inside verify"),
     8: Evidence(NO_NETWORK, "ci", "Linux-only by construction: unshare -rn"),
     9: Evidence(RUST_TEST, "ci", "Rust suite"),
-    10: Evidence(None, "no-gate", "coverage thresholds are not enforced anywhere"),
-    11: Evidence(None, "not-wired", "bench: wall-clock budgets, deliberately off shared runners"),
-    12: Evidence(None, "manual", "10s cold-open on a fresh 1,000-file repo, with UI"),
+    10: Evidence(None, "no-gate", "coverage thresholds are enforced nowhere", blocker="tooling"),
+    11: Evidence(None, "not-wired", "wall-clock budgets need a consistent runner; a shared one cannot measure them honestly", blocker="machine"),
+    12: Evidence(None, "manual", "10s cold-open needs a real desktop session and a human with a stopwatch", blocker="machine"),
     13: Evidence(VERIFY, "ci", "UI tests, inside verify"),
     14: Evidence(VERIFY, "ci", "UI tests, inside verify"),
     15: Evidence(RUST_TEST, "ci", "key-never-persisted half only; the 5s flow is manual"),
@@ -74,13 +100,29 @@ EVIDENCE: dict[int, Evidence] = {
     19: Evidence(VERIFY, "ci", "UI copy tests, inside verify"),
     20: Evidence(VERIFY, "ci", "axe-core + keyboard tests, inside verify"),
     21: Evidence(VERIFY, "ci", "reduced-motion tests, inside verify"),
-    22: Evidence(None, "not-wired", "e2e: wdio fixed-port race makes it unfit as a per-push gate"),
-    23: Evidence(None, "not-wired", "installers: no release job yet; see the darwin cross-compile entry"),
-    24: Evidence(None, "no-gate", "docs", requires=("docs/INSTALL.md", "docs/SIGNING.md")),
-    25: Evidence(None, "no-gate", "docs", requires=("README.md", "docs/V2_BACKLOG.md")),
-    26: Evidence(None, "manual", "audit is PARTIAL by its own §6 until a fail-open-aware re-audit"),
+    22: Evidence(None, "not-wired", "wdio port race is tooling, but the macOS smoke half needs a Mac", blocker="machine"),
+    23: Evidence(None, "not-wired", "LAUNCHING the .dmg needs a Mac; building it does not", blocker="machine"),
+    24: Evidence(
+        None,
+        "artifact",
+        "INSTALL.md names both bypass paths; SIGNING.md names the signing path",
+        requires=(
+            ("docs/INSTALL.md", ("Gatekeeper", "SmartScreen", "unsigned")),
+            ("docs/SIGNING.md", ("notariz", "out of scope")),
+        ),
+    ),
+    25: Evidence(
+        None,
+        "artifact",
+        "README covers install, the privacy model and enabling AI",
+        requires=(
+            ("README.md", ("Install", "privacy", "AI")),
+            ("docs/V2_BACKLOG.md", ("v2",)),
+        ),
+    ),
+    26: Evidence(None, "manual", "PARTIAL by the audit's own §6 until a fail-open-aware re-audit is written", blocker="authoring"),
     27: Evidence(VERIFY, "ci", "lint + lint:check-rules-fire, inside verify; clippy in the Rust job"),
-    28: Evidence(None, "no-gate", "conventional-commit linting is not wired"),
+    28: Evidence(None, "no-gate", "conventional-commit linting is not wired", blocker="tooling"),
 }
 
 
@@ -145,10 +187,25 @@ def platforms_running(gate: str, jobs: dict[str, tuple[list[str], int]]) -> int:
     )
 
 
+def missing_requirements(evidence: Evidence) -> list[str]:
+    """Files that do not exist, plus files that exist without naming their topic."""
+    problems: list[str] = []
+    for name, topics in evidence.requires:
+        path = REPO_ROOT / name
+        if not path.exists():
+            problems.append(f"{name} (absent)")
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        absent = [topic for topic in topics if topic.lower() not in text]
+        if absent:
+            problems.append(f"{name} (does not mention {', '.join(absent)})")
+    return problems
+
+
 def classify(number: int, evidence: Evidence, jobs: dict[str, tuple[list[str], int]]) -> str:
-    missing = [f for f in evidence.requires if not (REPO_ROOT / f).exists()]
+    missing = missing_requirements(evidence)
     if missing:
-        return f"NOT MET — missing {', '.join(missing)}"
+        return f"NOT MET — {'; '.join(missing)}"
     if evidence.kind == "ci":
         assert evidence.gate is not None
         count = platforms_running(evidence.gate, jobs)
@@ -157,6 +214,8 @@ def classify(number: int, evidence: Evidence, jobs: dict[str, tuple[list[str], i
         return "CI-BLOCKED — gate exists, not wired"
     if evidence.kind == "manual":
         return "MANUAL"
+    if evidence.kind == "artifact":
+        return "ARTIFACT CHECKED (exists + names its topics; prose not reviewed)"
     return "NO GATE"
 
 
@@ -182,6 +241,11 @@ def main() -> int:
 
     statuses = {n: classify(n, EVIDENCE[n], jobs) for n in sorted(criteria)}
 
+    unknown = sorted(n for n, e in EVIDENCE.items() if e.blocker not in BLOCKERS)
+    if unknown:
+        print(f"REFUSING: unknown blocker category on criteria {unknown}", file=sys.stderr)
+        return 1
+
     lying = [n for n, s in statuses.items() if s.startswith("DECLARED CI")]
     if lying:
         print(
@@ -194,6 +258,11 @@ def main() -> int:
     three_os = [n for n, s in statuses.items() if s == "CI on 3 OS"]
     not_ci = [n for n, s in statuses.items() if not s.startswith("CI on")]
 
+    by_blocker: dict[str, list[int]] = {}
+    for number in not_ci:
+        by_blocker.setdefault(EVIDENCE[number].blocker, []).append(number)
+    ci_blocked = sorted(by_blocker.get("machine", []))
+
     lines = [
         "# Acceptance-criteria map",
         "",
@@ -204,15 +273,37 @@ def main() -> int:
         "",
         f"- **{len(ci_backed)} of {len(criteria)}** criteria are backed by a CI job.",
         f"- **{len(three_os)}** of those run on all three operating systems.",
-        f"- **{len(not_ci)}** are NOT evidenced by CI today: {', '.join(map(str, not_ci))}",
+        f"- **{len(not_ci)}** are not evidenced by CI, of which:",
         "",
-        "| # | Status | Evidence | Criterion |",
-        "|---|---|---|---|",
+        "## CI-blocked, strictly",
+        "",
+        "> **CI-BLOCKED means: cannot be settled without a machine we do not have.**",
+        "> Nothing else counts. A criterion waiting on an unconfigured tool, an",
+        "> unwritten document, or an unfinished paragraph is not blocked — it is",
+        "> unfinished, and calling it blocked launders remaining work into an",
+        "> external constraint.",
+        "",
+        f"**CI-BLOCKED: {len(ci_blocked)}** — {', '.join(f'#{n}' for n in ci_blocked) or 'none'}",
+        "",
+        "The rest, under their real cause:",
+        "",
+    ]
+    for blocker in sorted(k for k in by_blocker if k != "machine"):
+        numbers = ", ".join(f"#{n}" for n in sorted(by_blocker[blocker]))
+        lines.append(f"- **{blocker}** ({BLOCKERS[blocker]}) — {numbers}")
+    lines += [
+        "",
+        "| # | Status | Blocker | Evidence | Criterion |",
+        "|---|---|---|---|---|",
     ]
     for number in sorted(criteria):
         text = criteria[number]
-        short = text if len(text) <= 90 else text[:87].rstrip() + "..."
-        lines.append(f"| {number} | {statuses[number]} | {EVIDENCE[number].note} | {short} |")
+        short = text if len(text) <= 80 else text[:77].rstrip() + "..."
+        blocker = EVIDENCE[number].blocker
+        lines.append(
+            f"| {number} | {statuses[number]} | {'—' if blocker == 'none' else blocker} "
+            f"| {EVIDENCE[number].note} | {short} |"
+        )
 
     lines += [
         "",
@@ -231,6 +322,9 @@ def main() -> int:
     print(f"  CI-backed:        {len(ci_backed)}")
     print(f"  of those, 3 OS:   {len(three_os)}")
     print(f"  NOT CI-evidenced: {len(not_ci)}  -> {not_ci}")
+    print(f"  CI-BLOCKED (strict, machine-only): {len(ci_blocked)}  -> {ci_blocked}")
+    for blocker in sorted(k for k in by_blocker if k != "machine"):
+        print(f"    not blocked, {blocker}: {sorted(by_blocker[blocker])}")
 
     # `--check` is the mode `verify` runs: a generated document that nothing
     # regenerates is a document that quietly stops describing the repository.
