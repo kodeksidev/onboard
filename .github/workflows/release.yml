@@ -1,0 +1,214 @@
+name: Release
+
+# Phase 14. Per A3 and Section 3's third non-goal: UNSIGNED, ad-hoc installers.
+# No code signing, no notarization, no stapling, no auto-update. The path out of
+# that is documented in docs/SIGNING.md and deliberately not taken here.
+#
+# Builds every target. Publishes Windows and Linux. HOLDS macOS.
+#
+# The macOS hold is not caution, it is the absence of evidence: no macOS build
+# has ever been executed on a Mac. This project has no Apple hardware, and a
+# runner that can PRODUCE a darwin binary cannot RUN one — `build:sidecar`
+# smoke-tests only the host binary, so on Linux the two darwin outputs are
+# checked for format and size and nothing else. Publishing a `.dmg` whose engine
+# has never started on the platform it targets would ship an assumption. The
+# artefact is still built and uploaded to the workflow run, so whoever performs
+# `docs/MACOS_SMOKE.md` has something to install.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build every artefact but publish no release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  BUN_VERSION: '1.3.14'
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  sidecars:
+    # ALL FOUR TRIPLES, ON LINUX, ONCE. `bun build --compile` cross-compiles
+    # every target from a Linux runner and FAILS on Windows when extracting the
+    # darwin bun executables ("Failed to extract executable for
+    # 'bun-darwin-aarch64'"), measured across three consecutive runs. A9's "one
+    # runner cross-compiles every target" holds on Linux only — see
+    # docs/DECISIONS.md.
+    #
+    # So the sidecars are built here and passed to the bundle jobs as an
+    # artifact. They are NOT rebuilt per runner: a Windows or macOS bundle job
+    # rebuilding them would either fail (Windows) or reintroduce the assumption
+    # that each runner produces identical bytes.
+    name: engine sidecars (all four triples, Linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Verifies each artefact's container format, declared architecture and a
+      # size floor, and prints that the three non-host binaries are NOT
+      # executed. See the doc comment on `verifyArtifact`.
+      - name: Build all four sidecars
+        run: bun run build:sidecar
+
+      - name: Upload the sidecars
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecars
+          path: packages/engine/dist/onboard-engine-*
+          retention-days: 7
+          if-no-files-found: error
+
+  bundle:
+    name: bundle (${{ matrix.os }})
+    needs: sidecars
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            publish: true
+          - os: windows-2022
+            publish: true
+          # Built so it exists for MACOS_SMOKE.md; `publish: false` keeps it out
+          # of the release. See the header.
+          - os: macos-14
+            publish: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install Tauri's Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download the sidecars built on Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecars
+          path: packages/engine/dist
+
+      # `download-artifact` does not preserve the executable bit, and Tauri's
+      # externalBin resolution needs it on Unix.
+      - name: Restore the executable bit
+        if: runner.os != 'Windows'
+        run: chmod +x packages/engine/dist/onboard-engine-*
+
+      - name: Stage the sidecar into the Tauri shell
+        run: bun run stage:sidecar
+
+      - name: Build the frontend bundle
+        run: bun run --cwd "apps/desktop" build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+          key: release-cargo-${{ runner.os }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+
+      # No signing arguments anywhere, deliberately (A3). Tauri signs nothing it
+      # is not given credentials for, and none are configured — so this produces
+      # ad-hoc, unsigned installers by construction rather than by a flag
+      # someone could flip.
+      #
+      # `tauri build` compiles the Rust binary and bundles it in one step; a
+      # separate `cargo build --release` beforehand would just build it twice.
+      - name: Build the unsigned installers
+        working-directory: apps/desktop
+        run: bunx tauri build
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/release/bundle/**/*.dmg
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    # Windows and Linux only. `release-assets-check.py` asserts that mechanically
+    # rather than trusting the glob below — a `.dmg` reaching this job would
+    # otherwise be one careless pattern away from being published.
+    name: publish (Windows + Linux only)
+    needs: bundle
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (the asset check is a Python script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download the Windows installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-windows-2022
+          path: release-assets
+
+      - name: Download the Linux installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-ubuntu-22.04
+          path: release-assets
+
+      - name: Assert no macOS artefact is about to be published
+        run: python scripts/release-assets-check.py release-assets
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            **Unsigned build.** Windows SmartScreen will object; the exact steps
+            are in [docs/INSTALL.md](docs/INSTALL.md). Code signing and
+            notarization are out of scope for v1 — see
+            [docs/SIGNING.md](docs/SIGNING.md).
+
+            **macOS is not included in this release.** The build exists but has
+            never been executed on a Mac, and publishing it would ship an
+            assumption rather than a verified artefact. It is released once
+            `docs/MACOS_SMOKE.md` is signed off on real hardware.
+
+            What this release does not verify is listed under "What is not
+            verified" in the README.

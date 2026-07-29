@@ -35,7 +35,8 @@
     "engine:check-globals": "python scripts/engine-globals-scan.py",
     "guards:scan": "python scripts/guard-disposition-scan.py",
     "lossy:scan": "python scripts/lossy-conversion-scan.py",
-    "commit:check": "python scripts/commit-message-check.py"
+    "commit:check": "python scripts/commit-message-check.py",
+    "release:check-assets": "python scripts/release-assets-check.py"
   },
   "overrides": {
     "brace-expansion": ">=5.0.8",
