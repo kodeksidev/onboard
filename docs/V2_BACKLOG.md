@@ -96,3 +96,41 @@ Listed so v2 planning starts from the frozen set rather than re-deriving it:
 - Multi-repo workspaces, remote repos, clone-by-URL, network filesystems as a
   supported target (non-goal 8).
 - Telemetry, crash reporting, analytics, update checks (A17, non-goal 9).
+
+---
+
+## `onboard <path>` — open a repository from the command line
+
+**Deferred 2026-07-29.** Wanted as a feature in its own right, and explicitly
+NOT as test scaffolding.
+
+`onboard ~/src/some-repo` is what a developer expects from a developer tool,
+and it is the reason to build it. It came up for a different reason, which is
+the reason it is deferred: driving an INSTALLED release build to a rendered
+graph in CI needs some way to open a repo without the native folder picker,
+because `window.__onboardE2E` is gated on `import.meta.env.MODE === 'e2e'`
+(`apps/desktop/src/main.tsx`) and a release bundle therefore does not have it.
+
+Three reasons that justification was rejected:
+
+1. **"So a test can pass" is not a product justification.** This project
+   already carries one case of a plausible local justification adding scope
+   that then survived thirteen phases. A feature added after the ship decision
+   to make a gate go green is the same move.
+
+2. **It would add a third provenance source for `analyze_repo`.** Section 12's
+   capability check currently reasons about a bounded set of ways a repo path
+   can reach the engine. Argv would be another, and it is the least
+   trustworthy of them — M3 is already open against exactly that list. Adding
+   to it while a check against it is unresolved is the wrong order.
+
+3. **Proportionality.** The install jobs prove what actually broke — shell
+   launch and sidecar resolution. The rendered graph is the UI half, already
+   covered by 368 UI tests and four axe suites, and (from 2026-07-29) by the
+   manual smoke checklist in `docs/SMOKE_CHECKLIST.md` on all three platforms.
+   The marginal confidence does not pay for a feature added after the ship
+   decision.
+
+**If it lands**, it goes through the same capability checks as every other
+provenance source and amends Section 12 explicitly, rather than arriving as a
+convenience.
