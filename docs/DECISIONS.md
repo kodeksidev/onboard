@@ -2585,3 +2585,62 @@ decided; it only records choices the spec left open.
   The code says per process. The code is right and the spec should be amended
   when Section 7.4 is next revised; recorded here rather than editing a FROZEN
   section unilaterally.
+- **Phase 13 follow-up — the concurrency defect's ROOT CAUSE, located and fixed:
+  per-loader memoization of a process-global initialization.**
+
+  The previous cross-domain entry recorded that two overlapping `analyze()`
+  calls disagree on 107 leaves and that the shared state had not been found.
+  It has. It was not the parser pool — that is clean, and its factory,
+  concurrency counter and result array are all per-call.
+
+  `parse/grammar-loader.ts` did this:
+
+  ```ts
+  export function createGrammarLoader(grammarsDir: string): GrammarLoader {
+    let initPromise: Promise<void> | null = null;   // <- per LOADER
+    ...
+    initPromise ??= Bun.file(TREE_SITTER_WASM_PATH).arrayBuffer()
+      .then((wasmBinary) => Parser.init({ wasmBinary }));
+  ```
+
+  `Parser` is a module singleton over ONE Emscripten WASM runtime, so
+  `Parser.init()` initializes shared global state. Memoizing it per loader is
+  the bug: the memo is correctly scoped for the `Language` cache beside it,
+  which genuinely depends on `grammarsDir`, and wrong for this, which does not.
+  Two loaders created concurrently each called it, the second re-initialized
+  the runtime while the first's `Language.load()` was in flight, and the
+  language came back as version 0:
+
+  ```
+  Incompatible language version 0. Compatibility range 13 through 15
+  ```
+
+  Every file in the losing run then failed to parse. Zero symbols, zero
+  imports, so zero edges, so a different `componentCount`, different pageRank,
+  different `importanceRank`, and a longer `diagnostics` array — the exact 107
+  leaves, all downstream of one failure.
+
+  **Why every existing test missed it.** The defect is invisible once anything
+  has warmed the runtime, and every test in this repository runs sequentially,
+  so by the second run the global is already initialized. The first probe
+  written for this even missed it by warming up first. The load-bearing word in
+  `test/parse/parse-concurrency.test.ts` is COLD.
+
+  **Fix:** hoist the init promise to module scope. Bounded, as hoped.
+  **Measured after:** two concurrent `analyze()` calls now differ in 3 leaves —
+  `fingerprint`, `repo.id`, `repo.rootPathHash` — which is exactly what two
+  SEQUENTIAL runs from different paths differ by. 107 -> 3.
+
+  **The `analyze()` re-entrancy guard is kept anyway.** What is demonstrated is
+  that one known global was wrong and is now right, not that the engine is
+  re-entrant: the SQLite cache store and the no-network guard also hold
+  process-scoped state and nothing has exercised them under overlap. Refusing
+  costs nothing while the Rust shell serializes analyses regardless.
+
+  **Shape worth noting.** `grammar-loader.ts`'s own header already documented an
+  earlier `Parser.init()` defect, where a compiled binary's WASM lookup failed
+  with ENOENT and — in that module's words — "silently degrad[ed] every parse to
+  `PARSE_FAILED` rather than throwing". Same function, same silent degradation
+  to an empty-but-well-formed result, second time. That is the same fail-open
+  family as INV-3, and it is why the fix ships with a test rather than a
+  comment.

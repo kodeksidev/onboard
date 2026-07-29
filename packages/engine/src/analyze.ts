@@ -354,14 +354,27 @@ function runFullRebuild(options: AnalyzeOptions, inputs: FullRebuildInputs): Ana
  * `pageRank`, `inDegree`/`outDegree`, `diagnostics` and `graph.componentCount`
  * (107 differing leaves; sequentially, 3). See `docs/DECISIONS.md`.
  *
- * Until the shared state is located and made re-entrant, overlapping is
- * REFUSED here rather than prevented by a consumer's discipline. It was
- * previously unreachable only because `apps/desktop/src-tauri`'s supervisor
- * holds a single process-wide `analysis_in_progress` flag — a stricter rule
- * than the build spec's Phase 6 wording ("one analysis at a time PER REPO"),
- * which would permit exactly the overlap that corrupts results. A safety
- * property that depends on another domain being accidentally stricter than
- * its own spec is not a property; this is.
+ * The CAUSE IS NOW FIXED: `parse/grammar-loader.ts` memoized `Parser.init()`
+ * per loader, but `Parser` is a process-global WASM runtime, so two concurrent
+ * cold loaders re-initialized it under each other and one run's grammars came
+ * back as `Incompatible language version 0` — failing every parse in that run.
+ * With the init promise hoisted to module scope, two concurrent `analyze()`
+ * calls differ in 3 leaves (the path-derived identity fields) instead of 107,
+ * which is exactly what SEQUENTIAL runs differ by.
+ *
+ * This guard is kept anyway, deliberately. What has been demonstrated is that
+ * one known global was wrong and is now right — not that the engine is
+ * re-entrant. Other process-scoped state exists (the SQLite cache store, the
+ * no-network guard), and nothing has exercised it under overlap. Refusing costs
+ * nothing today, because the Rust shell serializes analyses regardless; it
+ * would cost a silently wrong `AnalysisResult` to be wrong about.
+ *
+ * It also replaces a safety property that used to depend on
+ * `apps/desktop/src-tauri`'s supervisor being accidentally STRICTER than the
+ * build spec — Phase 6 says "one analysis at a time PER REPO", which would
+ * permit exactly the overlap that corrupted results. A property that holds
+ * because another domain has not yet implemented its own spec is not a
+ * property; this is.
  *
  * `verify:determinism`, the snapshot suite and the sidecar all call
  * sequentially, so nothing legitimate trips this.
