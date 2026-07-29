@@ -148,8 +148,16 @@ fn build_app_state(app: &tauri::App) -> AppState {
     // silent non-start), and the first analysis returns
     // E_ENGINE_NOT_STARTED. The reason goes to the log, which that copy
     // names.
+    // Both outcomes are logged, and the SUCCESS line is load-bearing: it is
+    // what `installed-app-check.py` asserts against a real installed package.
+    // A check that only looked for the failure line would pass on an app that
+    // never got as far as resolving anything — absence of an error is not
+    // evidence of success (SECURITY_AUDIT.md's non-vacuity rule).
     let program = match resolve_sidecar_program(app) {
-        Ok(path) => Some(path),
+        Ok(path) => {
+            let _ = logger.log_line(&format!("sidecar resolved: {}", path.display()));
+            Some(path)
+        }
         Err(reason) => {
             let _ = logger.log_line(&format!("sidecar resolution failed: {reason}"));
             None

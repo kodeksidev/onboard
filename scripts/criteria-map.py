@@ -113,8 +113,11 @@ EVIDENCE: dict[int, Evidence] = {
         "could not start its engine). The Linux job drives the ENGINE directly "
         "over stdio RPC and never starts the app shell, so it proves the engine "
         "runs, not that the app can start it — the packaged-sidecar resolution "
-        "bug was latent on Linux too, just unexercised. Fixed in code; needs an "
-        "app-shell launch on BOTH platforms before this is more than partial. "
+        "bug was latent on Linux too, just unexercised. Fixed in code, and both "
+        "jobs now START THE SHELL and assert it resolved its engine — but "
+        "NEITHER HAS EXECUTED YET, and an unrun gate reads exactly like a "
+        "passing one, so this stays partial until they run green. `publish` now "
+        "depends on both, which is the gap that let v0.1.0 ship. "
         "macOS half needs a Mac",
         blocker="machine",
     ),
