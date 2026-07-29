@@ -219,13 +219,24 @@ jobs:
           # So this now uploads whatever the bundler produced and lets the
           # classifier be the single place that decides. An unrecognised
           # extension fails there by name rather than vanishing here.
-          # `bundle/<format>/<artefact>` — exactly one level deep, deliberately.
-          # `**` swept in the .deb's intermediate staging tree (control/,
-          # data/usr/bin/, the unpacked grammars) and the classifier rejected 22
-          # of 23 files by name, which is the correct behaviour and the wrong
-          # input. The finished artefacts sit directly in their format
-          # directory; everything under a further subdirectory is scaffolding.
-          path: apps/desktop/src-tauri/target/release/bundle/*/*.*
+          # Back to an explicit extension list, with `*.rpm` — the omission that
+          # started this. Two attempts at "just take everything" both failed:
+          # `**/*.*` and `*/*.*` each swept in the .deb's intermediate staging
+          # tree (control/, data/usr/bin/, the unpacked grammars), and
+          # `release:check-assets` correctly rejected 22 of 23 files by name.
+          #
+          # So the list stays, and it is a KNOWN duplicate of the matrix's
+          # `bundles` field. What makes that survivable is the classifier: an
+          # extension nobody listed reaches `publish` and fails there BY NAME,
+          # which is how the missing `.rpm` would have been caught the first
+          # time if it had arrived as an unknown rather than as nothing.
+          # Recorded in KNOWN_ISSUES so the duplication is a known cost.
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/release/bundle/**/*.rpm
+            apps/desktop/src-tauri/target/release/bundle/**/*.dmg
           retention-days: 7
           if-no-files-found: error
 
