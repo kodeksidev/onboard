@@ -2419,3 +2419,48 @@ decided; it only records choices the spec left open.
   not the fourth — and the first in a shipped code path either way, since
   all three deleted blocks were `#[cfg(test)]` and could never appear in a
   release binary.
+- **AMENDMENT — ESLint 9.39 -> 10.8 so the `brace-expansion` advisory can be
+  closed without breaking the linter.**
+  Authorised-by: product owner (chat), 2026-07-29
+  Departs-from: Phase 0 entry above — "ESLint `~9.39.0` + `@eslint/js` `~9.39.0`"
+
+  The `overrides` entry `"brace-expansion": ">=5.0.8"` closes
+  GHSA-mh99-v99m-4gvg (high; DoS via unbounded expansion). The advisory has ONE
+  vulnerable range (`<= 5.0.7`) and ONE patched version (`5.0.8`) — confirmed
+  against `gh api /advisories/GHSA-mh99-v99m-4gvg`, not from memory, because it
+  is easily mistaken for the June-2025 ReDoS that did have per-line fixes.
+  There is therefore no patched v1 or v2 line to pin per-branch.
+
+  Under ESLint 9, `@eslint/config-array@0.21.2` required `minimatch@^3.1.2`,
+  and minimatch 3 consumes brace-expansion as `module.exports = expand`. v5
+  changed that export shape, so the override made ESLint crash with `TypeError:
+  expand is not a function` on every clean install, on every platform. That is
+  why `verify` had never once reached its own test stage in CI.
+
+  ESLint 10's `@eslint/config-array@0.23.5` requires `minimatch@^10.2.4`, which
+  requires `brace-expansion@^5.0.5` — the patched line. The conflict disappears
+  at the root rather than being worked around.
+
+  Correction to the working assumption this decision started from: the upgrade
+  alone does NOT close the advisory, and the override is NOT removable. With
+  ESLint 10 and no override, the resolved tree still contains
+  `brace-expansion@1.1.16` and `@2.1.3`, reached by `recursive-readdir` ->
+  `minimatch@3`, `mocha`/`glob@8` -> `minimatch@5`, and
+  `@typescript-eslint/typescript-estree`/`glob@10` -> `minimatch@9`; `bun audit`
+  reports 9 vulnerable paths. The correct configuration is ESLint 10 **and** the
+  override retained. Verified by inspecting the resolved tree, not by trusting
+  an exit code: after `rm -rf node_modules && bun install`, the entire tree
+  contains exactly one copy of the package, `brace-expansion@5.0.8`.
+
+  Cost accepted: one new lint error, from `no-useless-assignment` entering
+  `eslint:recommended` in v10. It was a true positive — a dead `''` initializer
+  on `member` in `packages/engine/src/graph/tarjan-scc.ts`, assigned by the
+  do-while body before any read. Fixed rather than suppressed. No plugin
+  upgrade was entangled: `typescript-eslint@8.65.0`, already pinned, declares
+  `eslint: ^8.57.0 || ^9.0.0 || ^10.0.0`. `@eslint/js` tracks its own version
+  line and moves to `~10.0.1`, not `~10.8.0`.
+
+  Consequence: `bun run verify` now passes all seven stages on a wiped
+  `node_modules` with `--frozen-lockfile`. That is the first green run in this
+  repository that a clean checkout reproduces — see `docs/SECURITY_AUDIT.md`
+  §6 on why every earlier one is attested but unverified.

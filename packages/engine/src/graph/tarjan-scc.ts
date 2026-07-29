@@ -66,7 +66,10 @@ function popFinishedFrame(frame: Frame, callStack: readonly Frame[], state: Tarj
     return;
   }
   const scc: string[] = [];
-  let member = '';
+  // Declared without an initializer on purpose: the do-while body assigns
+  // before any read, so a placeholder would be dead and would also mask a real
+  // bug if the loop ever stopped executing at least once.
+  let member: string;
   do {
     member = state.componentStack.pop()!;
     state.onStack.delete(member);
