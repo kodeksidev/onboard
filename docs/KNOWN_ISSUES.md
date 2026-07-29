@@ -185,19 +185,81 @@ is complete rather than curated.
 
 ---
 
-## Coverage of this sweep
+### KI-6 — a malformed manifest is reported as a project with no dependencies
 
-285 absorbing sites were classified. Four categories account for most of them —
-`returns null` (70), `substitutes a default` (57), `nullish default on a call`
-(44), `ignores a Result` (39) — and the overwhelming majority are ordinary
-optional-value handling rather than guards: `readFileText` returning `null` for
-an unreadable file is the intended contract, not a swallowed failure.
+| | |
+|---|---|
+| **Severity** | MEDIUM |
+| **Criterion** | none directly; affects what the map asserts about the user's project |
+| **Blocks** | **a README line** |
+| **Family** | fail-open (KI-1's class) |
+| **Disposition** | **NOT FIXED** — sized below, and the reason is stated |
 
-The sites triaged in detail were those matching INV-3's shape — a value that
-failed validation being dropped while the surrounding operation reports success
-— on paths touching privacy, AI, secrets, the RPC boundary, the walk and the
-cache. That is a judgement about where a fail-open costs the most, and it is
-stated rather than presented as exhaustive: **the remaining ~280 sites have been
-classified, not individually reviewed.**
+Found by `scripts/lossy-conversion-scan.py`, the sweep for KI-1's *class* rather
+than its instance. Three modules define an identical `parseJsonSafely` that
+returns `null` on a parse error, and two of them then write `?? {}`:
 
-Re-run with `bun run guards:scan --list` for the full site list.
+```ts
+const parsed = parseJsonSafely(content) ?? {};   // manifests.ts:68, :211
+```
+
+`null` means *this file did not parse*; `{}` means *it parsed and was empty*.
+Coalescing them is exactly KI-1's conflation. A malformed `package.json`
+therefore yields a manifest that is reported as **present and valid, with zero
+dependencies** — so the map tells the user their project has no external
+dependencies, confidently, with no diagnostic anywhere. The same shape drops
+workspace detection (`workspaces.ts`) and entry points (`entry-points.ts`), so a
+monorepo with one broken manifest is analysed as a flat repository.
+
+**The asymmetry is the giveaway.** A malformed `tsconfig.json` DOES surface —
+`analyze-assemble.ts` emits `tsconfig/jsconfig could not be read or parsed`.
+Someone already decided this class of failure is worth telling the user about,
+and three sibling modules do not.
+
+Not fixed here because it is not a security boundary, and this sweep's remit was
+to fix silent drops on one. Sized so the decision is informed rather than
+deferred: `parseJsonSafely` must distinguish failure from empty, and
+`detectManifests` / `discoverWorkspacePackages` / `detectEntryPoints` each need a
+`diagnostics` field threaded to `analyze-assemble`. Roughly 40-60 lines across
+five files. **No fixture has a malformed manifest, so it would change no
+fingerprint** — this is a contained change, not a risky one.
+
+---
+
+## Coverage of this sweep — what "classified" means
+
+285 absorbing sites. **Classified means pattern-matched by shape and counted.**
+It does not mean read. Naming the shapes so a reader can see the sweep's reach:
+
+| Shape | Count | What it matches |
+|---|---|---|
+| `returns null` | 70 | a bare `return null;` |
+| `substitutes a default` | 57 | Rust `.unwrap_or*(` |
+| `nullish default on a call` | 44 | `) ?? null` / `?? []` / `?? 0` |
+| `ignores a Result` | 39 | Rust `let _ = ` |
+| `returns an empty collection` | 36 | `return [];` / `return {};` |
+| `catch with no rethrow` | 23 | a `catch` with no `throw`/`Err` within 6 lines |
+| `discards the error with .ok()` | 5 | Rust `.ok()` |
+| `handles only the Ok arm` | 5 | `if let Ok(` |
+| `inline catch handler` | 3 | `.catch(` |
+| `silently drops items` | 3 | `.filter_map(` |
+
+**What that would have missed.** Every shape is line-local. A guard that
+refuses correctly on one line and whose CALLER discards the refusal is invisible
+to all ten — which is INV-3's original mechanism, found by reading rather than
+by any scan. So is a guard whose absorbing step is spread across a function, and
+so is anything in a dependency (see the method section). Treat the ten shapes as
+a net with a known mesh size.
+
+**Evidence about the triage's reach, in both directions.** The detailed triage
+went to INV-3's shape — a value failing validation being dropped while the
+operation reports success — on privacy, AI, secrets, RPC, walk and cache paths.
+KI-1 was **not** that shape: it was a conversion collapsing failure into
+absence, matched by `discards the error with .ok()` (5 hits) rather than by any
+drop pattern, and it surfaced anyway because that category was small enough to
+read in full. That is weak evidence the triage reached past its own target — and
+it also shows why: the categories that got read completely were the small ones.
+The four largest categories, 210 of the 285 sites, were counted and not read.
+
+Re-run with `bun run guards:scan --list` for the full site list, and
+`bun run lossy:scan` for KI-1's class specifically.
