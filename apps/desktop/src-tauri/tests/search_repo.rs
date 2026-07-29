@@ -2,7 +2,6 @@
 //! process (see `tests/analyze_repo.rs` for why this lives under `tests/`).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use onboard_lib::commands::search::search_repo_core;
@@ -11,9 +10,12 @@ use onboard_lib::sidecar::supervisor::{SidecarConfig, SidecarSupervisor};
 use onboard_lib::state::AppState;
 use onboard_lib::util::logging::RotatingLogger;
 
+mod common;
+use common::stub_program;
+
 fn test_state() -> AppState {
     let config = SidecarConfig {
-        program: Some(PathBuf::from(env!("CARGO_BIN_EXE_onboard_engine_stub"))),
+        program: Some(stub_program()),
         args: vec![],
         log_path: "C:/fake/onboard.log".to_string(),
         max_restarts: 3,

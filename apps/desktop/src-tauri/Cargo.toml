@@ -20,47 +20,39 @@ autobins = false
 name = "onboard_lib"
 path = "src/lib.rs"
 
-# NOTE (2026-07-29): `required-features = ["dev-tools"]` was tried here and
-# does NOT work, for a reason worth recording so it is not retried. Tauri's
-# bundler enumerates the package's [[bin]] targets from cargo metadata, which
-# lists a target whether or not its required-features are satisfied. Cargo
-# then does not BUILD the gated binary, so the bundler fails outright:
+# `dev-tools/` holds every binary that must never reach a user's install.
+# Tauri's bundler bundles the BUNDLED PACKAGE's [[bin]] targets, so anything
+# declared below ships. That is not a policy this file can opt out of:
+# `required-features` was tried and does not work, because the bundler reads
+# targets from cargo metadata whether or not cargo built them, and fails with
 #
 #   failed to bundle project when getting size of
-#     target/release/check_egress_chokepoint.exe:
-#     The system cannot find the file specified. (os error 2)
+#     target/release/check_egress_chokepoint.exe (os error 2)
 #
-# That error is also the proof of the harvest mechanism: the bundler went
-# looking for a developer tool by name, which is exactly how v0.1.0 shipped
-# `onboard_engine_stub.exe` beside the real engine. The fix is structural —
-# these binaries must not be TARGETS OF THIS PACKAGE at all (a sibling crate
-# sharing the target directory) — not a feature gate. Tracked separately.
+# Being a workspace member rather than a target of this package is what
+# actually excludes them, and it keeps their output paths identical.
+[workspace]
+members = ["dev-tools"]
+# The compile-fail fixtures under `tests/fixtures/` are standalone crates that
+# are SUPPOSED to fail to compile — each one proves a specific misuse is a
+# compile error (E0451, E0277, E0308…). Introducing a workspace root above
+# them made cargo reject them with "current package believes it's in a
+# workspace when it's not", which is not the error those tests assert, so all
+# nine failed rather than silently passing on the wrong failure.
+#
+# That is the compile-fail suite working exactly as designed: it checks the
+# ERROR CODE, not merely that compilation failed. A test that accepted any
+# failure would have gone green here and stopped proving anything.
+exclude = ["tests/fixtures"]
 
+# EXACTLY ONE [[bin]] — this is the shipped set, and
+# `bundled_package_ships_exactly_one_binary` (tests/bundled_binaries.rs) reads
+# cargo metadata and fails if a second one ever appears. Adding one is
+# therefore a deliberate, visible change rather than the accident that put a
+# fake engine in v0.1.0's installer.
 [[bin]]
 name = "onboard"
 path = "src/main.rs"
-
-# Stub sidecar used ONLY by tests (Phase 6) until the real Phase 5 binary
-# lands. It speaks the exact Section 7.3 newline-delimited JSON-RPC 2.0
-# protocol over stdio and replays packages/contract/fixtures/sample-analysis.json,
-# embedded at compile time via include_str! so it needs no runtime path
-# resolution (see A22 — the dev path contains a space).
-#
-# STILL SHIPS TO USERS — see the NOTE above. A fake engine sitting next to
-# the real one in a user-writable directory is a substitution target on a
-# product whose thesis is that nothing leaves the machine, and the
-# set-equality assertion in `scripts/installed-app-check.py` fails on it by
-# design until the structural fix lands.
-[[bin]]
-name = "onboard_engine_stub"
-path = "src/bin/onboard_engine_stub.rs"
-
-# Build-time source checker (Section 12's egress chokepoint). Run in CI as
-# `cargo run --bin check_egress_chokepoint -- .`; it has no business in a
-# shipped installer, and likewise still ships. See the NOTE above.
-[[bin]]
-name = "check_egress_chokepoint"
-path = "src/bin/check_egress_chokepoint.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
