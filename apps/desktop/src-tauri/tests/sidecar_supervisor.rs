@@ -132,8 +132,10 @@ fn a_second_concurrent_analysis_is_rejected() {
 fn the_analysis_guard_is_process_wide_not_per_repo() {
     let begin: for<'a> fn(
         &'a SidecarSupervisor,
-    ) -> Result<onboard_lib::sidecar::supervisor::AnalysisGuard<'a>, onboard_lib::error::AppError> =
-        SidecarSupervisor::begin_analysis;
+    ) -> Result<
+        onboard_lib::sidecar::supervisor::AnalysisGuard<'a>,
+        onboard_lib::error::AppError,
+    > = SidecarSupervisor::begin_analysis;
 
     let supervisor = SidecarSupervisor::new(test_config(&[]));
     let _held = begin(&supervisor).expect("first analysis should acquire the guard");
