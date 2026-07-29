@@ -24,6 +24,7 @@ import { PYTHON_STDLIB_MODULES } from './resolve/python-stdlib';
 import { detectManifests, type DependencyInfoValue, type ManifestInfoValue } from './stack/manifests';
 import { detectEntryPoints, type EntryPointValue } from './stack/entry-points';
 import { computeRepoId } from './util/hash';
+import { byteCompare } from './util/sort';
 import { domainError } from './rpc/domain-error';
 import type { CacheStore } from './cache/cache-store';
 import {
@@ -174,6 +175,56 @@ function buildResolverContext(
 }
 
 /** Walk, hash/skip/classify, and stack/resolver-context discovery — everything before parsing. */
+/**
+ * A manifest that did not parse, reported the way `tsconfig-paths.ts` already
+ * reports its own — `TSCONFIG_UNREADABLE` was the only member of this class the
+ * user ever heard about, because three modules each had their own copy of the
+ * parse helper and only the fourth surfaced anything.
+ */
+function manifestDiagnostics(paths: ReadonlySet<string>): readonly DiagnosticValue[] {
+  return [...paths].sort(byteCompare).map((path) => ({
+    severity: 'warning' as const,
+    code: 'MANIFEST_UNREADABLE',
+    path,
+    message: 'Manifest could not be read or parsed; its dependencies, workspaces and entry points are missing from this analysis.',
+  }));
+}
+
+/**
+ * Collects manifest parse failures as PATHS, deduplicated.
+ *
+ * `package.json` is read by `detectManifests`, `discoverWorkspacePackages` and
+ * `detectEntryPoints`, so a single malformed file fails to parse three times.
+ * Three copies of one warning would be worse than none, and a `Set` of paths
+ * dedupes without any module needing to know the others exist.
+ */
+function manifestFailureSink(): {
+  onUnparseable: (path: string) => void;
+  unparseableManifests: ReadonlySet<string>;
+} {
+  const unparseableManifests = new Set<string>();
+  return {
+    unparseableManifests,
+    onUnparseable: (path: string): void => {
+      unparseableManifests.add(path);
+    },
+  };
+}
+
+function classifyAll(
+  files: readonly ProcessedFile[],
+  entryPointPaths: ReadonlySet<string>,
+): ClassifiedFile[] {
+  return files.map((file) => ({
+    ...file,
+    classification: classifyFile({
+      path: file.path,
+      isEntryPoint: entryPointPaths.has(file.path),
+      headerLines: file.headerLines,
+    }) as ClassificationValue,
+  }));
+}
+
 function prepareAnalysis(options: AnalyzeOptions): PreparedAnalysis {
   const canonicalRoot = realpathSync(options.repoRootAbs);
   const repoId = computeRepoId(canonicalRoot);
@@ -186,20 +237,15 @@ function prepareAnalysis(options: AnalyzeOptions): PreparedAnalysis {
 
   const { files: processedFiles, diagnostics: readDiagnostics } = processAllFiles(options.repoRootAbs, walkResult.files);
 
-  const workspacePackages = discoverWorkspacePackages({ existingPaths, readFile });
-  const entryPoints = detectEntryPoints({ existingPaths, readFile, workspacePackages });
+  const { onUnparseable, unparseableManifests } = manifestFailureSink();
+
+  const workspacePackages = discoverWorkspacePackages({ existingPaths, readFile, onUnparseable });
+  const entryPoints = detectEntryPoints({ existingPaths, readFile, workspacePackages, onUnparseable });
   const entryPointPaths = new Set(entryPoints.map((e) => e.path));
 
-  const classified: ClassifiedFile[] = processedFiles.map((f) => ({
-    ...f,
-    classification: classifyFile({
-      path: f.path,
-      isEntryPoint: entryPointPaths.has(f.path),
-      headerLines: f.headerLines,
-    }) as ClassificationValue,
-  }));
+  const classified = classifyAll(processedFiles, entryPointPaths);
 
-  const { manifests, dependencies } = detectManifests({ existingPaths, readFile });
+  const { manifests, dependencies } = detectManifests({ existingPaths, readFile, onUnparseable });
   const pyManifestNames = new Set(dependencies.filter((d) => d.ecosystem === 'pypi').map((d) => d.name));
   const { context: resolverContext, tsconfigDiagnostics } = buildResolverContext(
     existingPaths,
@@ -212,7 +258,7 @@ function prepareAnalysis(options: AnalyzeOptions): PreparedAnalysis {
     canonicalRoot,
     repoId,
     walkResult,
-    readDiagnostics,
+    readDiagnostics: [...readDiagnostics, ...manifestDiagnostics(unparseableManifests)],
     workspacePackages,
     entryPoints,
     classified,

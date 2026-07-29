@@ -166,6 +166,45 @@ believed without qualification.
 line in a document, and by this sweep's own argument that is a description, not
 a defence. It is listed as accepted so the distinction stays visible.
 
+### KI-8 — the `brace-expansion` override breaks a second tool, and this is a pattern
+
+| | |
+|---|---|
+| **Severity** | LOW (blocks a gate, not the product) |
+| **Criterion** | 10 (coverage thresholds) |
+| **Blocks** | **a README line** |
+| **Family** | dependency override with unscopeable blast radius |
+| **Disposition** | **ACCEPTED** — criterion 10 stays documented; the mechanism is recorded here so a third occurrence is recognisable |
+
+`"overrides": { "brace-expansion": ">=5.0.8" }` closes GHSA-mh99-v99m-4gvg by
+forcing one patched copy across the whole tree. v5 changed the package's export
+shape, so **every consumer written against the v1/v2 CJS default import breaks**.
+
+This has now happened twice:
+
+1. **ESLint 9** — `@eslint/config-array` → `minimatch@3` →
+   `TypeError: expand is not a function`. Resolved by upgrading to ESLint 10,
+   whose `config-array` requires `minimatch@^10`. Recorded as an AMENDMENT in
+   `docs/DECISIONS.md`.
+2. **`@vitest/coverage-v8@3.2.7`** — `TypeError: (0 ,
+   brace_expansion_1.default) is not a function` at
+   `V8CoverageProvider.getUntestedFiles`. Note that `test-exclude@7.0.2` already
+   requires `minimatch@^10.2.2`, so the transitive chain is fine; the break is
+   in coverage-v8's own bundled require. **UI coverage cannot run at all**,
+   which is why criterion 10 is unwired for that package.
+
+Clearing the second needs `@vitest/coverage-v8@4.x`, which needs **vitest 4.x**
+— a major test-framework upgrade wanting `vite ^6/7/8` — or a scoped override
+exception that reopens the advisory in a dev-only path. Neither is cheap, and
+coverage was **measured before wiring** rather than assumed: engine 97.98%
+lines with every 90%-required file above 90%, contract 99.36%. The numbers are
+strong where they can be produced.
+
+**The pattern, stated so a third instance is not read as unrelated:** an
+advisory whose only patched version is a new major, forced tree-wide by an
+override, will keep breaking consumers pinned to the old API — one at a time, as
+each is next exercised. Each break looks like an unrelated tool bug. It is not.
+
 ### KI-5 — `Settings` falls back to defaults on any read or parse error
 
 | | |
@@ -191,9 +230,17 @@ is complete rather than curated.
 |---|---|
 | **Severity** | MEDIUM |
 | **Criterion** | none directly; affects what the map asserts about the user's project |
-| **Blocks** | **a README line** |
+| **Blocks** | **a release** — owner override, see below |
 | **Family** | fail-open (KI-1's class) |
-| **Disposition** | **NOT FIXED** — sized below, and the reason is stated |
+| **Disposition** | **FIXED** + **TEST** |
+
+**The security-boundary rule was overridden for this one**, and the reasoning is
+worth keeping: it is the *third instance of one mechanism* — INV-3 dropped a
+refusal, KI-1 collapsed an overflow, this collapses a parse failure — and each
+time the result is a well-formed output that reads as success. The user-visible
+consequence is Onboard stating that a project has no external dependencies when
+a manifest is malformed. That is the product being confidently wrong about its
+central claim, which outranks a security finding nobody triggers.
 
 Found by `scripts/lossy-conversion-scan.py`, the sweep for KI-1's *class* rather
 than its instance. Three modules define an identical `parseJsonSafely` that
@@ -216,13 +263,57 @@ monorepo with one broken manifest is analysed as a flat repository.
 Someone already decided this class of failure is worth telling the user about,
 and three sibling modules do not.
 
-Not fixed here because it is not a security boundary, and this sweep's remit was
-to fix silent drops on one. Sized so the decision is informed rather than
-deferred: `parseJsonSafely` must distinguish failure from empty, and
-`detectManifests` / `discoverWorkspacePackages` / `detectEntryPoints` each need a
-`diagnostics` field threaded to `analyze-assemble`. Roughly 40-60 lines across
-five files. **No fixture has a malformed manifest, so it would change no
-fingerprint** — this is a contained change, not a risky one.
+**Fixed.** The three copies are gone: `packages/engine/src/util/json.ts` is the
+single definition, and it returns a discriminated outcome so failure cannot be
+spelled the same way as empty. A valid JSON document that is not an object —
+`null`, `[]`, `"text"`, `7` — is a failure too, because returning `{}` for it
+would rebuild the exact conflation. A malformed manifest now emits
+`MANIFEST_UNREADABLE` and is **excluded** from `stack.manifests` rather than
+listed as a valid one with nothing in it.
+
+The consolidation was the point, not tidiness. `resolve/tsconfig-paths.ts` has
+the same failure and always reported it as `TSCONFIG_UNREADABLE`; **three copies
+of the helper are why that decision reached one module out of four.** This is
+the duplication pattern from `engine-rpc-client.ts`'s hand-rolled newline
+reader — the same behaviour written more than once diverges, and the divergence
+is where the defect lives.
+
+Failures are collected as PATHS and converted to diagnostics once, because
+`package.json` is read by all three modules and three copies of one warning
+would be worse than none. Six tests cover it, including the two that stop the
+fix from overshooting: a valid-but-empty `{}` manifest produces **no**
+diagnostic, and a well-formed manifest still yields its dependencies. No fixture
+has a malformed manifest, so no fingerprint moved — 516 engine tests unchanged.
+
+---
+
+### KI-7 — 210 of 285 absorbing sites were counted, not read
+
+| | |
+|---|---|
+| **Severity** | MEDIUM |
+| **Criterion** | 26 (this audit's own coverage) |
+| **Blocks** | **a README line** |
+| **Family** | limit of method, not a defect in the product |
+| **Disposition** | **ACCEPTED** — stated as a bound on what criterion 26 can claim |
+
+The sweep's reach is bounded in a way that **excludes the defect that started
+it**, and that deserves an entry rather than a footnote.
+
+All ten shapes the scanner matches are **line-local**. INV-3's mechanism was
+not: `engine.snippets` refused correctly on its own line, and the *caller*
+discarded the refusal by returning a shorter array. No line-local pattern can
+see a guard whose refusal is dropped one frame up. So the scan that exists
+because of INV-3 could not have found INV-3.
+
+The four largest categories — `returns null` (70), `substitutes a default` (57),
+`nullish default on a call` (44), `ignores a Result` (39) — total **210 sites
+that were pattern-matched and counted, never read.** The categories read in full
+were the small ones, which is how KI-1's class surfaced: `.ok()` had five hits.
+
+Not closable by more scanning of the same kind. Closing it means either reading
+the 210, or a different method that follows a refusal to its consumer. Recorded
+so that "the guard sweep was done" is never read as "the guards were reviewed".
 
 ---
 

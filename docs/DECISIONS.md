@@ -2644,3 +2644,23 @@ decided; it only records choices the spec left open.
   to an empty-but-well-formed result, second time. That is the same fail-open
   family as INV-3, and it is why the fix ships with a test rather than a
   comment.
+- **Phase 13 follow-up — criterion 28's gate is wired, and pre-merge history
+  predates it.**
+
+  `scripts/commit-message-check.py` enforces `<type>: <description>` over the
+  commits a branch adds, and runs as its own CI job. The type set is recorded in
+  the script rather than assumed, because Section 13 #28 does not enumerate one.
+
+  **One subject on `phase13/gate-evidence` fails it:** `ci,docs: build only the
+  sidecar a job uses...`. `<type>` is one type; a comma-joined pair is two, and
+  the gate is right to reject it.
+
+  It is NOT rewritten. Reworking nine commits and force-pushing to an open PR to
+  clear one subject is disproportionate, and this branch squash-merges — so its
+  subjects never land on `main` and the gate is clean from the merge commit
+  onward. Product owner's call, 2026-07-29.
+
+  Recorded here for one reason: a future reader running `commit:check` against
+  the pre-merge branch will see it fail, and should know that is history
+  predating the gate rather than the gate being broken. Anything authored after
+  the merge has no such excuse.
