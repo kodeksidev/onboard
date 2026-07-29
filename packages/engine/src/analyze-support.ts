@@ -23,6 +23,7 @@ import { byteCompare } from './util/sort';
 import type { CacheStore } from './cache/cache-store';
 import { buildSymbolRows } from './index/symbol-index';
 import { buildTokenIndexRows } from './index/token-index';
+import { domainError } from './rpc/domain-error';
 
 export type LanguageValue = AnalysisResultValue['files'][number]['language'];
 export type DiagnosticValue = AnalysisResultValue['diagnostics'][number];
@@ -265,6 +266,46 @@ export function persistParsePhaseResults(
 }
 
 /** Runs the parser pool over every parseable file, reusing cached results when the content hash matches. */
+/**
+ * Refuses a run in which EVERY parse attempt threw.
+ *
+ * Both of this repository's `Parser.init()` defects were invisible for the same
+ * reason: an analysis with no symbols and no edges is still a well-formed
+ * `AnalysisResult`, so it validates, fingerprints, caches and renders. Empty
+ * looked like success. The first one shipped in a compiled binary and poisoned
+ * a cache; the second raced two grammar loaders and produced two different
+ * "valid" results for one repository. `grammar-loader.ts`'s header documented
+ * the first, in the same file, and that did not prevent the second — which is
+ * why this is an assertion rather than another note.
+ *
+ * The condition is deliberately narrow. A `failed` result means the parser
+ * THREW: a missing grammar, an incompatible language version, an uninitialized
+ * runtime. It does NOT mean the source was broken — tree-sitter is
+ * error-tolerant and returns `ok` with `hasSyntaxError` for that. So a
+ * repository full of syntax errors still parses fine here, and only a systemic
+ * parser failure trips this.
+ *
+ * Zero attempts is not a failure either: a repository of nothing but Markdown
+ * has nothing to parse and is entitled to an empty result.
+ */
+function assertParsingIsWorking(results: readonly ParsePoolResult[]): void {
+  if (results.length === 0) {
+    return;
+  }
+  const failures = results.filter((result) => result.status === 'failed');
+  if (failures.length < results.length) {
+    return;
+  }
+  const first = failures[0];
+  const detail = first !== undefined && first.status === 'failed' ? first.message : 'unknown';
+  throw domainError(
+    'E_ENGINE_CRASHED',
+    'The analysis engine could not parse any file.',
+    `All ${String(results.length)} parse attempts failed, so this is a parser fault rather than a property of the repository — an empty result would be indistinguishable from a successful analysis of an empty project. First error: ${detail}`,
+    null,
+  );
+}
+
 export async function runParsePhase(
   files: readonly ProcessedFile[],
   grammarsDir: string,
@@ -278,6 +319,7 @@ export async function runParsePhase(
   const entries: ParsePoolEntry[] = toParse.map((f) => ({ path: f.path, languageId: f.languageId!, sourceText: f.text }));
   const getParser = createLanguageParserFactory(grammarsDir);
   const results: readonly ParsePoolResult[] = await parseFiles(entries, getParser);
+  assertParsingIsWorking(results);
 
   const freshByPath = persistParsePhaseResults(toParse, results, cacheStore);
   const parsedByPath = new Map<string, ParsedFile>([...cacheHit, ...freshByPath]);
