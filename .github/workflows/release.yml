@@ -178,7 +178,7 @@ jobs:
       # separate `cargo build --release` beforehand would just build it twice.
       - name: Build the unsigned installers
         working-directory: apps/desktop
-        run: bunx tauri build
+        run: bun run bundle
 
       - name: Upload the installers
         uses: actions/upload-artifact@v4
