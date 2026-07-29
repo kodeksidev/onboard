@@ -1,4 +1,4 @@
-//! End-to-end `search_repo_core` test against the real stub sidecar
+﻿//! End-to-end `search_repo_core` test against the real stub sidecar
 //! process (see `tests/analyze_repo.rs` for why this lives under `tests/`).
 
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use onboard_lib::util::logging::RotatingLogger;
 
 fn test_state() -> AppState {
     let config = SidecarConfig {
-        program: PathBuf::from(env!("CARGO_BIN_EXE_onboard_engine_stub")),
+        program: Some(PathBuf::from(env!("CARGO_BIN_EXE_onboard_engine_stub"))),
         args: vec![],
         log_path: "C:/fake/onboard.log".to_string(),
         max_restarts: 3,

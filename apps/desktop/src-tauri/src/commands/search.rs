@@ -1,4 +1,4 @@
-//! `search_repo` (Section 7.4). Validates the request against Section 12's
+﻿//! `search_repo` (Section 7.4). Validates the request against Section 12's
 //! boundary checks, requires a completed analysis for `repoId`, and
 //! forwards to the sidecar's `engine.search`.
 
@@ -92,7 +92,7 @@ mod tests {
 
     fn test_state() -> AppState {
         let config = SidecarConfig {
-            program: std::path::PathBuf::from("unused-in-validation-only-tests"),
+            program: Some(std::path::PathBuf::from("unused-in-validation-only-tests")),
             args: vec![],
             log_path: "C:/fake/onboard.log".to_string(),
             max_restarts: 3,

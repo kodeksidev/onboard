@@ -1,16 +1,21 @@
-//! Resolves and spawns the engine sidecar process.
+//! Spawns the engine sidecar process.
 //!
 //! Phase 6 develops against a stub binary (see `bin/onboard_engine_stub.rs`)
-//! that speaks the real Section 7.3 protocol; Phase 11 swaps
-//! `resolve_sidecar_path` to point at the Phase 5 Bun-compiled binary named
-//! per Tauri's `externalBin` `-<target-triple>` convention. Nothing else in
-//! `sidecar/` or `commands/` needs to change — they only depend on
-//! `SpawnedChild`.
+//! that speaks the real Section 7.3 protocol. Nothing else in `sidecar/` or
+//! `commands/` depends on how the program path was obtained — they only
+//! depend on `SpawnedChild`.
+//!
+//! Production resolution of that path does NOT live here: `lib.rs` asks
+//! `tauri-plugin-shell` for it. The only resolver left in this file is the
+//! dev-staging one, gated `#[cfg(debug_assertions)]`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
-use crate::error::{AppError, AppErrorCode};
+#[cfg(debug_assertions)]
+use std::path::PathBuf;
+
+use crate::error::AppError;
 
 pub struct SpawnedChild {
     pub child: Child,
@@ -20,27 +25,46 @@ pub struct SpawnedChild {
 /// JSON-RPC transport) and stderr as a pipe too (drained into the log,
 /// never surfaced to the UI verbatim — Section 12: no raw OS/provider
 /// strings in `AppError.message`).
-pub fn spawn_sidecar(program: &Path, args: &[String]) -> Result<SpawnedChild, AppError> {
+/// `log_path` is threaded through so the Section 10 copy can name it, the
+/// same way `E_ENGINE_CRASHED` does.
+pub fn spawn_sidecar(
+    program: &Path,
+    args: &[String],
+    log_path: &str,
+) -> Result<SpawnedChild, AppError> {
     let child = Command::new(program)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|err| {
-            AppError::new(
-                AppErrorCode::EEngineCrashed,
-                format!("Failed to start the analysis engine process: {err}"),
-            )
-        })?;
+        // Section 12: the OS string ("The system cannot find the path
+        // specified. (os error 3)") goes in `detail`, behind the UI's
+        // Details disclosure — never in `message`, which is the copy the
+        // user reads. The code is E_ENGINE_NOT_STARTED, not
+        // E_ENGINE_CRASHED: `spawn` failing means no process ever existed.
+        .map_err(|err| AppError::engine_not_started(log_path).with_detail(err.to_string()))?;
     Ok(SpawnedChild { child })
 }
 
-/// Locates the sidecar binary the way Tauri's `externalBin` bundling does:
-/// a file named `onboard-engine-<target-triple>[.exe]` next to the running
-/// executable (dev: `src-tauri/binaries/`; packaged: the app's resource
-/// dir). Falls back to a plain `onboard-engine[.exe]` for local/dev runs
-/// where the triple suffix hasn't been applied yet.
+/// DEV ONLY — locates a sidecar in the coordinator's staging directory
+/// (`src-tauri/binaries/`), where `bun run stage:sidecar` leaves binaries
+/// under their full `onboard-engine-<target-triple>[.exe]` names.
+///
+/// This is **not** how a packaged app finds its sidecar, despite what this
+/// function's doc comment claimed until 2026-07-29. Tauri copies an
+/// `externalBin` **next to the main executable** with the triple suffix
+/// STRIPPED — not into a `binaries/` subdirectory, and not into the
+/// resource dir. `lib.rs` now delegates that resolution to
+/// `tauri-plugin-shell`, which gets it right; this remains only because a
+/// plain `cargo build` performs no such copy (only `tauri build` does), so
+/// a debug build has nothing beside its executable to find.
+///
+/// Gated `#[cfg(debug_assertions)]` deliberately: it resolves against the
+/// BUILD machine's source tree, which does not exist on a user's machine.
+/// While a release build could reach it, every developer machine resolved
+/// and the only configuration that failed was the one no test ran.
+#[cfg(debug_assertions)]
 pub fn resolve_sidecar_path(binaries_dir: &Path, target_triple: &str) -> Option<PathBuf> {
     let suffixed = binaries_dir.join(format!("onboard-engine-{target_triple}{EXE_SUFFIX}"));
     if suffixed.exists() {
@@ -53,9 +77,9 @@ pub fn resolve_sidecar_path(binaries_dir: &Path, target_triple: &str) -> Option<
     None
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, debug_assertions))]
 const EXE_SUFFIX: &str = ".exe";
-#[cfg(not(windows))]
+#[cfg(all(not(windows), debug_assertions))]
 const EXE_SUFFIX: &str = "";
 
 #[cfg(test)]

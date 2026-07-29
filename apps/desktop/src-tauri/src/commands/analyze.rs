@@ -1,4 +1,4 @@
-//! `analyze_repo` (Section 7.4). Validates the chosen path, enforces the
+﻿//! `analyze_repo` (Section 7.4). Validates the chosen path, enforces the
 //! "one analysis at a time" guard, forwards to the sidecar's
 //! `engine.analyze`, and records the returned `repoId -> repoRoot` mapping
 //! `read_repo_file` later needs for its confinement check.
@@ -125,7 +125,7 @@ mod tests {
 
     fn test_state() -> AppState {
         let config = SidecarConfig {
-            program: std::path::PathBuf::from("unused-in-validation-only-tests"),
+            program: Some(std::path::PathBuf::from("unused-in-validation-only-tests")),
             args: vec![],
             log_path: "C:/fake/onboard.log".to_string(),
             max_restarts: 3,
