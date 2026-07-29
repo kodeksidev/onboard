@@ -6,7 +6,67 @@ first, then verify rather than trust it: `git log --oneline -15`, `gh run list`,
 
 ---
 
-## 1. THE BLOCKING DECISION IS RESOLVED
+## 0. RESUME HERE — 2026-07-29, mid-task
+
+**Working tree clean, everything pushed to `phase13/gate-evidence`.**
+
+### The one task in flight: the e2e suite (#22, and #23's UI half)
+
+**Finding, made just before the pause and NOT yet acted on: the port race is
+already fixed.** `apps/desktop/wdio.conf.ts` already contains `leasePort()`,
+`waitForListening()` and `killAndWait()`, with a doc comment describing exactly
+the fixed-port teardown race and why serialising alone did not solve it. A
+previous session did that work.
+
+**What is stale is the record of it.** `.github/workflows/ci.yml`'s
+"Deliberately NOT wired here" block still says the harness races on fixed ports
+4444 / 9515 and is unfit as a gate. That justification no longer describes the
+file. `docs/CRITERIA_MAP.md` and the queue both inherit it.
+
+**So the open question is NOT "fix the race" — it is "does the suite pass".**
+Those are different claims and only the second is worth reporting. The suite has
+never run green anywhere.
+
+Prerequisites are ALL PRESENT on this machine, verified:
+
+| | |
+|---|---|
+| `tauri-driver` | `/c/Users/codex/.cargo/bin/tauri-driver` |
+| `msedgedriver.exe` | `apps/desktop/src-tauri/target/webdriver/` |
+| debug binary | `apps/desktop/src-tauri/target/debug/onboard.exe` |
+| scripts | `bun run --cwd apps/desktop build:e2e`, then `e2e` |
+
+Next step, exactly:
+
+```bash
+export PATH="$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+bun run --cwd "apps/desktop" build:e2e
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --bin onboard
+bun run --cwd "apps/desktop" e2e
+```
+
+Run it MORE THAN ONCE. The original defect was intermittent (two runs, "3 passed
+1 failed" each time, a different spec each time), so a single green run does not
+distinguish "fixed" from "lucky". Report whether the race was the only defect or
+whether the suite has other flakes — the owner asked for that distinction
+explicitly and only wants "the suite passes" reported when it is true.
+
+Then, if green:
+1. Correct `ci.yml`'s stale justification and wire e2e as a Windows + Linux job.
+2. Extend the release workflow's `installed` job to drive the INSTALLED app
+   (picker -> rendered graph) rather than only proving the engine analyses.
+   That converts #23's UI half on Linux from tooling-blocked to proven.
+3. Re-derive `criteria:map`. #22 may leave the CI-blocked list; the macOS smoke
+   half keeps it there unless split.
+
+### Waiting on the owner
+
+- Running the **Windows Sandbox** check on the draft release's `.msi`, including
+  whether SmartScreen's wording matches `docs/INSTALL.md`.
+
+---
+
+## 1. THE ESLINT DECISION (resolved 2026-07-29, kept for the record)
 
 The product owner chose **(D) upgrade to ESLint 10**, 2026-07-29. Recorded as an
 AMENDMENT in `docs/DECISIONS.md` (bottom of file), with the Section 4 departure
