@@ -231,6 +231,57 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  installed:
+    # Criterion 23's second half, on the platform where it is reachable today.
+    #
+    # The criteria map recorded #23 as blocked because "launching the .dmg needs
+    # a Mac". That was the wrong reason: no installer had been built ANYWHERE,
+    # because @tauri-apps/cli was never a dependency. A criterion marked blocked
+    # for reason X and actually blocked by Y is a status nobody re-examines.
+    #
+    # A fresh GitHub runner IS a clean machine — no repository checkout on the
+    # PATH, no bun, no cargo, no node_modules. So this installs the .deb the way
+    # a user would, with apt, and then asks the INSTALLED engine to analyse a
+    # real repository over the same stdio RPC the app uses. That is a stronger
+    # claim than "the process started": an app whose grammars did not ship would
+    # start fine and analyse nothing.
+    #
+    # What is NOT covered, stated so the gap is not mistaken for coverage:
+    # driving the window to a rendered graph needs the WebDriver harness, whose
+    # fixed-port race makes it unfit as a gate (see ci.yml). Criterion 23's
+    # "launch" is proven for the engine and unproven for the UI.
+    name: installed .deb launches and analyses (clean runner)
+    needs: bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (for the check script only)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download the Linux installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-ubuntu-22.04
+          path: installers
+
+      # `apt-get install ./file.deb` resolves the package's own dependencies,
+      # which `dpkg -i` does not. A user on Ubuntu gets this behaviour; a gate
+      # that used dpkg would pass while a real install failed on a missing
+      # webkit runtime.
+      - name: Install the .deb the way a user would
+        run: |
+          sudo apt-get update
+          DEB=$(find installers -name '*.deb' | head -n 1)
+          echo "installing $DEB"
+          sudo apt-get install -y "$DEB"
+
+      - name: Assert the installed app launches and analyses a repository
+        run: python scripts/installed-app-check.py
+
   publish:
     # Windows and Linux only. `release-assets-check.py` asserts that mechanically
     # rather than trusting the glob below — a `.dmg` reaching this job would
