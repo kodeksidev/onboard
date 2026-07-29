@@ -2490,3 +2490,44 @@ decided; it only records choices the spec left open.
   find the shared mutable state (tree-sitter parser instances are the first
   suspect), then either make it re-entrant or make the serialization explicit
   and asserted rather than incidental.
+- **Phase 13 follow-up — A9's "one runner cross-compiles every target" holds on
+  Linux ONLY. Phase 14's release job must produce sidecars on Linux.**
+
+  `build-sidecar.ts` cross-compiles four triples through
+  `Bun.build({ compile: { target } })`. On ubuntu-22.04 all four succeed. On
+  windows-2022 it fails, identically, on three consecutive runs:
+
+  ```
+  built onboard-engine-x86_64-pc-windows-msvc.exe     <- host target fine
+  error: Failed to extract executable for 'bun-darwin-aarch64-v1.3.14'
+  ```
+
+  Bun downloads and unpacks a per-target executable to compile against; the
+  darwin ones do not extract on a Windows runner. The Windows target itself
+  builds fine, so this is not a Bun-on-Windows problem in general.
+
+  **Where it was actually biting was avoidable.** The `rust` job built all four
+  and needed exactly one: Tauri resolves `externalBin: ["binaries/onboard-engine"]`
+  to the HOST target triple, and `stage:sidecar` fails only when ZERO binaries
+  are found. So clippy and `cargo test` on windows-2022 were being blocked by
+  three binaries they never open. That job now runs `build:sidecar --host-only`
+  and the failure disappears without moving any work.
+
+  **The claim itself is not dropped.** The four-triple build moves to
+  `engine-no-network` on ubuntu, which is now the single place A9 is exercised,
+  and `build:sidecar` fails if any of the four filenames is missing.
+
+  **Consequence for Phase 14, recorded now rather than at packaging time:**
+  the release job that produces sidecars must run on Linux. A Windows or macOS
+  release runner cannot produce the darwin binaries. If a future change needs
+  per-OS release runners for the Tauri bundles themselves (`.msi` genuinely
+  needs Windows), the sidecars must still be built once on Linux and passed
+  between jobs as artifacts — not rebuilt per runner.
+
+  **Still unproven, and not addressed by any of the above:** nothing has
+  executed a darwin sidecar on macOS. A runner PRODUCING a binary is not a
+  runner RUNNING it. `build:sidecar`'s smoke test only ever launches the HOST
+  binary, so on ubuntu the two darwin outputs are checked for existence and
+  nothing else. Criterion 23 stays not-CI-evidenced (see
+  `docs/CRITERIA_MAP.md`), and `docs/MACOS_SMOKE.md` remains the only path to
+  retiring it.

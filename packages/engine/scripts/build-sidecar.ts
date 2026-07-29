@@ -171,15 +171,44 @@ async function smokeTestHostBinary(): Promise<void> {
   );
 }
 
+/**
+ * `--host-only` builds just this platform's binary.
+ *
+ * Tauri resolves `externalBin: ["binaries/onboard-engine"]` to the HOST target
+ * triple at build time, so `cargo clippy`/`cargo test` need exactly one sidecar
+ * — the other three are dead weight in a gate job. That is not a micro-
+ * optimisation: cross-compiling the two darwin targets is what fails on
+ * windows-2022 (`Failed to extract executable for 'bun-darwin-aarch64'`), and
+ * it was failing a job that never needed those binaries.
+ *
+ * The full four-triple build is not weakened, only moved to where it works and
+ * is meaningful — see the `engine-no-network` job, which keeps it and is the
+ * standing evidence for A9's "all four triples from one runner".
+ */
+function targetsToBuild(): readonly SidecarTarget[] {
+  if (!process.argv.includes('--host-only')) {
+    return SIDECAR_TARGETS;
+  }
+  const hostName = binaryNameForHost();
+  const host = SIDECAR_TARGETS.filter((target) => target.outfileName === hostName);
+  if (host.length !== 1) {
+    // Refuse rather than build nothing: an unmatched host means the triple
+    // table and `binaryNameForHost` have drifted apart.
+    throw new Error(`build-sidecar: --host-only matched ${String(host.length)} targets for ${hostName}`);
+  }
+  return host;
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
   const buildHash = await computeBuildHash();
   console.log(`build hash: ${buildHash}`);
+  const targets = targetsToBuild();
   // Sequential by design: clear per-target progress output, one target at a time.
-  for (const target of SIDECAR_TARGETS) {
+  for (const target of targets) {
     await buildOne(target, buildHash);
   }
-  console.log(`all ${String(SIDECAR_TARGETS.length)} sidecar binaries written to ${OUT_DIR}`);
+  console.log(`${String(targets.length)} of ${String(SIDECAR_TARGETS.length)} sidecar binaries written to ${OUT_DIR}`);
   await smokeTestHostBinary();
 }
 
