@@ -32,7 +32,8 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 PACKAGE_JSON = REPO_ROOT / "package.json"
 
 INTERPRETER = re.compile(r"\bpython[0-9.]*\b")
-BUN_RUN = re.compile(r"\bbun\s+run\s+(?:--cwd\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s+)?([\w:.-]+)")
+BUN_RUN = re.compile(r"\bbun\s+run\b")
+TOKEN = re.compile(r"[\w:@./-]+")
 SETUP_PYTHON = re.compile(r"uses:\s*actions/setup-python@")
 RUN_KEY = re.compile(r"^\s*-?\s*run:\s*(.*)$")
 
@@ -44,8 +45,26 @@ def is_comment(line: str) -> bool:
     return line.lstrip().startswith("#")
 
 
+def referenced_scripts(command: str, script_names: set[str]) -> set[str]:
+    """Package scripts a `bun run` command reaches.
+
+    Every token is considered, not just the one directly after `bun run`, so a
+    chain named as an ARGUMENT is still seen — `verify:report` runs
+    `run-verify-stages.ts verify`, and matching only the first token would lose
+    `verify` and with it every Python gate underneath it.
+
+    Deliberately over-approximating: a false positive costs a job an unneeded
+    `setup-python` step, a false negative costs a job its interpreter at run
+    time. Only the second is a failure.
+    """
+    if not BUN_RUN.search(command):
+        return set()
+    return {token for token in TOKEN.findall(command) if token in script_names}
+
+
 def scripts_needing_python(scripts: dict[str, str]) -> set[str]:
     """Close the `bun run` call graph over scripts that invoke an interpreter."""
+    names = set(scripts)
     needs = {name for name, body in scripts.items() if INTERPRETER.search(body)}
     changed = True
     while changed:
@@ -53,7 +72,7 @@ def scripts_needing_python(scripts: dict[str, str]) -> set[str]:
         for name, body in scripts.items():
             if name in needs:
                 continue
-            if any(callee in needs for callee in BUN_RUN.findall(body)):
+            if referenced_scripts(body, names) & needs:
                 needs.add(name)
                 changed = True
     return needs
@@ -111,11 +130,11 @@ def command_lines(body: list[str]) -> list[str]:
     return commands
 
 
-def job_reaches_python(body: list[str], needs: set[str]) -> bool:
+def job_reaches_python(body: list[str], needs: set[str], names: set[str]) -> bool:
     for command in command_lines(body):
         if INTERPRETER.search(command):
             return True
-        if any(name in needs for name in BUN_RUN.findall(command)):
+        if referenced_scripts(command, names) & needs:
             return True
     return False
 
@@ -124,14 +143,14 @@ def job_sets_up_python(body: list[str]) -> bool:
     return any(SETUP_PYTHON.search(line) for line in body if not is_comment(line))
 
 
-def self_test(needs: set[str]) -> str | None:
+def self_test(needs: set[str], names: set[str]) -> str | None:
     """Prove the detector fires on a job that reaches Python without setting it up."""
     sample = next(iter(sorted(needs)))
     unguarded = f"jobs:\n  demo:\n    steps:\n      - run: bun run {sample}\n"
     jobs = split_jobs(unguarded)
     if "demo" not in jobs:
         return "job splitter did not find a job"
-    if not job_reaches_python(jobs["demo"], needs):
+    if not job_reaches_python(jobs["demo"], needs, names):
         return f"detector missed `bun run {sample}`"
     if job_sets_up_python(jobs["demo"]):
         return "detector claimed a missing setup-python step exists"
@@ -140,8 +159,14 @@ def self_test(needs: set[str]) -> str | None:
     if not job_sets_up_python(split_jobs(guarded)["demo"]):
         return "detector missed a present setup-python step"
 
+    # A chain named as an ARGUMENT, which is how `verify:report` reaches the
+    # Python gates. Matching only the token after `bun run` loses this.
+    as_argument = f"jobs:\n  demo:\n    steps:\n      - run: bun run runner.ts {sample}\n"
+    if not job_reaches_python(split_jobs(as_argument)["demo"], needs, names):
+        return f"detector missed `{sample}` passed as an argument"
+
     unrelated = "jobs:\n  demo:\n    steps:\n      - run: bun run build:sidecar\n"
-    if job_reaches_python(split_jobs(unrelated)["demo"], needs):
+    if job_reaches_python(split_jobs(unrelated)["demo"], needs, names):
         return "detector flagged a job that reaches no Python gate"
 
     return None
@@ -149,6 +174,7 @@ def self_test(needs: set[str]) -> str | None:
 
 def main() -> int:
     scripts = json.loads(PACKAGE_JSON.read_text(encoding="utf-8")).get("scripts", {})
+    names = set(scripts)
     needs = scripts_needing_python(scripts)
 
     # Derivation that finds nothing is broken, not clean: `docs:check` invokes
@@ -161,7 +187,7 @@ def main() -> int:
         )
         return 1
 
-    failure = self_test(needs)
+    failure = self_test(needs, names)
     if failure:
         print(f"REFUSING: self-test failed — {failure}", file=sys.stderr)
         return 1
@@ -176,7 +202,7 @@ def main() -> int:
     for path in workflows:
         rel = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
         for job_id, body in split_jobs(path.read_text(encoding="utf-8")).items():
-            if not job_reaches_python(body, needs):
+            if not job_reaches_python(body, needs, names):
                 continue
             reaching += 1
             if not job_sets_up_python(body):
