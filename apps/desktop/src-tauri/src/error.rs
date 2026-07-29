@@ -392,6 +392,21 @@ impl AppError {
     /// citation (`path:line`), not just the path — the line is the part
     /// that failed, so hiding it would make the message unactionable.
     pub fn ai_citation_line_out_of_range(path: &str, line: u64, real_line_count: u64) -> Self {
+        Self::ai_citation_line_out_of_range_text(path, &line.to_string(), real_line_count)
+    }
+
+    /// Same refusal, for a line number that does not fit in a `u64` at all.
+    ///
+    /// The citation regex captures `(\d+)`, so a digit run longer than `u64`
+    /// can hold still MATCHES — it just cannot be parsed. Collapsing that to
+    /// `None` skipped the range check and let the citation through, which is
+    /// why this takes the raw text rather than a number: the refusal must be
+    /// able to name what the model actually wrote.
+    pub fn ai_citation_line_out_of_range_text(
+        path: &str,
+        line: &str,
+        real_line_count: u64,
+    ) -> Self {
         Self::new(
             AppErrorCode::EAiCitationRejected,
             format!(

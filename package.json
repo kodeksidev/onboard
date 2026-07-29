@@ -32,7 +32,8 @@
     "verify:report": "bun run scripts/run-verify-stages.ts verify",
     "verify:report:js": "bun run scripts/run-verify-stages.ts verify:js",
     "ci:check-verify-coverage": "python scripts/ci-verify-coverage-check.py",
-    "engine:check-globals": "python scripts/engine-globals-scan.py"
+    "engine:check-globals": "python scripts/engine-globals-scan.py",
+    "guards:scan": "python scripts/guard-disposition-scan.py"
   },
   "overrides": {
     "brace-expansion": ">=5.0.8",

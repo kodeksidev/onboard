@@ -120,7 +120,15 @@ EVIDENCE: dict[int, Evidence] = {
             ("docs/V2_BACKLOG.md", ("v2",)),
         ),
     ),
-    26: Evidence(None, "manual", "PARTIAL by the audit's own §6 until a fail-open-aware re-audit is written", blocker="authoring"),
+    26: Evidence(
+        None,
+        "artifact",
+        "guard-disposition sweep done; every fail-open found got a fix or a failing test",
+        requires=(
+            ("docs/KNOWN_ISSUES.md", ("fail-open", "disposition", "severity")),
+            ("docs/SECURITY_AUDIT.md", ("what was examined",)),
+        ),
+    ),
     27: Evidence(VERIFY, "ci", "lint + lint:check-rules-fire, inside verify; clippy in the Rust job"),
     28: Evidence(None, "no-gate", "conventional-commit linting is not wired", blocker="tooling"),
 }

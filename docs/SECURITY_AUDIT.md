@@ -576,8 +576,21 @@ precedent: never send a partially validated set), and `ai::snippets::fetch` trea
 `returned.len() != requested.len()` as an error so a future silent drop anywhere
 upstream fails at the boundary instead of laundering into a smaller number.
 
-**Acceptance criterion 26 remains PARTIAL** until a re-audit is performed with a method
-that can see fail-open behaviour.
+**Acceptance criterion 26 was PARTIAL** until a re-audit was performed with a method
+that can see fail-open behaviour. That sweep is now done — `docs/KNOWN_ISSUES.md`,
+derived by `scripts/guard-disposition-scan.py` over 285 absorbing sites in 181 files.
+
+It found two further fail-opens, both on security boundaries, and both are FIXED with
+a test that fails against the old code: a cited line number too large for `u64`
+bypassed the citation range check entirely (KI-1), and the no-network module poison
+was reversible by plain assignment while `fetch` was not (KI-2).
+
+Two limits of that sweep bound what this criterion can now claim. It scans OUR code,
+and both of this project's `Parser.init()` defects degraded inside a dependency — so
+`web-tree-sitter` and `bun:sqlite`, the two Section 4 names whose failure modes reach
+our results, are covered only by assertions on output, never by the scan. And ~280 of
+the 285 sites were classified rather than individually reviewed; the triage went to
+the sites matching INV-3's shape on privacy, AI, secrets, RPC, walk and cache paths.
 
 ---
 
