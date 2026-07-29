@@ -275,7 +275,14 @@ jobs:
       - name: Install the .deb the way a user would
         run: |
           sudo apt-get update
-          DEB=$(find installers -name '*.deb' | head -n 1)
+          # ABSOLUTE path. `apt-get install foo/bar.deb` treats the argument as a
+          # PACKAGE NAME unless it starts with `./` or `/`, and fails with exit
+          # 100 — which reads like an unmet dependency and is a path bug.
+          DEB=$(find "$PWD/installers" -name '*.deb' | head -n 1)
+          if [ -z "$DEB" ]; then
+            echo "no .deb found in the downloaded artifact" >&2
+            exit 1
+          fi
           echo "installing $DEB"
           sudo apt-get install -y "$DEB"
 
