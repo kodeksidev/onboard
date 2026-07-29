@@ -207,12 +207,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/**/*.msi
-            apps/desktop/src-tauri/target/release/bundle/**/*.exe
-            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
-            apps/desktop/src-tauri/target/release/bundle/**/*.deb
-            apps/desktop/src-tauri/target/release/bundle/**/*.dmg
+          # An extension list here is a SECOND place that decides what ships,
+          # and it silently disagreed with the first: the matrix asked for
+          # `deb,rpm`, Tauri built both, and this glob had no `*.rpm` — so the
+          # dry run staged three assets while the docs promised four. Nothing
+          # failed; the format just was not there.
+          #
+          # `release:check-assets` could not catch it either: it validates what
+          # ARRIVES, and an asset that was never uploaded arrives as nothing.
+          #
+          # So this now uploads whatever the bundler produced and lets the
+          # classifier be the single place that decides. An unrecognised
+          # extension fails there by name rather than vanishing here.
+          path: apps/desktop/src-tauri/target/release/bundle/**/*.*
           retention-days: 7
           if-no-files-found: error
 
