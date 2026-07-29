@@ -166,21 +166,21 @@ believed without qualification.
 line in a document, and by this sweep's own argument that is a description, not
 a defence. It is listed as accepted so the distinction stays visible.
 
-### KI-8 — the `brace-expansion` override breaks a second tool, and this is a pattern
+### KI-8 — the `brace-expansion` override breaks consumer after consumer; fixed by overriding `minimatch` instead
 
 | | |
 |---|---|
-| **Severity** | LOW (blocks a gate, not the product) |
-| **Criterion** | 10 (coverage thresholds) |
-| **Blocks** | **a README line** |
+| **Severity** | LOW (blocks gates, not the product) |
+| **Criterion** | 10 (coverage thresholds), 22 (E2E suite) |
+| **Blocks** | nothing, as of 2026-07-29 |
 | **Family** | dependency override with unscopeable blast radius |
-| **Disposition** | **ACCEPTED** — criterion 10 stays documented; the mechanism is recorded here so a third occurrence is recognisable |
+| **Disposition** | **RESOLVED** — `"minimatch": ">=10.2.5"` added alongside the existing override; all three occurrences clear at once and the advisory stays closed |
 
 `"overrides": { "brace-expansion": ">=5.0.8" }` closes GHSA-mh99-v99m-4gvg by
 forcing one patched copy across the whole tree. v5 changed the package's export
-shape, so **every consumer written against the v1/v2 CJS default import breaks**.
+shape, so **every consumer written against the v1/v2 default import breaks**.
 
-This has now happened twice:
+This happened three times:
 
 1. **ESLint 9** — `@eslint/config-array` → `minimatch@3` →
    `TypeError: expand is not a function`. Resolved by upgrading to ESLint 10,
@@ -188,22 +188,61 @@ This has now happened twice:
    `docs/DECISIONS.md`.
 2. **`@vitest/coverage-v8@3.2.7`** — `TypeError: (0 ,
    brace_expansion_1.default) is not a function` at
-   `V8CoverageProvider.getUntestedFiles`. Note that `test-exclude@7.0.2` already
-   requires `minimatch@^10.2.2`, so the transitive chain is fine; the break is
-   in coverage-v8's own bundled require. **UI coverage cannot run at all**,
-   which is why criterion 10 is unwired for that package.
+   `V8CoverageProvider.getUntestedFiles`. **UI coverage cannot run at all**,
+   which is why criterion 10 was unwired for that package.
+3. **`@wdio/cli@9.20.1`** — `SyntaxError: The requested module
+   'brace-expansion' does not provide an export named 'default'`, thrown while
+   loading `minimatch@9.0.9`'s **ESM** build. The E2E suite could not start at
+   all, so criterion 22 was unmeasurable. Note the asymmetry that hid this:
+   minimatch's **CJS** build survives v5 (verified — it returns correct
+   results), so only ESM consumers break. Nothing in `verify` loads that path.
 
-Clearing the second needs `@vitest/coverage-v8@4.x`, which needs **vitest 4.x**
-— a major test-framework upgrade wanting `vite ^6/7/8` — or a scoped override
-exception that reopens the advisory in a dev-only path. Neither is cheap, and
-coverage was **measured before wiring** rather than assumed: engine 97.98%
-lines with every 90%-required file above 90%, contract 99.36%. The numbers are
-strong where they can be produced.
+**The fix — override the intermediary, not the leaf.** `minimatch@10` is
+written against brace-expansion 5's *named* `expand` export, which is exactly
+the incompatibility. Overriding `minimatch` to `>=10.2.5` collapses the tree to
+one copy of each, compatibly:
 
-**The pattern, stated so a third instance is not read as unrelated:** an
-advisory whose only patched version is a new major, forced tree-wide by an
-override, will keep breaking consumers pinned to the old API — one at a time, as
-each is next exercised. Each break looks like an unrelated tool bug. It is not.
+```json
+"overrides": {
+  "minimatch": ">=10.2.5",
+  "brace-expansion": ">=5.0.8"
+}
+```
+
+This works because the toolchain had already moved: `eslint@10.8.0`,
+`@eslint/config-array`, `@typescript-eslint/typescript-estree` and
+`test-exclude@7.0.2` all already declare `^10.2.x`. The override only drags the
+stragglers forward — `glob@10.5.0` (`^9.0.4`), `mocha` (`^5.1.6`),
+`mocha/glob@8.1.0`, `filelist`, `readdir-glob`, and `recursive-readdir`
+(`^3.0.5`, a seven-major jump). All six sit in dev-only tooling paths
+(`create-wdio` scaffolding, `jake`, `archiver`).
+
+Measured on this configuration, not assumed:
+
+| check | result |
+|---|---|
+| `bun audit` | No vulnerabilities found |
+| `bun run verify:js` | exit 0 — 60 test files, 379 tests |
+| `bun run --cwd apps/desktop e2e` | 4 specs / 7 tests green |
+| `bun run --cwd apps/desktop test --coverage` | exit 0 — was exit 1 at HEAD with the `brace_expansion_1.default` TypeError, measured in both directions |
+
+**Correction to this entry's own earlier analysis.** It previously offered "a
+scoped override exception that reopens the advisory in a dev-only path" as an
+option. **That option does not exist in bun 1.3.14.** Scoped overrides are
+silently ignored — tested three ways: npm-style nested
+(`"minimatch": { "brace-expansion": ... }`), yarn-style path-keyed
+(`"resolutions": { "minimatch/brace-expansion": ... }`), and path-keyed with the
+flat override removed so the rule had to act alone. All three no-op with no
+warning and exit 0. A scoping rule that silently does nothing is its own hazard:
+it reads, in a diff, exactly like a rule that works.
+
+**The pattern, restated now that it has a fix:** an advisory whose only patched
+version is a new major, forced tree-wide by an override, will keep breaking
+consumers pinned to the old API — one at a time, as each is next exercised. Each
+break looks like an unrelated tool bug. It is not. Where the breakage is
+mediated by a single intermediary package that has itself already adopted the
+new major, override *that* package instead of the leaf, and every consumer moves
+together.
 
 ### KI-9 — the Linux `.AppImage` does not build; `.deb` and `.rpm` ship instead
 
