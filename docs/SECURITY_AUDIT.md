@@ -504,6 +504,30 @@ claim about what exists.**
 That sentence is added because a real fail-open was found afterwards, in a method this
 audit had inspected twice.
 
+### The evidence behind every figure in this document is also narrower than it looks
+
+**Every green run in this project before 2026-07-28 — every `verify` exit 0, every
+coverage figure, every test count, including the ones cited in this audit — executed
+against a `node_modules` that no clean checkout reproduces.** Those results are not
+known to be wrong. They are *unverified*: nothing has yet re-derived them on a tree
+that a fresh checkout actually produces.
+
+The cause is mundane and was invisible from inside the machine that had it. A stale
+local install carried `brace-expansion@1.1.16` and `@2.1.2` alongside `@5.0.8`, so
+`minimatch@3` resolved to a compatible copy here and to the incompatible v5 on every
+clean install — the divergence that GHSA-mh99-v99m-4gvg's override introduces
+everywhere else. `bun install` is permitted to resolve differently from `bun.lock` and
+rewrite it in place, so CI reproduced the same class of drift rather than catching it.
+Wiping `node_modules` and reinstalling from the frozen lockfile changed nothing else
+about the tree.
+
+This is the same defect as INV-3 one level out: the checks ran, reported, and were
+believed, and no one asked what they were running *against*. The durable half of the
+fix is `--frozen-lockfile` at every workflow install site, enforced by
+`scripts/ci-install-check.py` over a derived scope so a new job cannot reintroduce it.
+The remaining half is a green run: **until `verify` completes on a frozen clean
+install, treat every figure in this document as attested but not reproduced.**
+
 ### INV-3, and how it was missed
 
 `engine.snippets` silently discarded any path that failed repo containment. This audit
