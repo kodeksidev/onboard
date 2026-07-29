@@ -10,7 +10,7 @@
     "apps/*"
   ],
   "scripts": {
-    "verify": "bun run typecheck && bun run lint && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run test",
+    "verify": "bun run typecheck && bun run lint && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run test",
     "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
     "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
     "fixture:emit": "bun run --cwd \"packages/contract\" fixture:emit",
@@ -21,7 +21,8 @@
     "format": "prettier --write .",
     "test": "bun run --cwd \"packages/contract\" test && bun run --cwd \"packages/engine\" test && bun run --cwd \"apps/desktop\" test",
     "docs:check": "python scripts/docs-check.py",
-    "ci:check-installs": "python scripts/ci-install-check.py"
+    "ci:check-installs": "python scripts/ci-install-check.py",
+    "ci:check-python": "python scripts/ci-python-check.py"
   },
   "overrides": {
     "brace-expansion": ">=5.0.8",
