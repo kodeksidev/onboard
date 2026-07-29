@@ -98,14 +98,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Bundle formats are named per OS rather than left to Tauri's default
+          # "everything this platform can make", because one of those formats
+          # does not build here. `.deb` and `.rpm` bundle cleanly; `.AppImage`
+          # fails on `linuxdeploy` even with libfuse2 installed and
+          # APPIMAGE_EXTRACT_AND_RUN set. Section 13 #23 names `.AppImage`, so
+          # dropping it is a recorded gap (docs/KNOWN_ISSUES.md), not a silent
+          # narrowing — and shipping a format that has never been produced is
+          # exactly what this release is avoiding for macOS.
           - os: ubuntu-22.04
             publish: true
+            bundles: deb,rpm
           - os: windows-2022
             publish: true
+            bundles: nsis,msi
           # Built so it exists for MACOS_SMOKE.md; `publish: false` keeps it out
           # of the release. See the header.
           - os: macos-14
             publish: false
+            bundles: dmg,app
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -190,7 +201,7 @@ jobs:
           # fails after the full Rust compile — the most expensive place to
           # discover a missing dependency.
           APPIMAGE_EXTRACT_AND_RUN: '1'
-        run: bun run bundle
+        run: bun run bundle -- --bundles ${{ matrix.bundles }}
 
       - name: Upload the installers
         uses: actions/upload-artifact@v4

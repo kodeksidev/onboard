@@ -53,7 +53,8 @@ it on macOS, Windows and Ubuntu on every push.
 ## Install
 
 **Windows and Linux only in the first release. macOS is built but not
-published.**
+published.** Linux ships as `.deb` and `.rpm`; the `.AppImage` does not build
+(KNOWN_ISSUES KI-9).
 
 The macOS build compiles and its artefact is verified for format and
 architecture, but **no macOS build has ever been executed on a Mac** — the
