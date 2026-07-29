@@ -115,18 +115,23 @@ them too.
 
 ## Linux
 
-Artefacts: `onboard_0.1.0_amd64.AppImage` or `onboard_0.1.0_amd64.deb`.
+Artefacts: `Onboard_0.1.0_amd64.deb` or `Onboard-0.1.0-1.x86_64.rpm`.
+
+**There is no `.AppImage` in the first release.** Tauri builds it through
+`linuxdeploy`, which fails on our CI runners even with FUSE available; `.deb`
+and `.rpm` build cleanly in the same run. Shipping a format that has never been
+produced is what the macOS hold exists to prevent, and the same rule applies
+here. See `KNOWN_ISSUES.md` KI-9.
 
 Linux has no equivalent gatekeeper, so there is nothing to bypass.
 
 ```bash
-# AppImage
-chmod +x onboard_0.1.0_amd64.AppImage
-./onboard_0.1.0_amd64.AppImage
-
 # Debian / Ubuntu
-sudo dpkg -i onboard_0.1.0_amd64.deb
+sudo dpkg -i Onboard_0.1.0_amd64.deb
 sudo apt-get install -f     # only if dependencies are missing
+
+# Fedora / RHEL
+sudo rpm -i Onboard-0.1.0-1.x86_64.rpm
 ```
 
 Onboard needs a Secret Service provider (GNOME Keyring, KWallet) to store an AI
@@ -137,7 +142,7 @@ keychain at all.
 
 ### Removing it
 
-Delete the AppImage, or `sudo apt-get remove onboard`. Cache and settings live
+Run `sudo apt-get remove onboard` or `sudo rpm -e Onboard`. Cache and settings live
 under `~/.local/share/onboard/` and `~/.config/onboard/`.
 
 ---

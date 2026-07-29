@@ -205,6 +205,63 @@ advisory whose only patched version is a new major, forced tree-wide by an
 override, will keep breaking consumers pinned to the old API — one at a time, as
 each is next exercised. Each break looks like an unrelated tool bug. It is not.
 
+### KI-9 — the Linux `.AppImage` does not build; `.deb` and `.rpm` ship instead
+
+| | |
+|---|---|
+| **Severity** | MEDIUM |
+| **Criterion** | 23 (installers on all three platforms) |
+| **Blocks** | **a README line** |
+| **Family** | build gap, found by running the release workflow |
+| **Disposition** | **ACCEPTED** for the first release, enforced by the format list |
+
+Found by the release dry run — the workflow's first real execution, which also
+found that this project had no Tauri CLI at all (KI-10).
+
+Tauri's AppImage step shells out to `linuxdeploy`, which is itself an AppImage
+and mounts via FUSE. On a GitHub runner it fails:
+
+```
+Bundling Onboard_0.1.0_amd64.AppImage
+failed to bundle project `failed to run linuxdeploy`
+```
+
+Installing `libfuse2` **and** setting `APPIMAGE_EXTRACT_AND_RUN=1` did not clear
+it — measured, both applied, same failure. `.deb` and `.rpm` bundle cleanly in
+the same run, so this is specific to the AppImage path.
+
+Section 13 #23 names `.AppImage` explicitly, so this is a criterion-23 gap. The
+first release ships `.deb` and `.rpm`, and the workflow now names bundle formats
+per OS rather than accepting Tauri's default of "everything this platform can
+make" — so the narrowing is a list someone has to edit, not something that
+happens quietly. **Shipping a format that has never been produced is exactly
+what the macOS hold exists to prevent; the same rule applies here.**
+
+### KI-10 — the project had no way to build an installer at all
+
+| | |
+|---|---|
+| **Severity** | HIGH at the time; now resolved |
+| **Criterion** | 23 |
+| **Blocks** | nothing now |
+| **Family** | unproven claim, found by running the thing |
+| **Disposition** | **FIXED** |
+
+`@tauri-apps/cli` was never a dependency — only `@tauri-apps/api`, the JS API.
+There was no `tauri` executable in the workspace and no bundle script.
+`bunx tauri build` answered *"could not determine executable to run for package
+tauri"*.
+
+So criterion 23 was not merely unlaunched: **no installer had ever been built.**
+Every Rust gate to date compiled the binary with cargo and stopped; Tauri's
+bundling half had never run. Both halves of "installers build and launch" were
+unproven and only the second was written down.
+
+Recorded because of what it says about the other unproven claims: this one
+survived a full week of gate work, a criteria map, and a documented ship
+decision. It was found the moment something ran the workflow instead of reading
+it.
+
 ### KI-5 — `Settings` falls back to defaults on any read or parse error
 
 | | |
