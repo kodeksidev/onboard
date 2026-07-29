@@ -285,8 +285,18 @@ jobs:
       # `-<target-triple>` filenames is missing.
       # Two steps rather than one `&&` chain, so the two OSes' default shells
       # (bash on Linux, pwsh on Windows) never have to agree on an operator.
-      - name: Build the engine sidecar (precondition 1a)
-        run: bun run build:sidecar
+      # `--host-only`. Tauri resolves `externalBin: ["binaries/onboard-engine"]`
+      # to the HOST target triple, and `stage:sidecar` fails only on ZERO
+      # binaries — so clippy and `cargo test` here have only ever needed one of
+      # the four. Building the other three was doing nothing for this job, and
+      # cross-compiling the two darwin targets is exactly what failed on
+      # windows-2022, three runs running. Restricting the job to what it uses
+      # removes the failure without relocating any work.
+      #
+      # The four-triple build is NOT dropped: `engine-no-network` below keeps it
+      # on ubuntu, where it succeeds, and is the standing evidence for A9.
+      - name: Build the engine sidecar for this host (precondition 1a)
+        run: bun run build:sidecar --host-only
 
       - name: Stage the sidecar into the Tauri shell (precondition 1b)
         run: bun run stage:sidecar
@@ -417,7 +427,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build the sidecar binaries
+      # All FOUR triples, deliberately, and this job is now the only place that
+      # happens. It doubles as A9's evidence — "one runner cross-compiles every
+      # target" — which holds on Linux and does NOT hold on Windows, where
+      # extracting the darwin bun executables fails. `build:sidecar` fails if any
+      # of the four `-<target-triple>` filenames is missing, so the claim is
+      # asserted here rather than assumed at release time.
+      - name: Build all four sidecar triples (also A9's cross-compile evidence)
         run: bun run build:sidecar
 
       - name: verify:no-network (bundle scan + sandboxed fixture analysis)

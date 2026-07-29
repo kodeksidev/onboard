@@ -94,27 +94,48 @@ that and have not each been re-derived.
 
 ---
 
-## 5. QUEUED WORK, in order
+## 5. QUEUED WORK — derived 2026-07-29
 
-Items 1–5 of the previous queue are done: the override decision,
-`--frozen-lockfile`, the override fix, the `SECURITY_AUDIT.md` sentence, and CI
-stage aggregation. What remains:
+The criteria half of this queue is DERIVED from `docs/CRITERIA_MAP.md`,
+which is itself generated (`bun run criteria:map`) and drift-checked inside
+`verify`. Do not hand-edit either. Re-run the generator after any CI change
+and this list follows.
 
-1. **The darwin cross-compile failure** (section 3) — the only red job.
-2. M6 (transcript bound/rotation — reuse `util::logging`'s RotatingLogger;
+**9 of 28 acceptance criteria are not evidenced by CI today**, grouped by why:
+
+- **CI-BLOCKED — gate exists, not wired** — #11 (bench: wall-clock budgets, deliberately off shared runners); #22 (e2e: wdio fixed-port race makes it unfit as a per-push gate); #23 (installers: no release job yet; see the darwin cross-compile entry)
+- **MANUAL** — #12 (10s cold-open on a fresh 1,000-file repo, with UI); #26 (audit is PARTIAL by its own §6 until a fail-open-aware re-audit)
+- **NO GATE** — #10 (coverage thresholds are not enforced anywhere); #28 (conventional-commit linting is not wired)
+- **NOT MET — missing README.md** — #25 (docs)
+- **NOT MET — missing docs/INSTALL.md, docs/SIGNING.md** — #24 (docs)
+
+Work items that are not criteria, in order:
+
+1. **Documentation criteria #24 and #25 are simply NOT MET** — `README.md`,
+   `docs/INSTALL.md` and `docs/SIGNING.md` do not exist. Cheapest items on
+   this list and they block two criteria outright.
+2. **`analyze()` is not concurrency-safe** (DECISIONS.md). Unreachable today
+   only because `rpc/server.ts` serializes requests. Find the shared mutable
+   state — tree-sitter parser instances first — then either make it
+   re-entrant or make the serialization explicit and asserted.
+3. **Coverage thresholds (#10) are enforced nowhere.** The only criterion with
+   no gate at all rather than an unwired one.
+4. **Conventional-commit linting (#28)** — same, and cheap.
+5. **`wdio.conf.ts` fixed-port race** — blocks #22. Allocate a free port per
+   session, or poll until the driver's port accepts, before `newSession`.
+6. M6 (transcript bound/rotation — reuse `util::logging`'s RotatingLogger;
    **the transcript is not a log**, prefer a bound with a visible notice plus
    the Settings clear button over silent deletion).
-3. The Windows DACL (verify-only, `windows-sys` 0.61 authorised). Note the
+7. The Windows DACL (verify-only, `windows-sys` 0.61 authorised). Note the
    DECISIONS amendment that removed every `unsafe` from the crate: this work
    introduces the FIRST one, not the fourth.
-4. INV-2 / INV-4 / INV-5 / INV-6 / INV-7..INV-11.
-5. The guard-disposition sweep into `KNOWN_ISSUES.md` (the file does not exist
+8. INV-2 / INV-4 / INV-5 / INV-6 / INV-7..INV-11.
+9. The guard-disposition sweep into `KNOWN_ISSUES.md` (the file does not exist
    yet; `SECURITY_AUDIT.md` §6 forward-references it).
-6. The ~28 unread DECISIONS entries, and the DECISIONS.md restructure
-   (RECORDS / AMENDMENTS / INVALIDATES / CROSS-DOMAIN).
+10. The ~28 unread DECISIONS entries, and the DECISIONS.md restructure
+    (RECORDS / AMENDMENTS / INVALIDATES / CROSS-DOMAIN).
 
 ---
-
 ## 6. PRE-REGISTERED PREDICTION — RESOLVED
 
 `docs/CI_PREREGISTRATION.md` now carries its own resolution section. Summary:
