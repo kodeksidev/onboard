@@ -148,6 +148,13 @@ const REVIEWED_DOORS: &[(&str, &str)] = &[
     // `Command::new` is the entry that actually covers it — as
     // `every_reviewed_door_still_exists_in_the_real_crate` insists.
     ("sidecar/spawn.rs", "Command::new"),
+    // `lib.rs` names `std::process::Command` only as the target of
+    // `From<tauri_plugin_shell::process::Command>`, to read the sidecar path
+    // the plugin resolved (`.get_program()`). It never calls `.spawn()` —
+    // spawning stays the single door in `sidecar/spawn.rs` above. Reviewed
+    // as a door anyway because the type is genuinely process-capable, and a
+    // future edit could add the `.spawn()` this comment says is absent.
+    ("lib.rs", "std::process::Command"),
     ("ai/anthropic.rs", "std::net::"),
     ("ai/anthropic.rs", "TcpListener::"),
     ("ai/ollama.rs", "std::net::"),

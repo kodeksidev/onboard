@@ -2700,3 +2700,45 @@ decided; it only records choices the spec left open.
   **Consequence for criterion 23:** its text is now "`.deb` + `.rpm`" on Linux.
   The `.AppImage` returns to scope if the `linuxdeploy` failure is resolved, at
   which point this amendment is superseded rather than deleted.
+
+- **AMENDMENT — Section 10 gains an `E_ENGINE_NOT_STARTED` row; the engine
+  failing to START is not the engine CRASHING.**
+
+  Section 10's error table had rows for a sidecar that dies mid-analysis
+  (`E_ENGINE_CRASHED`) and one that hangs (`E_ENGINE_TIMEOUT`), but none for a
+  sidecar that was never spawned at all. `spawn_sidecar` therefore reported the
+  nearest available code, and the v0.1.0 Windows `.msi` shipped this to a user
+  on a clean machine:
+
+  ```
+  Analysis stopped unexpectedly
+  Failed to start the analysis engine process: The system cannot find the
+  path specified. (os error 3)
+  ```
+
+  Two defects in one string. The **code is false**, not merely imprecise: it
+  points the reader at a crash log for a process that never existed, and at a
+  Retry that cannot help, because the install is broken rather than the run.
+  And the **body is a raw OS error**, which Section 12 forbids — OS strings
+  belong in `detail`, behind the Details disclosure.
+
+  The new row's copy, frozen here and asserted byte-exact in both
+  `copy/messages.test.ts` and `error.rs`:
+
+  > **Onboard could not start its analysis engine**
+  > The analysis engine is missing from this installation, so nothing was
+  > analyzed. Reinstalling Onboard should restore it. The log is at {logPath}.
+
+  It deliberately offers no Retry framing, which is the substantive difference
+  from `E_ENGINE_CRASHED` rather than a stylistic one.
+
+  **Why this is an AMENDMENT and not just a KNOWN_ISSUES line.** The packaging
+  bug that produced it is a defect and belongs there. That Section 10's table
+  was *missing a state the product can actually be in* is a spec gap, and the
+  new code is a departure from the frozen table. A reader checking criterion 19
+  against the spec needs to find the row.
+
+  **Consequence:** `SidecarConfig::program` became `Option<PathBuf>` so
+  "unresolved" is representable. The previous code constructed a path that
+  existed nowhere and let the OS explain it — which is how the raw string
+  reached the UI in the first place.

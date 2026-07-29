@@ -1,4 +1,4 @@
-//! `commands/ai.rs` — Section 7.4's `test_ai_key` (Phase 12 step 5) plus
+﻿//! `commands/ai.rs` — Section 7.4's `test_ai_key` (Phase 12 step 5) plus
 //! the three AI features (`ai_project_summary`, `ai_explain_module`,
 //! `ai_ask`, Phase 12 step 6).
 //!
@@ -860,7 +860,7 @@ mod tests {
         let temp_log = tempfile::tempdir().unwrap();
         let state = AppState {
             supervisor: SidecarSupervisor::new(SidecarConfig {
-                program: stub_sidecar_path(),
+                program: Some(stub_sidecar_path()),
                 args: stub_args,
                 log_path: temp_log
                     .path()

@@ -21,7 +21,12 @@ use crate::sidecar::rpc::{RpcConnection, RpcError};
 use crate::sidecar::spawn::{spawn_sidecar, SpawnedChild};
 
 pub struct SidecarConfig {
-    pub program: PathBuf,
+    /// `None` when the engine binary could not be located at startup —
+    /// a missing or damaged installation. Modelled as an absent value
+    /// rather than a constructed placeholder path so the failure surfaces
+    /// as `E_ENGINE_NOT_STARTED` at the first call, instead of as whatever
+    /// the OS says about a path that was never meant to exist.
+    pub program: Option<PathBuf>,
     pub args: Vec<String>,
     /// Path shown in `E_ENGINE_CRASHED`'s detail copy (Section 10).
     pub log_path: String,
@@ -92,7 +97,12 @@ impl SidecarSupervisor {
         if state.live.is_some() {
             return Ok(());
         }
-        let mut spawned = spawn_sidecar(&self.config.program, &self.config.args)?;
+        let program = self
+            .config
+            .program
+            .as_ref()
+            .ok_or_else(|| AppError::engine_not_started(&self.config.log_path))?;
+        let mut spawned = spawn_sidecar(program, &self.config.args, &self.config.log_path)?;
         let stdin = spawned.child.stdin.take().expect("stdin was piped");
         let stdout = spawned.child.stdout.take().expect("stdout was piped");
         let connection =

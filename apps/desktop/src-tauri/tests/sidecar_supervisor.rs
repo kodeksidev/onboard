@@ -1,4 +1,4 @@
-//! Integration tests for `sidecar::supervisor`, driven against the real
+﻿//! Integration tests for `sidecar::supervisor`, driven against the real
 //! compiled stub sidecar binary (`onboard_engine_stub`, Phase 6's stand-in
 //! for the Phase 5 engine). These live under `tests/` — not inside
 //! `src/sidecar/supervisor.rs`'s unit test module — because
@@ -25,7 +25,7 @@ fn test_config(extra_env_args: &[(&str, &str)]) -> SidecarConfig {
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     SidecarConfig {
-        program: stub_program(),
+        program: Some(stub_program()),
         args,
         log_path: "C:/fake/onboard.log".to_string(),
         max_restarts: SIDECAR_MAX_RESTARTS,
@@ -34,6 +34,41 @@ fn test_config(extra_env_args: &[(&str, &str)]) -> SidecarConfig {
 
 const ANALYZE_PARAMS: fn() -> serde_json::Value =
     || json!({"repoPath": "x", "appDataDir": "y", "excludeGlobs": [], "isForceRefresh": false});
+
+/// The v0.1.0 Windows `.msi` shipped an app that reported
+/// `E_ENGINE_CRASHED` with the body "Failed to start the analysis engine
+/// process: The system cannot find the path specified. (os error 3)" — for
+/// an engine it had never spawned. Two defects in one string: the wrong
+/// code, and a raw OS error in the copy a user reads.
+///
+/// Startup resolution now yields `None` instead of a constructed path, so
+/// this asserts what the user actually gets in that state.
+#[test]
+fn an_unresolved_engine_reports_not_started_and_keeps_os_strings_out_of_the_message() {
+    let supervisor = SidecarSupervisor::new(SidecarConfig {
+        program: None,
+        args: vec![],
+        log_path: "C:/fake/onboard.log".to_string(),
+        max_restarts: SIDECAR_MAX_RESTARTS,
+    });
+
+    let err = supervisor
+        .call("engine.analyze", ANALYZE_PARAMS(), Duration::from_secs(5))
+        .expect_err("an unresolved engine cannot analyze anything");
+
+    assert_eq!(err.code, "E_ENGINE_NOT_STARTED");
+    assert!(
+        !err.message.to_lowercase().contains("os error"),
+        "Section 12: the OS string belongs in `detail`, not `message` — got {:?}",
+        err.message
+    );
+    // The copy names the log, so the user has somewhere to look.
+    assert!(
+        err.message.contains("C:/fake/onboard.log"),
+        "expected the log path in the message, got {:?}",
+        err.message
+    );
+}
 
 #[test]
 fn a_healthy_handshake_starts_the_sidecar_successfully() {
