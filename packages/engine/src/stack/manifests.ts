@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { DependencyInfo, ManifestInfo } from '@onboard/contract';
 import { inferDependencyRole } from './dependency-roles';
+import { parseManifest, type UnparseableSink } from '../util/json';
 
 export type ManifestInfoValue = z.infer<typeof ManifestInfo>;
 export type DependencyInfoValue = z.infer<typeof DependencyInfo>;
@@ -19,20 +20,13 @@ export type DependencyInfoValue = z.infer<typeof DependencyInfo>;
 export interface ManifestDetectionInput {
   readonly existingPaths: ReadonlySet<string>;
   readonly readFile: (repoRelPath: string) => string | null;
+  /** Notified with the path of any manifest that did not parse (see `util/json.ts`). */
+  readonly onUnparseable?: UnparseableSink;
 }
 
 export interface ManifestDetectionResult {
   readonly manifests: readonly ManifestInfoValue[];
   readonly dependencies: readonly DependencyInfoValue[];
-}
-
-function parseJsonSafely(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
 }
 
 function detectPackageManager(existingPaths: ReadonlySet<string>, packageJson: Record<string, unknown>): string | null {
@@ -65,7 +59,13 @@ function detectPackageJson(input: ManifestDetectionInput): { manifest: ManifestI
   if (content === null) {
     return null;
   }
-  const parsed = parseJsonSafely(content) ?? {};
+  // A manifest that does not parse is NOT an empty manifest. Reporting it as
+  // one is what made a malformed package.json read as a project with no
+  // dependencies.
+  const parsed = parseManifest(content, 'package.json', input.onUnparseable);
+  if (parsed === null) {
+    return null;
+  }
   const manifest: ManifestInfoValue = {
     path: 'package.json',
     kind: 'package.json',
@@ -208,7 +208,10 @@ function detectComposerJson(input: ManifestDetectionInput): ManifestInfoValue | 
   if (content === null) {
     return null;
   }
-  const parsed = parseJsonSafely(content) ?? {};
+  const parsed = parseManifest(content, 'composer.json', input.onUnparseable);
+  if (parsed === null) {
+    return null;
+  }
   return {
     path: 'composer.json',
     kind: 'composer.json',

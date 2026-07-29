@@ -9,6 +9,7 @@
  * purity requirement resolution itself must uphold.
  */
 import { splitPosixSegments } from '../util/posix-path';
+import { parseJsonObject, parseManifest, type UnparseableSink } from '../util/json';
 
 export interface WorkspacePackage {
   readonly name: string;
@@ -20,18 +21,12 @@ export interface WorkspacePackage {
 export interface WorkspaceDiscoveryInput {
   readonly existingPaths: ReadonlySet<string>;
   readonly readFile: (repoRelPath: string) => string | null;
+  /** Notified with the path of any manifest that did not parse (see `util/json.ts`). */
+  readonly onUnparseable?: UnparseableSink;
 }
 
 function byteCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function parseJsonSafely(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 function stringArray(value: unknown): readonly string[] {
@@ -43,11 +38,11 @@ function globsFromPackageJson(content: string | null): readonly string[] {
   if (content === null) {
     return [];
   }
-  const parsed = parseJsonSafely(content);
-  if (parsed === null || typeof parsed !== 'object') {
+  const outcome = parseJsonObject(content);
+  if (!outcome.ok) {
     return [];
   }
-  const workspaces = (parsed as { workspaces?: unknown }).workspaces;
+  const workspaces = outcome.value.workspaces;
   if (Array.isArray(workspaces)) {
     return stringArray(workspaces);
   }
@@ -88,11 +83,11 @@ function globsFromLernaJson(content: string | null): readonly string[] {
   if (content === null) {
     return [];
   }
-  const parsed = parseJsonSafely(content);
-  if (parsed === null || typeof parsed !== 'object') {
+  const outcome = parseJsonObject(content);
+  if (!outcome.ok) {
     return [];
   }
-  return stringArray((parsed as { packages?: unknown }).packages);
+  return stringArray(outcome.value.packages);
 }
 
 function collectWorkspaceGlobs(input: WorkspaceDiscoveryInput): readonly string[] {
@@ -175,11 +170,10 @@ export function discoverWorkspacePackages(input: WorkspaceDiscoveryInput): reado
       continue;
     }
     const content = input.readFile(manifestPath);
-    const parsed = content === null ? null : parseJsonSafely(content);
-    if (parsed === null || typeof parsed !== 'object') {
+    const record = content === null ? null : parseManifest(content, manifestPath, input.onUnparseable);
+    if (record === null) {
       continue;
     }
-    const record = parsed as Record<string, unknown>;
     const name = record.name;
     if (typeof name === 'string' && name.length > 0) {
       packages.push({ name, dirPath, entryField: extractEntryField(record) });
