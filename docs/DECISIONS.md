@@ -2464,3 +2464,29 @@ decided; it only records choices the spec left open.
   `node_modules` with `--frozen-lockfile`. That is the first green run in this
   repository that a clean checkout reproduces — see `docs/SECURITY_AUDIT.md`
   §6 on why every earlier one is attested but unverified.
+- **Phase 13 follow-up — `analyze()` may not be called concurrently in one
+  process. Found by accident, recorded before it can bite.**
+
+  A test that analysed the same fixture from two temp paths with `Promise.all`
+  produced results disagreeing on `edges`, `symbolCount`, `pageRank`,
+  `inDegree`/`outDegree`, `diagnostics` and `graph.componentCount` — 107
+  differing leaves. Run the identical two analyses SEQUENTIALLY and they differ
+  in exactly three: `repo.id`, `repo.rootPathHash`, `fingerprint`. So the
+  divergence is overlap, not location.
+
+  Not currently reachable, and that is luck rather than design:
+  `rpc/server.ts`'s `for await (const rawLine of options.lines)` awaits each
+  request before reading the next, so the sidecar can never have two `analyze()`
+  calls in flight. Nothing states that this serialization is load-bearing, and
+  "handle requests concurrently for throughput" is an obvious future change.
+
+  `verify:determinism` cannot catch this: all four of its comparisons run
+  sequentially, which is exactly the case that works.
+
+  Not fixed here — the shared state has not been located, and guessing at it is
+  worse than recording it. What IS fixed is the invisibility: the constraint is
+  written at `rpc/server.ts`'s loop, in
+  `test/analyze/snapshot-identity.test.ts`, and here. Queued for `ts-engine`:
+  find the shared mutable state (tree-sitter parser instances are the first
+  suspect), then either make it re-entrant or make the serialization explicit
+  and asserted rather than incidental.

@@ -159,7 +159,16 @@ export interface RunServerOptions {
   readonly onDebugTiming?: RpcDebugTimingSink;
 }
 
-/** Reads newline-delimited requests until EOF or a successful `engine.shutdown`. */
+/**
+ * Reads newline-delimited requests until EOF or a successful `engine.shutdown`.
+ *
+ * The `await` inside this loop is LOAD-BEARING, not just simple. Two `analyze()`
+ * calls overlapping in one process do not produce independent results — they
+ * disagree on `edges`, `symbolCount`, `pageRank` and `diagnostics` (measured;
+ * see `docs/DECISIONS.md`). Serving requests concurrently for throughput would
+ * silently corrupt results, and `verify:determinism` would not catch it because
+ * all four of its comparisons are sequential.
+ */
 export async function runServer(options: RunServerOptions): Promise<void> {
   for await (const rawLine of options.lines) {
     const line = rawLine.trim();
