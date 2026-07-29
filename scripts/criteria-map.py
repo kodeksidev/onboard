@@ -108,7 +108,14 @@ EVIDENCE: dict[int, Evidence] = {
     23: Evidence(
         "installed-app-check",
         "ci",
-        "Linux: .deb installed on a clean runner, engine launches and analyses. macOS half needs a Mac; UI graph-render needs the e2e harness",
+        "REGRESSED, and weaker than previously recorded: builds on all three, "
+        "launches on Linux, FAILED on Windows (v0.1.0 .msi installed and then "
+        "could not start its engine). The Linux job drives the ENGINE directly "
+        "over stdio RPC and never starts the app shell, so it proves the engine "
+        "runs, not that the app can start it — the packaged-sidecar resolution "
+        "bug was latent on Linux too, just unexercised. Fixed in code; needs an "
+        "app-shell launch on BOTH platforms before this is more than partial. "
+        "macOS half needs a Mac",
         blocker="machine",
     ),
     24: Evidence(
