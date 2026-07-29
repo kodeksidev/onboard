@@ -219,7 +219,13 @@ jobs:
           # So this now uploads whatever the bundler produced and lets the
           # classifier be the single place that decides. An unrecognised
           # extension fails there by name rather than vanishing here.
-          path: apps/desktop/src-tauri/target/release/bundle/**/*.*
+          # `bundle/<format>/<artefact>` — exactly one level deep, deliberately.
+          # `**` swept in the .deb's intermediate staging tree (control/,
+          # data/usr/bin/, the unpacked grammars) and the classifier rejected 22
+          # of 23 files by name, which is the correct behaviour and the wrong
+          # input. The finished artefacts sit directly in their format
+          # directory; everything under a further subdirectory is scaffolding.
+          path: apps/desktop/src-tauri/target/release/bundle/*/*.*
           retention-days: 7
           if-no-files-found: error
 
