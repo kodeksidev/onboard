@@ -70,16 +70,25 @@ class Layout:
         shell: Path,
         sidecar: Path,
         grammars: Path,
-        log: Path,
-        expected_executables: set[str],
+        log_roots: tuple[Path, ...],
+        required_executables: set[str],
+        optional_executables: set[str] = frozenset(),
         extra_required: tuple[Path, ...] = (),
     ) -> None:
         self.root = root
         self.shell = shell
         self.sidecar = sidecar
         self.grammars = grammars
-        self.log = log
-        self.expected_executables = expected_executables
+        self.log_roots = log_roots
+        self.required_executables = required_executables
+        # Present in SOME bundles and absent in others, so neither required
+        # nor unexpected. `uninstall.exe` is the case this exists for: NSIS
+        # writes one, and an .msi does not — Windows Installer owns uninstall
+        # itself. Demanding it failed the first real .msi run, because the
+        # expected set had been derived from an NSIS install inspected by
+        # hand. Set equality is still enforced against everything else, so a
+        # stray test binary is still caught.
+        self.optional_executables = optional_executables
         self.extra_required = extra_required
 
 
@@ -93,17 +102,26 @@ def windows_layout() -> Layout:
         Path(os.environ.get("LOCALAPPDATA", "")) / "Onboard",
     ]
     root = next((c for c in candidates if c.is_dir()), candidates[0])
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", ""))
     return Layout(
         root=root,
         shell=root / "onboard.exe",
         sidecar=root / "onboard-engine.exe",
         grammars=root / "resources" / "grammars",
-        log=Path(os.environ.get("APPDATA", "")) / "dev.onboard.app" / "logs" / "onboard" / "onboard.log",
+        log_roots=(
+            local_app_data / "dev.onboard.app" / "logs",
+            Path(os.environ.get("APPDATA", "")) / "dev.onboard.app" / "logs",
+        ),
         # Tauri strips the -<target-triple> suffix from an externalBin and
         # places it NEXT TO the shell — not in a `binaries/` subdirectory.
-        # That fact is the whole content of the resolution bug, so it is
-        # asserted here rather than assumed.
-        expected_executables={"onboard.exe", "onboard-engine.exe", "uninstall.exe"},
+        # Confirmed against the real .msi's own file table (`msiexec /a`):
+        #   PFiles\Onboard\onboard.exe
+        #   PFiles\Onboard\onboard-engine.exe
+        #   PFiles\Onboard\resources\grammars\*.wasm
+        # That is the whole content of the resolution bug, asserted rather
+        # than assumed.
+        required_executables={"onboard.exe", "onboard-engine.exe"},
+        optional_executables={"uninstall.exe"},
     )
 
 
@@ -113,11 +131,22 @@ def linux_layout() -> Layout:
         shell=Path("/usr/bin/onboard"),
         sidecar=Path("/usr/bin/onboard-engine"),
         grammars=Path("/usr/lib/Onboard/resources/grammars"),
-        log=Path.home() / ".config" / "dev.onboard.app" / "logs" / "onboard" / "onboard.log",
+        # Tauri's `app_log_dir()` is $XDG_DATA_HOME/<identifier>/logs on
+        # Linux — NOT ~/.config, which this check assumed on its first real
+        # run and consequently reported "the shell did not resolve its
+        # engine" when the truth was "I could not find the log". All
+        # plausible roots are searched, and not finding one is reported as
+        # an inability to verify rather than as a product failure.
+        log_roots=(
+            Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+            / "dev.onboard.app"
+            / "logs",
+            Path.home() / ".config" / "dev.onboard.app" / "logs",
+        ),
         # /usr/bin is shared with the whole system, so a set-equality sweep of
         # it would be meaningless. The shipped-file assertion for the .deb is
         # done from the package manifest instead (see check_deb_manifest).
-        expected_executables=set(),
+        required_executables=set(),
         extra_required=(Path("/usr/share/applications/Onboard.desktop"),),
     )
 
@@ -144,11 +173,11 @@ def check_shipped_executables(layout: Layout) -> list[str]:
     in a user-writable directory is a substitution target on a product whose
     whole thesis is that nothing leaves the machine.
     """
-    if not layout.expected_executables:
+    if not layout.required_executables:
         return []
     actual = {p.name for p in layout.root.glob("*.exe")}
-    missing = layout.expected_executables - actual
-    unexpected = actual - layout.expected_executables
+    missing = layout.required_executables - actual
+    unexpected = actual - layout.required_executables - layout.optional_executables
     problems: list[str] = []
     if missing:
         problems.append(f"missing from the install: {sorted(missing)}")
@@ -178,6 +207,23 @@ def check_deb_manifest() -> list[str]:
     return problems
 
 
+def find_logs(layout: Layout) -> list[Path]:
+    """Every `onboard.log` under any plausible log root.
+
+    Searched rather than assumed. `lib.rs` writes to
+    `app_log_dir()/onboard/onboard.log`, and `app_log_dir()` differs per
+    platform in ways this script got wrong on its first real run — it
+    guessed `~/.config` on Linux, found nothing, and reported that as the
+    shell failing to resolve its engine. That is a wrong finding, which is
+    worse than a missing one.
+    """
+    found: list[Path] = []
+    for root in layout.log_roots:
+        if root.is_dir():
+            found.extend(sorted(root.rglob("onboard.log")))
+    return found
+
+
 def start_shell_and_read_log(layout: Layout) -> tuple[bool, str]:
     """Starts the real app shell and waits for its sidecar-resolution line.
 
@@ -185,9 +231,9 @@ def start_shell_and_read_log(layout: Layout) -> tuple[bool, str]:
     drove the engine directly, which is why it never exercised the shell's
     sidecar resolution and the packaging bug stayed latent there too.
     """
-    if layout.log.exists():
+    for stale in find_logs(layout):
         try:
-            layout.log.unlink()
+            stale.unlink()
         except OSError:
             pass
 
@@ -213,16 +259,18 @@ def start_shell_and_read_log(layout: Layout) -> tuple[bool, str]:
     verdict: tuple[bool, str] | None = None
     try:
         while time.monotonic() < deadline:
-            if layout.log.exists():
-                text = layout.log.read_text(encoding="utf-8", errors="replace")
+            for log in find_logs(layout):
+                text = log.read_text(encoding="utf-8", errors="replace")
                 if FAILED_MARKER in text:
                     line = next(l for l in text.splitlines() if FAILED_MARKER in l)
                     verdict = (False, f"the shell started but could NOT resolve its engine: {line.strip()}")
                     break
                 if RESOLVED_MARKER in text:
                     line = next(l for l in text.splitlines() if RESOLVED_MARKER in l)
-                    verdict = (True, line.strip())
+                    verdict = (True, f"{line.strip()}  [{log}]")
                     break
+            if verdict is not None:
+                break
             if process.poll() is not None:
                 stderr = (process.stderr.read() or b"").decode("utf-8", "replace")
                 verdict = (
@@ -240,9 +288,15 @@ def start_shell_and_read_log(layout: Layout) -> tuple[bool, str]:
                 process.kill()
 
     if verdict is None:
+        # CANNOT ANSWER, not "found a problem". The shell stayed alive for
+        # the whole window and no log turned up in any known root, so this
+        # says so in those words rather than blaming the resolver.
+        searched = ", ".join(str(r) for r in layout.log_roots)
         return False, (
-            f"the shell ran for {SHELL_STARTUP_TIMEOUT_SECONDS}s without writing "
-            f"either marker to {layout.log}"
+            f"INCONCLUSIVE — the shell ran for {SHELL_STARTUP_TIMEOUT_SECONDS}s and stayed "
+            f"alive, but no onboard.log appeared under any known log root ({searched}). "
+            "This is an inability to verify, NOT evidence that resolution failed; "
+            "the log location is what needs fixing."
         )
     return verdict
 
@@ -338,11 +392,19 @@ def main() -> int:
         ok, detail = start_shell_and_read_log(layout)
         print(f"  installed shell: {detail}")
         if not ok:
-            print(
-                "\nFAILED — the installed shell did not resolve its engine.\n"
-                "This is the exact failure the v0.1.0 .msi shipped with.",
-                file=sys.stderr,
-            )
+            if detail.startswith("INCONCLUSIVE"):
+                print(
+                    "\nCOULD NOT VERIFY — the shell started but its log was not found.\n"
+                    "Distinguished from a failure deliberately: this says nothing about\n"
+                    "whether the engine resolved. Fix the log discovery, not the resolver.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "\nFAILED — the installed shell did not resolve its engine.\n"
+                    "This is the exact failure the v0.1.0 .msi shipped with.",
+                    file=sys.stderr,
+                )
             return 1
 
     base = Path(os.environ.get("RUNNER_TEMP") or os.environ.get("TEMP") or "/tmp")
