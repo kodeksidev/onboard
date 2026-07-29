@@ -174,7 +174,7 @@ a defence. It is listed as accepted so the distinction stays visible.
 | **Criterion** | 10 (coverage thresholds), 22 (E2E suite) |
 | **Blocks** | nothing, as of 2026-07-29 |
 | **Family** | dependency override with unscopeable blast radius |
-| **Disposition** | **RESOLVED** — `"minimatch": ">=10.2.5"` added alongside the existing override; all three occurrences clear at once and the advisory stays closed |
+| **Disposition** | **MITIGATED, not resolved** — `"minimatch": ">=10.2.5"` clears all three known occurrences, but it is the same manoeuvre one package up. See "The residual risk" below |
 
 `"overrides": { "brace-expansion": ">=5.0.8" }` closes GHSA-mh99-v99m-4gvg by
 forcing one patched copy across the whole tree. v5 changed the package's export
@@ -235,6 +235,47 @@ silently ignored — tested three ways: npm-style nested
 flat override removed so the rule had to act alone. All three no-op with no
 warning and exit 0. A scoping rule that silently does nothing is its own hazard:
 it reads, in a diff, exactly like a rule that works.
+
+**The residual risk — why this entry is MITIGATED and not closed.** This fix is
+an instance of the very pattern this entry exists to name. KI-8 says: *an
+advisory whose only patched version is a new major, forced tree-wide by an
+override, keeps breaking consumers pinned to the old API, one at a time, each
+break looking unrelated.* Overriding `minimatch` to v10 across consumers that
+request `^3`, `^5` and `^9` is that shape exactly, one package up the tree. It
+is a better bet — v10 is far closer to API-compatible with v9/v5 than
+brace-expansion v5 was with v2 — but a bet is what it is, and the next consumer
+exercised is where we find out.
+
+**The override cannot be narrowed.** The obvious mitigation — let consumers that
+can already take v10 do so naturally, and override only the rest — does not
+apply: all six forced consumers declare ranges that *exclude* v10
+(`glob@10.5.0` `^9.0.4`, `mocha` `^5.1.6`, `mocha/glob@8.1.0` `^5.0.1`,
+`filelist` `^5.0.1`, `readdir-glob` `^5.1.0`, `recursive-readdir` `^3.0.5`), so
+normal resolution can never reach v10 for any of them. Overriding the
+intermediaries instead (`glob` to v11, `mocha` to v11, …) would be more bets,
+not fewer. The alternative is reopening the advisory.
+
+**So the bet shrinks by evidence, not by scope.** Of the six:
+
+| forced consumer | reached via | exercised? |
+|---|---|---|
+| `mocha` `^5.1.6` | `@wdio/mocha-framework` | **yes** — the e2e suite runs through it |
+| `glob@10.5.0` `^9.0.4` | `test-exclude` → `@vitest/coverage-v8` | **yes** — coverage runs |
+| `mocha/glob@8.1.0` `^5.0.1` | `mocha` | partially, with the above |
+| `recursive-readdir` `^3.0.5` | `create-wdio` (scaffolding CLI) | **no** — never invoked here |
+| `filelist` `^5.0.1` | `jake` | **no** |
+| `readdir-glob` `^5.1.0` | `archiver` | **no** |
+
+The three unexercised rows are where a fourth occurrence would come from. None
+sits in a path this repository invokes, which is why this is MITIGATED rather
+than merely ACCEPTED — but "we do not currently call it" is a description of
+today's usage, not a property of the fix.
+
+**Verified against the resolved tree, not `bun audit`'s exit code** (the
+standing rule since the first override — the exit code is the claim the rule
+exists to distrust): the store contains exactly one `brace-expansion@5.0.8` and
+exactly one `minimatch@10.2.5`, and a sweep of every `brace-expansion/
+package.json` under `node_modules` finds no copy below 5.0.8.
 
 **The pattern, restated now that it has a fix:** an advisory whose only patched
 version is a new major, forced tree-wide by an override, will keep breaking
