@@ -55,9 +55,21 @@ removed with `msiexec /x Onboard_0.1.0_x64_en-US.msi`.
 
 ---
 
-## macOS — Gatekeeper
+## macOS — NOT PUBLISHED IN THE FIRST RELEASE
 
-Artefacts: `Onboard_0.1.0_aarch64.dmg` (Apple Silicon) or
+**There is no macOS download.** The build produces `.dmg` artefacts and CI
+verifies their format and architecture from the header bytes, but **no macOS
+build has ever been executed on a Mac.** This project has no Apple hardware, and
+a runner that can *produce* a darwin binary cannot *run* one.
+
+Shipping it anyway would be publishing an assumption: the engine sidecar inside
+that `.dmg` has never started on the platform it targets. macOS is released when
+`MACOS_SMOKE.md` is signed off on real hardware, and not before.
+
+The steps below are correct and are kept here for whoever performs that
+verification — they are not instructions for a download that exists yet.
+
+Artefacts (when published): `Onboard_0.1.0_aarch64.dmg` (Apple Silicon) or
 `Onboard_0.1.0_x64.dmg` (Intel). Take the one matching your machine — Apple menu
 → About This Mac shows which.
 

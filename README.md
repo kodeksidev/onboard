@@ -52,11 +52,48 @@ it on macOS, Windows and Ubuntu on every push.
 
 ## Install
 
-v1 ships **unsigned installers**. Both Windows SmartScreen and macOS Gatekeeper
-will object, and the exact steps to proceed are in
-**[docs/INSTALL.md](docs/INSTALL.md)**. Code signing and notarization are
-deliberately out of scope for v1; the path is documented in
+**Windows and Linux only in the first release. macOS is built but not
+published.**
+
+The macOS build compiles and its artefact is verified for format and
+architecture, but **no macOS build has ever been executed on a Mac** — the
+project has no Apple hardware, and CI can produce a darwin binary without being
+able to run one. Publishing it would ship an assumption. It will be released
+once `docs/MACOS_SMOKE.md` is signed off on real hardware.
+
+v1 ships **unsigned installers**. Windows SmartScreen will object, and the exact
+steps to proceed are in **[docs/INSTALL.md](docs/INSTALL.md)** — which also
+carries the macOS steps for whoever runs that verification. Code signing and
+notarization are deliberately out of scope for v1; the path is documented in
 [docs/SIGNING.md](docs/SIGNING.md).
+
+## What is not verified
+
+Four things this project cannot check on its own hardware. They are listed in
+plain terms because "criterion 11 is CI-blocked" tells you nothing:
+
+- **Speed has not been measured on your machine.** The performance budgets —
+  how fast a large repository opens, how quickly the graph lays out — are
+  checked only on developer machines. A shared CI runner's timings move by 3x
+  under load, so a number from one would be worse than no number. On a big
+  repository or a slow disk, Onboard may be slower than intended.
+- **The 10-second first-open target is unmeasured.** The goal is that pointing
+  Onboard at a fresh 1,000-file repository gives you the overview, graph,
+  roadmap and search in under ten seconds. That has been observed by hand, never
+  timed by a gate.
+- **The end-to-end UI flows are not run automatically.** Individual components
+  and the whole analysis engine are tested on every change across three
+  operating systems; driving the real application window from start to finish is
+  not, because the test harness races itself on fixed ports. Component and engine
+  coverage is good; whole-app coverage is manual.
+- **The installers are unsigned, and the macOS one is unpublished.** See above.
+  Nothing about installation is automatically verified on any platform — the
+  build produces installers, and no gate installs one and launches it.
+
+None of these is a known defect. They are things nobody has proven, stated as
+such. [docs/CRITERIA_MAP.md](docs/CRITERIA_MAP.md) is generated from what CI
+actually runs and carries the full picture; [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)
+carries the defects that were found and what was done about each.
 
 ## Optionally enabling AI
 
