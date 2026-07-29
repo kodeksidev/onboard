@@ -343,6 +343,50 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo run --quiet --bin check_egress_chokepoint -- .
 
+  engine-determinism:
+    # Acceptance criterion 3 / Section 8.8. `docs/CI_PREREGISTRATION.md` predicts
+    # that the first PRODUCT finding will land here, on macOS or Linux, from
+    # `readdir` order differing from Windows. That prediction could never have
+    # resolved: `verify:determinism` was a package script that this workflow
+    # never invoked, so criterion 3's gate had not run anywhere except one
+    # Windows machine and CI could not tell us so. Adding it is what makes the
+    # pre-registration answerable at all.
+    #
+    # All three OSes on purpose — a determinism gate that runs on one platform
+    # is exactly the shape of gate this repository keeps finding fault with. The
+    # script's four comparisons per fixture include a shuffled-walk run, which
+    # is the one that would expose a traversal order leaking into the result.
+    #
+    # No sidecar build: it runs `analyze()` from source, so `bun install` is the
+    # only precondition.
+    name: engine determinism gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache the Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: verify:determinism (20 fingerprint comparisons across 5 fixtures)
+        run: bun run --cwd "packages/engine" verify:determinism
+
   engine-no-network:
     # Section 9 Phase 5 gate item 3 / acceptance criterion 8. Linux-only on
     # purpose: the static bundle scan is platform-independent (so running it on
