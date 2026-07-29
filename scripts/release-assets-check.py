@@ -1,63 +1,69 @@
-"""`release:check-assets` — refuse to publish an artefact nobody has run.
+"""`release:check-assets` — the staged set must EQUAL the expected set.
 
-macOS is held from the first release because no macOS build has ever been
-executed on a Mac. That decision lives in three documents and one `publish:
-false` line in a workflow matrix, and none of those stop a `.dmg` from reaching
-the release if a glob is widened, an artifact name is copied, or a future job
-downloads one directory too many.
+This used to validate arrivals: reject a held format, reject an unrecognised
+one, pass otherwise. That could not catch the defect it should have. The upload
+glob omitted `*.rpm`, so the `.rpm` was built and never uploaded, and a dry run
+went green staging three assets while the docs promised four.
 
-So the decision is enforced where it takes effect: immediately before the
-release is created, over the files actually staged.
+**Absence is the one thing a check on arrivals cannot see.** So the question is
+no longer "is everything here allowed" but "is the set here the set expected" —
+and both sides come from `release-formats.json`, the single table the workflow's
+matrix and upload globs are also generated from.
 
-The rule is by EXTENSION, not by filename, because a `.dmg` renamed is still a
-macOS disk image and the point is what the file is. Held extensions and shipped
-extensions are both listed, and an asset matching NEITHER also fails — a new
-bundle format should be an explicit decision rather than something that ships
-because nobody wrote it down.
+Three failures, all by name:
+  * MISSING  — expected on a release, did not arrive (the `.rpm` case);
+  * HELD     — a platform whose artefact has never been executed (macOS);
+  * UNKNOWN  — an extension no platform declares.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
-# Not published until docs/MACOS_SMOKE.md is signed off on real hardware.
-HELD_SUFFIXES = {".dmg", ".app", ".pkg"}
-
-# Windows and Linux, the two platforms whose artefacts have been executed by CI.
-SHIPPED_SUFFIXES = {".msi", ".exe", ".appimage", ".deb", ".rpm"}
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FORMATS = REPO_ROOT / "release-formats.json"
 
 
-def classify(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in HELD_SUFFIXES:
-        return "held"
-    if suffix in SHIPPED_SUFFIXES:
-        return "shipped"
-    return "unknown"
+def platforms() -> list[dict[str, object]]:
+    return json.loads(FORMATS.read_text(encoding="utf-8"))["platforms"]
+
+
+def expected_extensions() -> set[str]:
+    return {
+        ext.lower()
+        for entry in platforms()
+        if entry["publish"]
+        for ext in entry["extensions"]  # type: ignore[attr-defined]
+    }
+
+
+def held_extensions() -> set[str]:
+    return {
+        ext.lower()
+        for entry in platforms()
+        if not entry["publish"]
+        for ext in entry["extensions"]  # type: ignore[attr-defined]
+    }
 
 
 def self_test() -> str | None:
-    """Prove the classifier separates the three cases before it is trusted."""
-    cases = {
-        "Onboard_0.1.0_aarch64.dmg": "held",
-        "Onboard.app": "held",
-        "Onboard_0.1.0_x64-setup.exe": "shipped",
-        "onboard_0.1.0_amd64.AppImage": "shipped",
-        "onboard_0.1.0_amd64.deb": "shipped",
-        "notes.txt": "unknown",
-    }
-    for name, expected in cases.items():
-        actual = classify(Path(name))
-        if actual != expected:
-            return f"{name} classified as {actual}, expected {expected}"
+    """The table must describe a real release before anything is checked against it."""
+    expected, held = expected_extensions(), held_extensions()
+    if not expected:
+        return "no published extensions derived — a release would be empty"
+    if not held:
+        return "no held extensions derived — the macOS hold would be unenforceable"
+    if expected & held:
+        return f"an extension is both published and held: {sorted(expected & held)}"
     return None
 
 
 def main() -> int:
     failure = self_test()
     if failure:
-        print(f"REFUSING: self-test failed — {failure}", file=sys.stderr)
+        print(f"REFUSING: {failure}", file=sys.stderr)
         return 1
 
     if len(sys.argv) < 2:
@@ -69,45 +75,52 @@ def main() -> int:
         print(f"REFUSING: {root} is not a directory", file=sys.stderr)
         return 1
 
+    expected, held = expected_extensions(), held_extensions()
     assets = sorted(p for p in root.rglob("*") if p.is_file())
-    held = [p for p in assets if classify(p) == "held"]
-    shipped = [p for p in assets if classify(p) == "shipped"]
-    unknown = [p for p in assets if classify(p) == "unknown"]
+    received = {p.suffix.lower() for p in assets}
 
     print(f"release:check-assets — {len(assets)} staged asset(s)")
     for path in assets:
-        print(f"  [{classify(path):7s}] {path.relative_to(root)}")
+        suffix = path.suffix.lower()
+        kind = "expected" if suffix in expected else "HELD" if suffix in held else "UNKNOWN"
+        print(f"  [{kind:8s}] {path.relative_to(root)}")
 
-    # An empty staging directory would pass every check below while publishing
-    # a release with nothing in it.
-    if not shipped:
+    missing = sorted(expected - received)
+    staged_held = sorted(received & held)
+    unknown = sorted(received - expected - held)
+
+    if missing:
         print(
-            "\nREFUSING: no Windows or Linux installer staged — the release would be empty",
+            "\nFAILED — expected on this release and NOT staged:\n  "
+            + "\n  ".join(missing)
+            + "\n\nThe format is declared in release-formats.json but no artefact with "
+            "that extension arrived. It was either not built or not uploaded — and an "
+            "asset that never arrives is invisible to any check on arrivals.",
             file=sys.stderr,
         )
         return 1
 
-    if held:
+    if staged_held:
         print(
-            "\nFAILED — macOS artefacts staged for publication:\n  "
-            + "\n  ".join(str(p.relative_to(root)) for p in held)
-            + "\n\nNo macOS build has been executed on a Mac. Publishing one ships an "
-            "assumption. Release it after docs/MACOS_SMOKE.md is signed off, not before.",
+            "\nFAILED — held-platform artefacts staged for publication:\n  "
+            + "\n  ".join(staged_held)
+            + "\n\nThat platform's build has never been executed on its target. "
+            "Publishing it ships an assumption.",
             file=sys.stderr,
         )
         return 1
 
     if unknown:
         print(
-            "\nFAILED — assets of an unrecognised kind:\n  "
-            + "\n  ".join(str(p.relative_to(root)) for p in unknown)
-            + "\n\nAdd the extension to SHIPPED_SUFFIXES or HELD_SUFFIXES. A new bundle "
-            "format should ship because someone decided to, not because nobody listed it.",
+            "\nFAILED — assets no platform declares:\n  "
+            + "\n  ".join(unknown)
+            + "\n\nAdd the extension to release-formats.json, or stop uploading it. A "
+            "format ships because someone decided to, not because a glob caught it.",
             file=sys.stderr,
         )
         return 1
 
-    print("\nevery staged asset is a platform this project has run")
+    print(f"\nstaged set equals expected set: {', '.join(sorted(expected))}")
     return 0
 
 

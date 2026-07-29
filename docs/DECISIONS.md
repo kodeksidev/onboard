@@ -2664,3 +2664,39 @@ decided; it only records choices the spec left open.
   the pre-merge branch will see it fail, and should know that is history
   predating the gate rather than the gate being broken. Anything authored after
   the merge has no such excuse.
+- **AMENDMENT — Linux ships `.deb` + `.rpm`, not `.AppImage` + `.deb`.**
+  Authorised-by: product owner (chat), 2026-07-29
+  Departs-from: Section 13 #23 — "`.AppImage` + `.deb`"
+
+  Two departures, recorded separately because they have different causes.
+
+  **`.AppImage` is NOT shipped — it does not build.** Tauri bundles it through
+  `linuxdeploy`, which fails on a GitHub runner:
+
+  ```
+  Bundling Onboard_0.1.0_amd64.AppImage
+  failed to bundle project `failed to run linuxdeploy`
+  ```
+
+  Measured with `libfuse2` installed AND `APPIMAGE_EXTRACT_AND_RUN=1` set — both
+  applied, same failure — so it is specific to the AppImage path rather than to
+  FUSE availability. `.deb` and `.rpm` bundle cleanly in the same run. Shipping a
+  format that has never been produced is precisely what the macOS hold exists to
+  prevent, and the same rule applies here.
+
+  **`.rpm` IS shipped, and Section 13 does not name it.** Tauri produces it from
+  the same bundle step at no extra cost, and it covers the Fedora/RHEL half of
+  Linux that a `.deb` alone does not. Adding a format the spec omits is still a
+  departure, and going unrecorded is how a criteria map starts describing
+  something other than what ships.
+
+  **Why this is an AMENDMENT and not just a KNOWN_ISSUES line.** KI-9 records the
+  DEFECT — that the AppImage build fails. This records the DECISION — that the
+  release ships a different set of formats than the spec names. They are
+  different claims: one could be fixed tomorrow without changing the other, and
+  a reader checking criterion 23 against the spec needs the second, not the
+  first. KNOWN_ISSUES is where defects go; this file is where departures go.
+
+  **Consequence for criterion 23:** its text is now "`.deb` + `.rpm`" on Linux.
+  The `.AppImage` returns to scope if the `linuxdeploy` failure is resolved, at
+  which point this amendment is superseded rather than deleted.
