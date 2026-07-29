@@ -85,3 +85,9 @@ Thumbs.db
 # future pattern is added carelessly.
 !/packages/engine/fixtures/
 !/packages/engine/fixtures/**
+
+# Python bytecode from scripts/*.py. `docs-check.cpython-312.pyc` was tracked
+# once, which is how this rule got written: the scripts are run, never imported
+# as a package, so nothing here is an input to anything.
+__pycache__/
+*.pyc
