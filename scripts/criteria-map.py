@@ -113,12 +113,15 @@ EVIDENCE: dict[int, Evidence] = {
         "could not start its engine). The Linux job drives the ENGINE directly "
         "over stdio RPC and never starts the app shell, so it proves the engine "
         "runs, not that the app can start it — the packaged-sidecar resolution "
-        "bug was latent on Linux too, just unexercised. Fixed in code, and both "
-        "jobs now START THE SHELL and assert it resolved its engine — but "
-        "NEITHER HAS EXECUTED YET, and an unrun gate reads exactly like a "
-        "passing one, so this stays partial until they run green. `publish` now "
-        "depends on both, which is the gap that let v0.1.0 ship. "
-        "macOS half needs a Mac",
+        "bug was latent on Linux too, just unexercised. TWO HALVES, verified "
+        "differently: (a) installer builds + shell launches and resolves its "
+        "engine — CI, via `installed` and `installed-windows`, which `publish` "
+        "now depends on (the gap that let v0.1.0 ship); (b) installed app "
+        "RENDERS A GRAPH from a picked folder — manual on all three platforms, "
+        "docs/SMOKE_CHECKLIST.md, because the E2E bridge is absent from a "
+        "release bundle and the native picker is unreachable from WebDriver. "
+        "Half (a)'s jobs have NOT EXECUTED YET and an unrun gate reads exactly "
+        "like a passing one. macOS needs a Mac for both halves",
         blocker="machine",
     ),
     24: Evidence(
