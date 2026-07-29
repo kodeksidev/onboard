@@ -10,7 +10,7 @@
     "apps/*"
   ],
   "scripts": {
-    "verify": "bun run typecheck && bun run lint && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run test",
+    "verify": "bun run typecheck && bun run lint && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run test",
     "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
     "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
     "fixture:emit": "bun run --cwd \"packages/contract\" fixture:emit",
@@ -23,6 +23,7 @@
     "docs:check": "python scripts/docs-check.py",
     "ci:check-installs": "python scripts/ci-install-check.py",
     "ci:check-python": "python scripts/ci-python-check.py",
+    "fixtures:check-tracked": "python scripts/fixtures-tracked-check.py",
     "verify:report": "bun run scripts/run-verify-stages.ts verify"
   },
   "overrides": {

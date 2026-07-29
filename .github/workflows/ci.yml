@@ -54,8 +54,17 @@ jobs:
         os: [macos-14, windows-2022, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
+      # `fetch-depth: 0`, not the default 1. `docs:check` resolves every SHA
+      # cited in docs/ with `git cat-file`, and a depth-1 clone contains one
+      # commit — so every citation in DECISIONS.md and SECURITY_AUDIT.md came
+      # back "stale" on all four verify jobs the first time this stage was ever
+      # allowed to run. The documents were correct; the clone was too shallow to
+      # tell. (`docs-check.py` now refuses outright on a shallow clone rather
+      # than reporting that wrong finding, so this is belt AND braces.)
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -127,6 +136,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: 'onboard checkout'
+          # Same reason as the verify matrix above: `docs:check` needs history.
+          fetch-depth: 0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

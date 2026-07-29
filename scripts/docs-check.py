@@ -72,6 +72,24 @@ CITING_CONTEXT = (
 CONTEXT_WINDOW = 220
 
 
+def is_shallow() -> bool:
+    """A shallow clone cannot answer this check's question.
+
+    `actions/checkout` fetches depth 1 by default, so `git cat-file` resolves
+    almost nothing and EVERY citation looks stale. Reporting those as "stale SHA
+    references" would be a wrong finding, not a missing one — the check would
+    send someone to rewrite documentation that is perfectly correct. Refusing
+    names the real cause instead.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--is-shallow-repository"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() == "true"
+
+
 def is_commit(candidate: str) -> bool:
     result = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "cat-file", "-t", candidate],
@@ -100,6 +118,15 @@ def classify(text: str, position: int) -> tuple[bool, str]:
 
 
 def main() -> int:
+    if is_shallow():
+        print(
+            "REFUSING: shallow clone — `git cat-file` cannot resolve historical "
+            "commits, so every citation would be reported stale. Check out with "
+            "`fetch-depth: 0`.",
+            file=sys.stderr,
+        )
+        return 1
+
     unresolved: list[str] = []
     checked = 0
     disqualified_used: set[str] = set()
