@@ -21,8 +21,7 @@ evidence table in the script, not this file.
 
 The rest, under their real cause:
 
-- **authoring** (waits on someone finishing prose they own) — #26
-- **none** (settled by CI) — #24, #25
+- **none** (settled by CI) — #24, #25, #26
 - **tooling** (needs a tool configured; the machines exist) — #10, #28
 
 | # | Status | Blocker | Evidence | Criterion |
@@ -52,7 +51,7 @@ The rest, under their real cause:
 | 23 | CI-BLOCKED — gate exists, not wired | machine | LAUNCHING the .dmg needs a Mac; building it does not | Installers build and launch on all three platforms: `.dmg` (x64 + aarch64), `... |
 | 24 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | INSTALL.md names both bypass paths; SIGNING.md names the signing path | `docs/INSTALL.md` documents the exact Gatekeeper and SmartScreen bypass steps... |
 | 25 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | README covers install, the privacy model and enabling AI | `README.md` covers install, the privacy model, and how to optionally enable A... |
-| 26 | MANUAL | authoring | PARTIAL by the audit's own §6 until a fail-open-aware re-audit is written | `docs/SECURITY_AUDIT.md` shows zero open CRITICAL and zero open HIGH findings. |
+| 26 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | guard-disposition sweep done; every fail-open found got a fix or a failing test | `docs/SECURITY_AUDIT.md` shows zero open CRITICAL and zero open HIGH findings. |
 | 27 | CI on 3 OS | — | lint + lint:check-rules-fire, inside verify; clippy in the Rust job | No source file exceeds 800 lines, no function exceeds 50 lines, and no block... |
 | 28 | NO GATE | tooling | conventional-commit linting is not wired | Every commit follows `<type>: <description>`; CI rejects a non-conforming mes... |
 

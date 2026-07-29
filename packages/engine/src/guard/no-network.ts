@@ -58,10 +58,49 @@ function poisonFetch(): void {
  * `import { connect } from 'node:net'` named import — a genuine, spec-level
  * limitation, documented rather than silently accepted as "handled."
  */
+/**
+ * Entry points that were poisoned but could NOT be locked against restoration.
+ *
+ * Empty is the expected state and `test/guard/no-network-durability.test.ts`
+ * asserts it. This is a list rather than a boolean so that a Node or Bun
+ * version which makes some export non-configurable degrades into a NAMED,
+ * testable gap instead of a silent one — the failure mode this guard exists to
+ * prevent should not be the failure mode of the guard itself.
+ */
+export const unlockedNetworkEntryPoints: string[] = [];
+
+/**
+ * Replaces every function-valued export on a built-in module's mutable CJS
+ * `.default` object with a throwing stub, and LOCKS the replacement.
+ *
+ * The locking is not decoration. Plain assignment — which is what this did
+ * originally — leaves the stub `writable: true, configurable: true`, measured
+ * directly: `http.default.request = () => 'restored'` succeeded, and the
+ * restored function was callable. The same mutability that makes the CJS
+ * default object poisonable makes the poison reversible, so any code running
+ * later could undo Section 12's engine-side egress defence, by accident or
+ * otherwise. `globalThis.fetch` was already locked this way; the module half
+ * was not.
+ */
 function poisonModuleFunctions(moduleName: string, moduleExports: Record<string, unknown>): void {
   for (const key of Object.keys(moduleExports)) {
-    if (typeof moduleExports[key] === 'function') {
-      moduleExports[key] = () => throwBlocked(`${moduleName}.${key}()`);
+    if (typeof moduleExports[key] !== 'function') {
+      continue;
+    }
+    const stub = (): never => throwBlocked(`${moduleName}.${key}()`);
+    try {
+      Object.defineProperty(moduleExports, key, {
+        value: stub,
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      });
+    } catch {
+      // Poison it anyway rather than leaving the real function in place, but
+      // record that this one can be undone. A caught-and-forgotten exception
+      // here would be exactly the silent degradation this file guards against.
+      moduleExports[key] = stub;
+      unlockedNetworkEntryPoints.push(`${moduleName}.${key}`);
     }
   }
 }
