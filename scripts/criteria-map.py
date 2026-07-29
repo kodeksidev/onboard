@@ -29,7 +29,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+# ALL workflows, not just ci.yml. The release workflow now carries real
+# evidence — it installs the .deb on a clean runner and drives the installed
+# engine — and a map that only read ci.yml would refuse that as "no job runs
+# it", which is how a criterion stays marked blocked after it stops being.
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 CRITERIA_HEADING = "## 13. Acceptance criteria"
 JOB_HEADER = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 RUN_KEY = re.compile(r"^\s*-?\s*run:\s*(.*)$")
@@ -101,7 +105,12 @@ EVIDENCE: dict[int, Evidence] = {
     20: Evidence(VERIFY, "ci", "axe-core + keyboard tests, inside verify"),
     21: Evidence(VERIFY, "ci", "reduced-motion tests, inside verify"),
     22: Evidence(None, "not-wired", "wdio port race is tooling, but the macOS smoke half needs a Mac", blocker="machine"),
-    23: Evidence(None, "not-wired", "LAUNCHING the .dmg needs a Mac; building it does not", blocker="machine"),
+    23: Evidence(
+        "installed-app-check",
+        "ci",
+        "Linux: .deb installed on a clean runner, engine launches and analyses. macOS half needs a Mac; UI graph-render needs the e2e harness",
+        blocker="machine",
+    ),
     24: Evidence(
         None,
         "artifact",
@@ -153,7 +162,14 @@ def parse_criteria() -> dict[int, str]:
 
 def parse_jobs() -> dict[str, tuple[list[str], int]]:
     """{job id: (commands it runs, number of operating systems it runs on)}."""
-    text = WORKFLOW.read_text(encoding="utf-8")
+    jobs: dict[str, tuple[list[str], int]] = {}
+    for path in sorted(WORKFLOW_DIR.glob("*.yml")) + sorted(WORKFLOW_DIR.glob("*.yaml")):
+        jobs.update(parse_one_workflow(path))
+    return jobs
+
+
+def parse_one_workflow(path: Path) -> dict[str, tuple[list[str], int]]:
+    text = path.read_text(encoding="utf-8")
     jobs: dict[str, tuple[list[str], int]] = {}
     current: str | None = None
     commands: list[str] = []

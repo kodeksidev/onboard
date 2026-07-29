@@ -5,9 +5,9 @@ the criteria are parsed from the build spec, the CI coverage is parsed from
 `.github/workflows/ci.yml`, and every count below is computed. Change the
 evidence table in the script, not this file.
 
-- **19 of 28** criteria are backed by a CI job.
+- **20 of 28** criteria are backed by a CI job.
 - **13** of those run on all three operating systems.
-- **9** are not evidenced by CI, of which:
+- **8** are not evidenced by CI, of which:
 
 ## CI-blocked, strictly
 
@@ -17,7 +17,7 @@ evidence table in the script, not this file.
 > unfinished, and calling it blocked launders remaining work into an
 > external constraint.
 
-**CI-BLOCKED: 4** — #11, #12, #22, #23
+**CI-BLOCKED: 3** — #11, #12, #22
 
 The rest, under their real cause:
 
@@ -48,7 +48,7 @@ The rest, under their real cause:
 | 20 | CI on 3 OS | — | axe-core + keyboard tests, inside verify | The dependency graph is fully operable with the keyboard alone (enter, traver... |
 | 21 | CI on 3 OS | — | reduced-motion tests, inside verify | With `prefers-reduced-motion: reduce`, no Cytoscape animation and no CSS tran... |
 | 22 | CI-BLOCKED — gate exists, not wired | machine | wdio port race is tooling, but the macOS smoke half needs a Mac | `bun run e2e` passes on Windows and Linux; `docs/MACOS_SMOKE.md` is signed of... |
-| 23 | CI-BLOCKED — gate exists, not wired | machine | LAUNCHING the .dmg needs a Mac; building it does not | Installers build and launch on all three platforms: `.dmg` (x64 + aarch64), `... |
+| 23 | CI on 1 OS | machine | Linux: .deb installed on a clean runner, engine launches and analyses. macOS half needs a Mac; UI graph-render needs the e2e harness | Installers build and launch on all three platforms: `.dmg` (x64 + aarch64), `... |
 | 24 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | INSTALL.md names both bypass paths; SIGNING.md names the signing path | `docs/INSTALL.md` documents the exact Gatekeeper and SmartScreen bypass steps... |
 | 25 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | README covers install, the privacy model and enabling AI | `README.md` covers install, the privacy model, and how to optionally enable A... |
 | 26 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | guard-disposition sweep done; every fail-open found got a fix or a failing test | `docs/SECURITY_AUDIT.md` shows zero open CRITICAL and zero open HIGH findings. |
