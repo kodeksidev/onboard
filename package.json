@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "verify": "bun run verify:js && bun run verify:rust",
-    "verify:js": "bun run typecheck && bun run lint && bun run lint:check-rules-fire && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run criteria:check-drift && bun run ci:check-verify-coverage && bun run test",
+    "verify:js": "bun run typecheck && bun run lint && bun run lint:check-rules-fire && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run engine:check-globals && bun run criteria:check-drift && bun run ci:check-verify-coverage && bun run test",
     "verify:rust": "cargo fmt --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all --check && cargo clippy --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all-targets --all-features -- -D warnings && cargo test --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --no-fail-fast",
     "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
     "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
@@ -31,7 +31,8 @@
     "criteria:check-drift": "python scripts/criteria-map.py --check",
     "verify:report": "bun run scripts/run-verify-stages.ts verify",
     "verify:report:js": "bun run scripts/run-verify-stages.ts verify:js",
-    "ci:check-verify-coverage": "python scripts/ci-verify-coverage-check.py"
+    "ci:check-verify-coverage": "python scripts/ci-verify-coverage-check.py",
+    "engine:check-globals": "python scripts/engine-globals-scan.py"
   },
   "overrides": {
     "brace-expansion": ">=5.0.8",
