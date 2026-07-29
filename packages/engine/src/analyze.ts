@@ -24,6 +24,7 @@ import { PYTHON_STDLIB_MODULES } from './resolve/python-stdlib';
 import { detectManifests, type DependencyInfoValue, type ManifestInfoValue } from './stack/manifests';
 import { detectEntryPoints, type EntryPointValue } from './stack/entry-points';
 import { computeRepoId } from './util/hash';
+import { domainError } from './rpc/domain-error';
 import type { CacheStore } from './cache/cache-store';
 import {
   processOneFile,
@@ -346,7 +347,45 @@ function runFullRebuild(options: AnalyzeOptions, inputs: FullRebuildInputs): Ana
   return { result, timings: { walkMs: timings.walkMs, parseMs: timings.parseMs, resolveMs, graphMs: 0, totalMs, cacheHitCount: timings.cacheHitCount } };
 }
 
+/**
+ * Re-entrancy guard. Two `analyze()` calls overlapping in ONE process do not
+ * produce independent results — measured, not feared: identical content
+ * analysed from two paths concurrently disagreed on `edges`, `symbolCount`,
+ * `pageRank`, `inDegree`/`outDegree`, `diagnostics` and `graph.componentCount`
+ * (107 differing leaves; sequentially, 3). See `docs/DECISIONS.md`.
+ *
+ * Until the shared state is located and made re-entrant, overlapping is
+ * REFUSED here rather than prevented by a consumer's discipline. It was
+ * previously unreachable only because `apps/desktop/src-tauri`'s supervisor
+ * holds a single process-wide `analysis_in_progress` flag — a stricter rule
+ * than the build spec's Phase 6 wording ("one analysis at a time PER REPO"),
+ * which would permit exactly the overlap that corrupts results. A safety
+ * property that depends on another domain being accidentally stricter than
+ * its own spec is not a property; this is.
+ *
+ * `verify:determinism`, the snapshot suite and the sidecar all call
+ * sequentially, so nothing legitimate trips this.
+ */
+let analysisInFlight = false;
+
 async function analyzeInternal(options: AnalyzeOptions): Promise<AnalyzeWithTimingsResult> {
+  if (analysisInFlight) {
+    throw domainError(
+      'E_ANALYSIS_IN_PROGRESS',
+      'An analysis is already running in this engine process.',
+      'The engine is single-threaded per process: a concurrent analysis would produce a result that is not reproducible. Wait for the current analysis to finish.',
+      null,
+    );
+  }
+  analysisInFlight = true;
+  try {
+    return await analyzeGuarded(options);
+  } finally {
+    analysisInFlight = false;
+  }
+}
+
+async function analyzeGuarded(options: AnalyzeOptions): Promise<AnalyzeWithTimingsResult> {
   const totalStart = performance.now();
   const onProgress = options.onProgress;
 
