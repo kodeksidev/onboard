@@ -17,6 +17,17 @@ env:
   # Section 4 names Bun 1.2.x; we run 1.3.x — see docs/DECISIONS.md.
   BUN_VERSION: '1.3.14'
 
+  # `verify` shells out to `python` twice — `docs:check` and `ci:check-installs`
+  # — and NEITHER has ever executed in CI, because `lint` fails ahead of them in
+  # the chain on every platform to date. So the interpreter they need is an
+  # untested assumption, and the assumption is wrong on at least one runner:
+  # the macos-14 image ships `python3` but no bare `python`, so the scripts
+  # would die on "command not found" the moment lint stops shadowing them.
+  # `setup-python` puts a real `python` on PATH on all three OSes. Pinned rather
+  # than floating for the same reason BUN_VERSION is: a silent interpreter bump
+  # is a change to what a green run means.
+  PYTHON_VERSION: '3.12'
+
   # There is no `rust-toolchain.toml` in this repository (checked: `find . -name
   # 'rust-toolchain*'` returns nothing), so the workspace config is the only
   # declaration of a Rust version: `apps/desktop/src-tauri/Cargo.toml` sets
@@ -50,6 +61,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Python (verify shells out to it — see PYTHON_VERSION)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache the Bun install cache
         uses: actions/cache@v4
@@ -87,7 +103,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run verify (typecheck && lint && contract drift && docs && installs && test)
+      - name: Run verify (typecheck && lint && contract drift && docs && CI guards && test)
         run: bun run verify
 
   verify-space-in-path:
@@ -107,6 +123,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Python (verify shells out to it — see PYTHON_VERSION)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies (from a path containing a space)
         working-directory: 'onboard checkout'
