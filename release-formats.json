@@ -1,0 +1,49 @@
+{
+  "$comment": [
+    "THE single source of what this project ships, per platform.",
+    "",
+    "Read by three things that previously each decided for themselves:",
+    "  1. .github/workflows/release.yml's `plan` job, which emits the bundle",
+    "     matrix and each job's upload glob from this file;",
+    "  2. scripts/release-assets-check.py, which asserts the received asset set",
+    "     EQUALS the expected set before a release is created;",
+    "  3. any future consumer that needs to know what a release contains.",
+    "",
+    "This exists because the matrix and the upload glob disagreed: the matrix",
+    "asked for deb+rpm, Tauri built both, and the glob had no *.rpm — so a dry",
+    "run went green staging three assets while the docs promised four. Nothing",
+    "failed, because absence is the one thing a check on arrivals cannot see.",
+    "That is the fifth instance of one duplication pattern in this codebase,",
+    "after engine-rpc-client.ts's hand-rolled reader, three copies of",
+    "parseJsonSafely, and the tsconfig diagnostic that reached one module of",
+    "four. Behaviour written more than once diverges, and the divergence is",
+    "where the defect lives.",
+    "",
+    "`publish: false` means the artefact is BUILT and uploaded to the workflow",
+    "run but never attached to a release. macOS is held because no macOS build",
+    "has been executed on a Mac — see docs/INSTALL.md.",
+    "",
+    "`.AppImage` is absent deliberately: it does not build (KNOWN_ISSUES KI-9),",
+    "and the substitution is recorded as an amendment in docs/DECISIONS.md."
+  ],
+  "platforms": [
+    {
+      "os": "ubuntu-22.04",
+      "publish": true,
+      "bundles": ["deb", "rpm"],
+      "extensions": [".deb", ".rpm"]
+    },
+    {
+      "os": "windows-2022",
+      "publish": true,
+      "bundles": ["nsis", "msi"],
+      "extensions": [".exe", ".msi"]
+    },
+    {
+      "os": "macos-14",
+      "publish": false,
+      "bundles": ["dmg"],
+      "extensions": [".dmg"]
+    }
+  ]
+}
