@@ -98,6 +98,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Set up Python (the received-sidecar check is a Python script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Install Tauri's Linux system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -118,6 +123,15 @@ jobs:
       - name: Restore the executable bit
         if: runner.os != 'Windows'
         run: chmod +x packages/engine/dist/onboard-engine-*
+
+      # The claim Phase 14 rests on and that had never executed: the sidecars
+      # built on Linux arrive INTACT and UNDER THEIR EXACT NAMES on a different
+      # runner. `build:sidecar` verifies format and architecture where the files
+      # are produced; this verifies identity and permissions where they are
+      # consumed, which is a different claim. Expected names are derived from
+      # build-sidecar.ts's own target table.
+      - name: Assert the Linux-built sidecars arrived intact
+        run: python scripts/sidecar-received-check.py
 
       - name: Stage the sidecar into the Tauri shell
         run: bun run stage:sidecar
@@ -167,7 +181,11 @@ jobs:
     # otherwise be one careless pattern away from being published.
     name: publish (Windows + Linux only)
     needs: bundle
-    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    # NO job-level `if`. The asset check must run on a workflow_dispatch dry run
+    # too — it is the first thing that sees what the bundlers ACTUALLY produce,
+    # including any format nobody anticipated, and gating the whole job behind
+    # the tag would mean its first real execution is the release itself. Only
+    # the final step is tag-gated.
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -194,6 +212,7 @@ jobs:
         run: python scripts/release-assets-check.py release-assets
 
       - name: Create the release
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           files: release-assets/**/*
