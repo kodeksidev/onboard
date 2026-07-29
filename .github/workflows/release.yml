@@ -15,9 +15,27 @@ name: Release
 # artefact is still built and uploaded to the workflow run, so whoever performs
 # `docs/MACOS_SMOKE.md` has something to install.
 
+# `workflow_dispatch` only registers from the DEFAULT BRANCH, so a release
+# workflow cannot be dry-run before it is merged — `gh workflow run` answers
+# "not found on the default branch". That would force this file's first real
+# execution to be the release itself, which is the failure mode this project has
+# spent a week removing.
+#
+# The `pull_request` trigger below is the answer, and it is permanent rather
+# than scaffolding: the workflow that produces the artefacts users install
+# should be exercised whenever it changes. The path filter keeps it off every
+# unrelated PR, and the release-creation step is tag-gated, so a PR run builds
+# every artefact and publishes nothing.
 on:
   push:
     tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/release-assets-check.py'
+      - 'scripts/sidecar-received-check.py'
+      - 'packages/engine/scripts/build-sidecar.ts'
+      - 'scripts/stage-sidecar.ts'
   workflow_dispatch:
     inputs:
       dry_run:
