@@ -25,7 +25,10 @@ use serde_json::{json, Value};
 /// "which is what the UI develops against for Phases 7-10" — the sidecar
 /// stub reuses it so Phase 6 exercises a real, schema-valid envelope).
 const SAMPLE_ANALYSIS_ENVELOPE: &str =
-    include_str!("../../../../../packages/contract/fixtures/sample-analysis.json");
+    // One level deeper than before: this file moved from
+    // `src-tauri/src/bin/` to `src-tauri/dev-tools/src/bin/`, so the walk up
+    // to the repository root gained a segment.
+    include_str!("../../../../../../packages/contract/fixtures/sample-analysis.json");
 
 fn main() {
     let toggles = parse_toggles(std::env::args().skip(1));

@@ -12,7 +12,7 @@
   "scripts": {
     "verify": "bun run verify:js && bun run verify:rust",
     "verify:js": "bun run typecheck && bun run lint && bun run lint:check-rules-fire && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run engine:check-globals && bun run criteria:check-drift && bun run ci:check-verify-coverage && bun run test",
-    "verify:rust": "cargo fmt --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all --check && cargo clippy --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all-targets --all-features -- -D warnings && cargo test --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --no-fail-fast",
+    "verify:rust": "cargo fmt --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all --check && cargo clippy --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --workspace --all-targets --all-features -- -D warnings && cargo build --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" -p onboard-dev-tools --bin onboard_engine_stub && cargo test --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --workspace --no-fail-fast",
     "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
     "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
     "fixture:emit": "bun run --cwd \"packages/contract\" fixture:emit",

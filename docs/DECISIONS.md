@@ -2742,3 +2742,34 @@ decided; it only records choices the spec left open.
   "unresolved" is representable. The previous code constructed a path that
   existed nowhere and let the OS explain it — which is how the raw string
   reached the UI in the first place.
+
+- **AMENDMENT — never read-modify-write a tracked file through a shell.**
+
+  `Section 7` of `docs/SESSION_HANDOFF.md` already said to prefer Python
+  scripts over shell one-liners for anything touching Rust string literals.
+  This widens it, because the failure recurred twice in one session on files
+  that contained no string literals at all.
+
+  The specific idiom, which looks harmless and is not:
+
+  ```powershell
+  (Get-Content $f -Raw) -replace 'a','b' | Set-Content $f -Encoding utf8
+  ```
+
+  `Get-Content -Raw` decodes with the console's default encoding, not UTF-8.
+  On this machine that reads every UTF-8 em-dash as three cp1252 characters,
+  and `Set-Content -Encoding utf8` then writes those three characters back as
+  UTF-8 — double-encoding the file. Seven source files lost 77 runs of text
+  this way; `Cargo.toml` lost 6 more an hour later, to the same idiom, after
+  the first repair.
+
+  **Both were caught by byte-exact assertions**, not by review: the Section 10
+  copy comparison in `tests/sidecar_supervisor.rs` failed on a corrupted
+  em-dash, which is the third time this session an escaping layer has cost
+  real time. A test asserting "an error rendered" would have shipped it.
+
+  **The rule:** edit tracked files with a real editor tool, or with Python
+  reading and writing `encoding="utf-8"` explicitly. Never with a shell
+  read-modify-write. Detect with `grep -c 'â€'` — clean text never contains
+  that sequence, so it is a reliable canary. Note that a PowerShell console
+  DISPLAYING mojibake proves nothing; only a content search does.

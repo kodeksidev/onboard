@@ -33,6 +33,9 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - 'scripts/release-assets-check.py'
+      # The install jobs' entire body. Without this a change to what
+      # "installed correctly" MEANS would not run the jobs that assert it.
+      - 'scripts/installed-app-check.py'
       - 'scripts/sidecar-received-check.py'
       - 'packages/engine/scripts/build-sidecar.ts'
       - 'scripts/stage-sidecar.ts'

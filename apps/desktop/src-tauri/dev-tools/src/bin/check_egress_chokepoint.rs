@@ -464,11 +464,36 @@ fn report(label: &str, subject: &Path, outcome: Result<(), Vec<Violation>>) -> b
     }
 }
 
+/// The crate this checker AUDITS — `onboard`, one level up.
+///
+/// This binary used to live inside `onboard` itself, where
+/// `CARGO_MANIFEST_DIR` was the audited crate. It now lives in the sibling
+/// `dev-tools` crate (so Tauri's bundler cannot ship it to users), which
+/// makes `CARGO_MANIFEST_DIR` point at `dev-tools/` instead. Scanning that
+/// would find no `src/ai/` at all and every check would pass vacuously —
+/// the exact failure mode this repository treats as worse than a missing
+/// check. So the parent is resolved explicitly, and asserted to be the
+/// crate we mean.
+fn audited_crate_dir() -> PathBuf {
+    let dev_tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let audited = dev_tools
+        .parent()
+        .expect("dev-tools must have a parent directory")
+        .to_path_buf();
+    assert!(
+        audited.join("src").join("ai").is_dir(),
+        "expected the audited crate at {} to contain src/ai — a vacuous pass is worse \
+         than a missing check, so this refuses to scan the wrong directory",
+        audited.display()
+    );
+    audited
+}
+
 fn main() {
     let root = std::env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        .unwrap_or_else(audited_crate_dir);
     let src_dir = root.join("src");
     let cargo_toml = root.join("Cargo.toml");
 
@@ -858,7 +883,7 @@ mod tests {
     /// nobody is looking at. Every entry must still match something real.
     #[test]
     fn every_reviewed_door_still_exists_in_the_real_crate() {
-        let src_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let src_dir = audited_crate_dir().join("src");
         let sources = read_scannable_sources(&src_dir);
         for (relative, door) in REVIEWED_DOORS {
             let found = sources
@@ -877,7 +902,7 @@ mod tests {
 
     #[test]
     fn the_real_crate_passes_every_check() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifest_dir = audited_crate_dir();
         let src_dir = manifest_dir.join("src");
         let cargo_toml = manifest_dir.join("Cargo.toml");
         assert_eq!(check_source_imports(&src_dir), Ok(()));

@@ -351,7 +351,11 @@ jobs:
       # resolve.
       - name: Assert exactly one door and no banned HTTP/TLS crates
         working-directory: apps/desktop/src-tauri
-        run: cargo run --quiet --bin check_egress_chokepoint -- .
+        # `-p onboard-dev-tools`: this checker moved out of the `onboard`
+        # package so Tauri's bundler cannot ship it to users. It is a
+        # workspace member, so the run is otherwise unchanged, and `.` still
+        # names the crate it audits.
+        run: cargo run --quiet -p onboard-dev-tools --bin check_egress_chokepoint -- .
 
   commit-messages:
     # Acceptance criterion 28, which existed as a sentence and enforced nothing.

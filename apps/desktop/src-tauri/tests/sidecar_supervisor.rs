@@ -5,16 +5,14 @@
 //! `CARGO_BIN_EXE_<name>` is only populated by Cargo for integration test
 //! and benchmark targets, never for `--lib` unit tests.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use onboard_lib::constants::SIDECAR_MAX_RESTARTS;
 use onboard_lib::sidecar::supervisor::{SidecarConfig, SidecarSupervisor};
 use serde_json::json;
 
-fn stub_program() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_onboard_engine_stub"))
-}
+mod common;
+use common::stub_program;
 
 fn test_config(extra_env_args: &[(&str, &str)]) -> SidecarConfig {
     // The stub reads behavior toggles from argv (`key=value` pairs) so each
