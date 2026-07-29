@@ -121,8 +121,8 @@ jobs:
       # Fail-fast is right at a developer's terminal and wrong here, where the
       # whole point of the run is the full picture. Stage list is derived from
       # `scripts.verify`, so the two cannot drift apart.
-      - name: Run verify (every stage reports; job fails if any stage fails)
-        run: bun run verify:report
+      - name: Run verify, JS half (every stage reports; job fails if any fails)
+        run: bun run verify:report:js
 
   verify-space-in-path:
     # Section 10 / known-hard-part (3) / acceptance criterion 1: the dev machine's
@@ -155,7 +155,7 @@ jobs:
 
       - name: Run verify (from a path containing a space)
         working-directory: 'onboard checkout'
-        run: bun run verify:report
+        run: bun run verify:report:js
 
   rust-fmt:
     # Split out from the `rust` job on purpose: `cargo fmt --check` is the only
@@ -320,19 +320,19 @@ jobs:
       # thresholds live in `src-tauri/clippy.toml` and are `deny`-level in
       # `Cargo.toml`'s `[lints.clippy]`, which only fails a build if clippy is
       # actually run.
-      - name: cargo clippy -- -D warnings
-        working-directory: apps/desktop/src-tauri
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      # `--no-fail-fast` so one red test binary still reports the other twelve
-      # instead of masking them; the job's exit status is unaffected (cargo
-      # still exits non-zero). Without it, a single failing `--lib` test hides
-      # every integration and compile-fail suite behind it — observed directly:
-      # a plain `cargo test` here stopped after the lib target and never ran
-      # `lockdown.rs` or any of the five compile-fail suites at all.
-      - name: cargo test (full Rust suite)
-        working-directory: apps/desktop/src-tauri
-        run: cargo test --no-fail-fast
+      # ONE command, identical to what a developer runs locally: `verify:rust`
+      # is fmt --check + clippy -D warnings + cargo test --no-fail-fast. Three
+      # separate steps here meant three separate commands to remember before
+      # pushing, and a `cargo fmt --check` failure that a CI round trip had to
+      # discover. `ci:check-verify-coverage` asserts this job still covers every
+      # stage of `verify`.
+      #
+      # `--no-fail-fast` (inside the script) so one red test binary still reports
+      # the other twelve instead of masking them; the job's exit status is
+      # unaffected. Without it a single failing `--lib` test hides every
+      # integration and compile-fail suite behind it — observed directly.
+      - name: verify:rust (fmt --check + clippy -D warnings + full test suite)
+        run: bun run verify:rust
 
       # Section 12: `apps/desktop/src-tauri/src/ai/http.rs` constructs the only
       # `reqwest::Client` in the repository. Implemented as a real, unit-tested
