@@ -74,7 +74,7 @@ class Evidence:
 # The gate strings are matched against `run:` commands in ci.yml, so a job that
 # stops invoking one is detected rather than assumed.
 VERIFY = "bun run verify:report"
-RUST_TEST = "cargo test"
+RUST_TEST = "verify:rust"  # fmt --check + clippy -D warnings + cargo test, one command
 DETERMINISM = "verify:determinism"
 NO_NETWORK = "verify:no-network"
 
