@@ -429,6 +429,7 @@ jobs:
         run: echo "path=$(python scripts/release-notes-check.py --emit-path)" >> "$GITHUB_OUTPUT"
 
       - name: Create the release
+        id: release
         if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
@@ -439,3 +440,21 @@ jobs:
           # same text whether you read the release page or the repository.
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: false
+
+      # Reads the created release BACK and compares it to the file that was
+      # sent. Sending the right input and publishing the right output are
+      # different claims, and only the second is the one a reader experiences.
+      #
+      # This is the only check here that cannot run on the pull-request path,
+      # because the step above is skipped there — which makes it the one most
+      # likely to be "verified" by opening the page and nodding. So it runs in
+      # the job and fails the run.
+      - name: Assert the published body IS the notes file
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          python scripts/release-body-check.py
+          --release-id "${{ steps.release.outputs.id }}"
+          --repository "${{ github.repository }}"
+          --notes "${{ steps.notes.outputs.path }}"
