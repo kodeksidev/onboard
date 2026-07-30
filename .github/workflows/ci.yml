@@ -364,13 +364,19 @@ jobs:
     # `fetch-depth: 0`. It compiles nothing and installs no toolchain beyond
     # Python, so it is the cheapest job in this file.
     #
-    # PRE-MERGE HISTORY PREDATES THIS GATE. This branch carries one subject
-    # (`ci,docs: ...`) that the gate rejects — `<type>` is one type, and a
-    # comma-joined pair is two. It is not rewritten: reworking nine commits and
-    # force-pushing to clear one subject is disproportionate, and this PR
-    # squash-merges, so the branch's subjects never reach `main`. The gate is
-    # therefore clean from the merge commit onward. See docs/DECISIONS.md so
-    # nobody later reads that exception as the gate being broken.
+    # SCOPE: every commit AFTER the one where this gate landed (`d67b30e`),
+    # with no exceptions list. A commit-message linter cannot retroactively
+    # govern history that predates it — before that commit there was no check
+    # to run, so no author could conform. The boundary is a recorded constant
+    # in the script, not a date and not "recent". See docs/DECISIONS.md.
+    #
+    # This comment previously said the branch squash-merges, so its subjects
+    # never reach `main`. THAT IS RETRACTED. `docs:check` now requires every
+    # SHA cited in docs/ to resolve, and DECISIONS.md cites branch SHAs — a
+    # squash collapses them, and once the branch is deleted those citations
+    # dangle and `docs:check` fails on `main`. This PR merges with a merge
+    # commit, history preserved. The gate's correctness therefore cannot lean
+    # on the branch's commits disappearing.
     name: commit messages (criterion 28)
     runs-on: ubuntu-22.04
     steps:

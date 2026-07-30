@@ -153,7 +153,16 @@ EVIDENCE: dict[int, Evidence] = {
         ),
     ),
     27: Evidence(VERIFY, "ci", "lint + lint:check-rules-fire, inside verify; clippy in the Rust job"),
-    28: Evidence(None, "no-gate", "conventional-commit linting is not wired", blocker="tooling"),
+    28: Evidence(
+        "commit-message-check",
+        "ci",
+        "CI-backed FROM THE BOUNDARY FORWARD, not unqualified: the gate checks "
+        "every commit after d67b30e, where it landed, with no exceptions list. "
+        "A commit-message linter cannot retroactively govern history that "
+        "predates it. Pre-boundary subjects remain visible via "
+        "`commit:check --all-history`, which is INFORMATIONAL and wired to "
+        "nothing",
+    ),
 }
 
 

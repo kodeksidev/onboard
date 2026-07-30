@@ -2773,3 +2773,53 @@ decided; it only records choices the spec left open.
   read-modify-write. Detect with `grep -c 'â€'` — clean text never contains
   that sequence, so it is a reliable canary. Note that a PowerShell console
   DISPLAYING mojibake proves nothing; only a content search does.
+
+- **AMENDMENT — criterion 28's gate is scoped to commits after the gate landed,
+  and the squash-merge decision is RETRACTED.**
+
+  Two changes, recorded together because the second is what makes the first
+  load-bearing.
+
+  **The scope.** `commit:check` now examines every commit after `d67b30e` — the
+  commit that ADDED `scripts/commit-message-check.py` — with no exceptions list.
+
+  The justification is not "some commits fail". It is that **a commit-message
+  linter cannot retroactively govern history that predates it**: before that
+  commit there was no check to run, so no author could have conformed to it, and
+  failing them is not enforcement but a permanently red job that reports rather
+  than holds. The test for whether a scope is principled or merely convenient is
+  *would we choose it if history were already clean?* — and the answer here is
+  yes, because a linter's authority begins when the linter exists.
+
+  Two facts show the boundary was not reverse-engineered from the current
+  failure, which is the trap this kind of change usually falls into:
+
+  1. **It does not clear today's red.** `209c740` (a 103-character subject)
+     POSTDATES the boundary, is in scope, and still fails. A boundary chosen to
+     make the job green would have been placed after it.
+  2. **The other candidate boundary changes nothing.** The gate could have been
+     dated from where CI began running it (`32ad079`, two commits later)
+     instead. The earlier is correct — the obligation begins when an author can
+     run the check, not when someone else starts enforcing it — but either
+     choice yields the same result today.
+
+  `commit:check --all-history` keeps the full picture available. It is
+  INFORMATIONAL and wired to nothing; it currently reports three non-conforming
+  subjects, of which two predate the gate.
+
+  Non-vacuity, as everywhere: `scope_self_test` builds a throwaway repository
+  with a non-conforming subject on each side of a boundary and asserts the
+  split in both directions. A matcher-only test would pass equally on a scope
+  bug that examined zero commits or every commit.
+
+  **The retraction.** This PR was previously authorised to squash-merge, and the
+  criterion-28 job's own comment leaned on that: the branch's subjects would
+  never reach `main`. **That is withdrawn.** `docs:check` now requires every SHA
+  cited in `docs/` to resolve, and `DECISIONS.md` cites branch SHAs. A squash
+  collapses those commits; once the branch is deleted the citations dangle and
+  `docs:check` fails on `main` — a gate breaking a gate. **The PR merges with a
+  merge commit, history preserved.**
+
+  The general shape is worth keeping: a merge strategy is not only a history
+  preference once something else in the repository depends on the commits being
+  reachable.

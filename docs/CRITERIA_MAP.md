@@ -5,11 +5,11 @@ the criteria are parsed from the build spec, the CI coverage is parsed from
 `.github/workflows/ci.yml`, and every count below is computed. Change the
 evidence table in the script, not this file.
 
-- **20 of 28** criteria are backed by a CI job.
+- **21 of 28** criteria are backed by a CI job.
 - **13** of those run on all three operating systems.
 - **20** have been OBSERVED GREEN, with a run id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 27].
-- **0** are wired-but-unobserved.
-- **8** are not evidenced by CI, of which:
+- **1** are WIRED but never observed green: [28].
+- **7** are not evidenced by CI, of which:
 
 ## CI-blocked, strictly
 
@@ -24,7 +24,7 @@ evidence table in the script, not this file.
 The rest, under their real cause:
 
 - **none** (settled by CI) — #24, #25, #26
-- **tooling** (needs a tool configured; the machines exist) — #10, #28
+- **tooling** (needs a tool configured; the machines exist) — #10
 
 | # | Status | Blocker | Evidence | Criterion |
 |---|---|---|---|---|
@@ -55,7 +55,7 @@ The rest, under their real cause:
 | 25 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | README covers install, the privacy model and enabling AI | `README.md` covers install, the privacy model, and how to optionally enable A... |
 | 26 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | guard-disposition sweep done; every fail-open found got a fix or a failing test | `docs/SECURITY_AUDIT.md` shows zero open CRITICAL and zero open HIGH findings. |
 | 27 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | lint + lint:check-rules-fire, inside verify; clippy in the Rust job | No source file exceeds 800 lines, no function exceeds 50 lines, and no block... |
-| 28 | NO GATE | tooling | conventional-commit linting is not wired | Every commit follows `<type>: <description>`; CI rejects a non-conforming mes... |
+| 28 | WIRED on 1 OS — never observed green | — | CI-backed FROM THE BOUNDARY FORWARD, not unqualified: the gate checks every commit after d67b30e, where it landed, with no exceptions list. A commit-message linter cannot retroactively govern history that predates it. Pre-boundary subjects remain visible via `commit:check --all-history`, which is INFORMATIONAL and wired to nothing | Every commit follows `<type>: <description>`; CI rejects a non-conforming mes... |
 
 ## What 'CI on N OS' means
 
