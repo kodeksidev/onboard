@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -50,9 +51,34 @@ MERGE = re.compile(r"^Merge (branch|pull request|remote-tracking) ")
 MAX_SUBJECT_LENGTH = 100
 
 
-def git(*args: str) -> str:
+# ---------------------------------------------------------------------------
+# Scope: the commit where this gate landed, and everything after it
+# ---------------------------------------------------------------------------
+#
+# A commit-message linter cannot retroactively govern history that predates it.
+# Before this commit there was no check to run, so no author could conform to
+# it; failing them is not enforcement, it is a permanently red job that reports
+# rather than holds — the exact shape this project spends its effort removing.
+#
+# The test for whether this scope is principled rather than convenient: WOULD WE
+# CHOOSE IT IF HISTORY WERE ALREADY CLEAN? Yes. A linter's authority starts when
+# the linter exists, regardless of whether anything before it happens to pass.
+# Nothing here is derived from which commits currently fail — and the proof is
+# that this boundary does NOT clear today's red: `209c740` postdates it and is
+# still in scope, still failing. A boundary chosen to make the job green would
+# have been placed after that commit.
+#
+# `d67b30e` is where `scripts/commit-message-check.py` was ADDED, not where CI
+# began running it (`32ad079`, two commits later). The earlier of the two is
+# correct: the obligation begins when an author can run the check, not when
+# someone else starts enforcing it. Choosing the later one would not change any
+# current result, which is a second sign the choice is not outcome-driven.
+GATE_LANDED = "d67b30e1fc7f1b30902e196574ce6e15ffac8c1c"
+
+
+def git(*args: str, repo: Path | None = None) -> str:
     result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, check=False
+        ["git", "-C", str(repo or REPO_ROOT), *args], capture_output=True, text=True, check=False
     )
     return result.stdout.strip() if result.returncode == 0 else ""
 
@@ -64,20 +90,35 @@ def default_branch() -> str:
     return ""
 
 
-def subjects() -> list[tuple[str, str]]:
-    """(short sha, subject) for every commit this branch adds."""
-    base = default_branch()
-    head = git("rev-parse", "--abbrev-ref", "HEAD")
-    spec = f"{base}..HEAD" if base and head != base.split("/")[-1] else "-1"
-    raw = git("log", "--no-merges", "--format=%h%x1f%s", spec)
-    if not raw:
-        raw = git("log", "--no-merges", "--format=%h%x1f%s", "-1")
+def parse_log(raw: str) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for line in raw.splitlines():
         if "\x1f" in line:
             sha, subject = line.split("\x1f", 1)
             entries.append((sha, subject))
     return entries
+
+
+def subjects(boundary: str | None = GATE_LANDED, repo: Path | None = None) -> list[tuple[str, str]]:
+    """(short sha, subject) for every commit in scope.
+
+    Scope is `boundary..HEAD` — every commit after the gate landed, with NO
+    exceptions list. An allowlist would let a violation be argued away one
+    entry at a time; there is nothing to argue with here. A future
+    non-conforming commit turns this red and keeps it red.
+
+    `boundary=None` scans all history — the informational mode, not wired to
+    CI. See `--all-history`.
+    """
+    if boundary is None:
+        return parse_log(git("log", "--no-merges", "--format=%h%x1f%s", repo=repo))
+    if not git("rev-parse", "--verify", "--quiet", f"{boundary}^{{commit}}", repo=repo):
+        # A boundary that does not resolve would silently widen or empty the
+        # scope depending on how git failed. Refuse instead.
+        return []
+    return parse_log(
+        git("log", "--no-merges", "--format=%h%x1f%s", f"{boundary}..HEAD", repo=repo)
+    )
 
 
 def violation(subject: str) -> str | None:
@@ -113,6 +154,54 @@ def self_test() -> str | None:
 
     if violation("Merge branch 'main' into topic") is not None:
         return "rejected a git-authored merge subject"
+    return scope_self_test()
+
+
+def scope_self_test() -> str | None:
+    """Prove the BOUNDARY works, in both directions, against a real repository.
+
+    Checking that the matcher rejects a bad string proves nothing about the
+    range: a scope bug that examined zero commits, or every commit, would pass
+    a matcher-only test and this file would report either a vacuous green or a
+    permanent red. So this builds a throwaway repository with a bad subject on
+    each side of a boundary and asserts the split.
+
+    Both directions matter and they fail differently:
+      * a bad subject AFTER the boundary must be caught — otherwise the gate
+        has been scoped into uselessness;
+      * a bad subject BEFORE it must not be — otherwise scoping did nothing and
+        the job is red forever on history nobody can change.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        repo = Path(directory)
+        env_ok = git("init", "--quiet", repo=repo) is not None
+        git("config", "user.email", "test@example.invalid", repo=repo)
+        git("config", "user.name", "Scope Test", repo=repo)
+        if not env_ok:
+            return "could not initialise the scope-test repository"
+
+        def commit(subject: str) -> str:
+            (repo / "f.txt").write_text(subject, encoding="utf-8")
+            git("add", "f.txt", repo=repo)
+            git("commit", "--quiet", "-m", subject, repo=repo)
+            return git("rev-parse", "HEAD", repo=repo)
+
+        commit("not a conforming subject, before the gate")
+        boundary = commit("chore: the gate lands here")
+        commit("also not conforming, after the gate")
+
+        in_scope = subjects(boundary=boundary, repo=repo)
+        if not in_scope:
+            return "scope test found no commits after the boundary — the range is broken"
+        subjects_after = [s for _, s in in_scope]
+        if not any(violation(s) for s in subjects_after):
+            return "a non-conforming subject AFTER the boundary was not caught"
+        if any("before the gate" in s for s in subjects_after):
+            return "a pre-boundary commit was wrongly included in scope"
+
+        everything = [s for _, s in subjects(boundary=None, repo=repo)]
+        if not any("before the gate" in s for s in everything):
+            return "--all-history did not reach pre-boundary commits"
     return None
 
 
@@ -122,14 +211,33 @@ def main() -> int:
         print(f"REFUSING: self-test failed — {failure}", file=sys.stderr)
         return 1
 
-    entries = subjects()
+    # INFORMATIONAL mode. Deliberately not wired to CI: it reports on history
+    # that predates the gate and therefore cannot be made to pass without
+    # rewriting published commits. It exists so the full picture stays
+    # visible — scoping the gate should not mean losing the ability to look.
+    all_history = "--all-history" in sys.argv
+    entries = subjects(boundary=None if all_history else GATE_LANDED)
     if not entries:
         print("REFUSING: no commits examined — the scan is broken", file=sys.stderr)
         return 1
 
     bad = [(sha, subject, reason) for sha, subject in entries if (reason := violation(subject))]
 
-    print(f"commit:check — {len(entries)} commit subject(s) examined")
+    if all_history:
+        print(f"commit:check --all-history — {len(entries)} subject(s) examined (INFORMATIONAL)")
+        for sha, subject, reason in bad:
+            print(f"  {sha} {subject[:70]}\n         {reason}")
+        print(
+            f"\n{len(bad)} non-conforming subject(s) across all history. This mode is "
+            "informational and is NOT a gate: commits predating "
+            f"{GATE_LANDED[:7]} could not have been checked when they were written."
+        )
+        return 0
+
+    print(
+        f"commit:check — {len(entries)} commit subject(s) examined "
+        f"(every commit after {GATE_LANDED[:7]}, where this gate landed)"
+    )
 
     if bad:
         print("\nFAILED — non-conforming commit messages:", file=sys.stderr)
