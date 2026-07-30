@@ -117,7 +117,7 @@ struct SessionKeys {
 /// `Clone` is a cheap `Arc` clone sharing the SAME underlying session map —
 /// not a fresh, empty one. `AppState` holds one instance for the whole
 /// app's lifetime; the Phase 12 step 5 provider adapters
-/// (`ai::anthropic`/`ai::ollama`/`ai::openai_compatible`) each take an
+/// (`ai::anthropic`/`ai::ollama`) each take an
 /// OWNED `AiKeyStore` in their constructor (so their tests can build
 /// throwaway instances freely), so `commands::ai::test_ai_key_core` needs
 /// to hand each one a `.clone()` of `state.ai_keys` — if that produced an
@@ -179,7 +179,7 @@ impl AiKeyStore {
     /// (an `EgressPermit` — `ai::permit::acquire` already calls `has_key`
     /// internally) before calling this; it exists for exactly one
     /// legitimate purpose, building an outbound auth header in
-    /// `ai::anthropic` (and, later, `ollama`/`openai-compatible`) — never
+    /// `ai::anthropic` (and `ollama`) — never
     /// logged, never put in `AppError.message` (the returned `AiKey`'s
     /// `Debug`/`Display` stay redacted regardless).
     pub fn retrieve(&self, provider: &str) -> Result<AiKey, AppError> {
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn debug_and_display_never_reveal_the_raw_key() {
-        let key = AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").unwrap();
+        let key = AiKey::parse(&crate::privacy::fake_secrets::anthropic_key_short()).unwrap();
         assert_eq!(format!("{key:?}"), "<redacted>");
         assert_eq!(format!("{key}"), "<redacted>");
     }
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn parse_accepts_a_key_within_bounds() {
-        assert!(AiKey::parse("REDACTED-ANTHROPIC-BY-HISTORY-REWRITE").is_ok());
+        assert!(AiKey::parse(&crate::privacy::fake_secrets::anthropic_key_short()).is_ok());
     }
 
     #[test]

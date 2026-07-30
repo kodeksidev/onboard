@@ -20,6 +20,7 @@ import {
 } from './fixtures/generate-synthetic-repo';
 import { spawnEngine, assertNoRpcError, type JsonRpcMessage } from './support/engine-rpc-client';
 import { startRssMonitor } from './support/rss-sampler';
+import { evaluateGraphOutput, shouldFailBuild } from './support/graph-verdict';
 
 interface Budgets {
   readonly coldAnalysis1kMs: { readonly budget: number };
@@ -35,6 +36,21 @@ const BUDGETS = (await Bun.file(join(import.meta.dir, 'budgets.json')).json()) a
 
 /** Section 11 says "median of 5 runs" for the 1,000-file rows; overridable for fast local iteration. */
 const REPEATS_1K = Number(process.env.BENCH_REPEATS_1K ?? '5');
+
+/**
+ * Section 11 names "median of 5 runs" for the 1,000-file rows and is SILENT
+ * for the 10,000-file rows, which were therefore scored on a single sample.
+ * That gap produced a real problem, not a theoretical one: observed cold-10k
+ * values across runs of the same commit span 28,353.8 ms to 49,207.3 ms — a
+ * 73% spread — against a 60,000 ms budget. One unlucky sample could redden
+ * the gate for reasons unrelated to any code change, and one lucky sample
+ * could hide a regression.
+ *
+ * Filling the gap with the convention the table already uses for its other
+ * rows (median of 5) rather than inventing a different one. Costs roughly
+ * 160 s of extra wall clock on a ~15 min bench.
+ */
+const REPEATS_10K = Number(process.env.BENCH_REPEATS_10K ?? '5');
 const INCREMENTAL_FILE_COUNT = 20;
 const SEARCH_QUERY_COUNT = 50;
 
@@ -333,15 +349,24 @@ async function measureWarm10k(
     excludeGlobs: [],
     isForceRefresh: false,
   };
+  // One priming call so the measured runs all see the same warm cache.
   const warm = await engine.session.call('engine.analyze', params, TEN_K_ANALYZE_TIMEOUT_MS);
   assertNoRpcError(warm, 'engine.analyze (warm 10k)');
-  const warmStart = performance.now();
-  const measured = await engine.session.call('engine.analyze', params, TEN_K_ANALYZE_TIMEOUT_MS);
-  const warmElapsedMs = performance.now() - warmStart;
-  assertNoRpcError(measured, 'engine.analyze (warm 10k, measured)');
+
+  const runs: number[] = [];
+  for (let attempt = 0; attempt < REPEATS_10K; attempt += 1) {
+    const warmStart = performance.now();
+    const measured = await engine.session.call('engine.analyze', params, TEN_K_ANALYZE_TIMEOUT_MS);
+    runs.push(performance.now() - warmStart);
+    assertNoRpcError(measured, 'engine.analyze (warm 10k, measured)');
+  }
+
+  console.log(
+    `  warm ${String(fileCount)} raw runs (ms): ${runs.map((r) => r.toFixed(1)).join(', ')}`,
+  );
   verdicts.push({
-    label: `Warm analysis, ${String(fileCount)} files`,
-    measured: warmElapsedMs,
+    label: `Warm analysis, ${String(fileCount)} files (median of ${String(REPEATS_10K)})`,
+    measured: median(runs),
     budget: BUDGETS.warmAnalysis10kMs.budget,
     unit: 'ms',
   });
@@ -412,26 +437,88 @@ function pushBlocked10kVerdicts(fileCount: number, message: string, verdicts: Ve
   });
 }
 
-async function measureCold10k(
-  fileCount: number,
-  repoDir: string,
-  coldAppData: string,
-  verdicts: Verdict[],
-): Promise<{ engine: SpawnedEngineHandle; repoId: string }> {
+interface ColdRunOutcome {
+  readonly engine: SpawnedEngineHandle;
+  readonly repoId: string;
+  readonly appData: string;
+  readonly elapsedMs: number;
+  readonly peakRssMb: number | undefined;
+}
+
+/**
+ * One cold repeat: a fresh `appDataDir` (so the cache genuinely does not
+ * exist), one `engine.analyze`, RSS sampled for its whole lifetime. The
+ * engine is left running; the caller decides whether to keep or kill it.
+ */
+async function runOneCold10k(repoDir: string): Promise<ColdRunOutcome> {
+  const appData = mkdtempSync(join(tmpdir(), 'onboard-bench-cold-10k-'));
   let rssMonitorHandle: ReturnType<typeof startRssMonitor> | undefined;
   const { engine, outcome } = await analyzeKeepAlive(
     repoDir,
-    coldAppData,
+    appData,
     false,
     (spawned) => {
       rssMonitorHandle = startRssMonitor(spawned.pid);
     },
     TEN_K_ANALYZE_TIMEOUT_MS,
   );
-  const peakRssMb = await rssMonitorHandle?.stop();
+  const sampledRss = await rssMonitorHandle?.stop();
+  return {
+    engine,
+    repoId: outcome.repoId,
+    appData,
+    elapsedMs: outcome.elapsedMs,
+    peakRssMb: sampledRss ?? undefined,
+  };
+}
+
+/**
+ * Cold analysis at 10,000 files, `REPEATS_10K` times, reported as a median.
+ *
+ * Each repeat gets its OWN fresh `appDataDir`, because "cold" means no cache
+ * exists — reusing one directory would make runs 2..n warm and quietly turn
+ * this row into something else entirely.
+ *
+ * The last repeat's engine is kept alive and returned, so the warm and
+ * search rows measure against a cache this function actually built. Earlier
+ * repeats are shut down and their directories removed as they finish, so
+ * peak disk stays at one cache rather than `REPEATS_10K` of them.
+ *
+ * RSS is sampled on the final repeat only. It is a peak, not an average, and
+ * every repeat does identical work — taking a median of peaks across repeats
+ * would understate the true peak, which is the number the budget is about.
+ */
+async function measureCold10k(
+  fileCount: number,
+  repoDir: string,
+  verdicts: Verdict[],
+): Promise<{ engine: SpawnedEngineHandle; repoId: string; coldAppData: string }> {
+  const runs: number[] = [];
+  let surviving: ColdRunOutcome | undefined;
+
+  for (let attempt = 0; attempt < REPEATS_10K; attempt += 1) {
+    const outcome = await runOneCold10k(repoDir);
+    runs.push(outcome.elapsedMs);
+    if (attempt === REPEATS_10K - 1) {
+      surviving = outcome;
+    } else {
+      await outcome.engine.session.call('engine.shutdown', {}, 5000).catch(() => undefined);
+      outcome.engine.kill();
+      safeRmSync(outcome.appData);
+    }
+  }
+
+  if (surviving === undefined) {
+    throw new Error('measureCold10k completed no repeats');
+  }
+  const peakRssMb = surviving.peakRssMb;
+
+  console.log(
+    `  cold ${String(fileCount)} raw runs (ms): ${runs.map((r) => r.toFixed(1)).join(', ')}`,
+  );
   verdicts.push({
-    label: `Cold analysis, ${String(fileCount)} files`,
-    measured: outcome.elapsedMs,
+    label: `Cold analysis, ${String(fileCount)} files (median of ${String(REPEATS_10K)})`,
+    measured: median(runs),
     budget: BUDGETS.coldAnalysis10kMs.budget,
     unit: 'ms',
   });
@@ -441,13 +528,15 @@ async function measureCold10k(
     budget: BUDGETS.sidecarPeakRss10kMb.budget,
     unit: 'MB',
   });
-  return { engine, repoId: outcome.repoId };
+  return { engine: surviving.engine, repoId: surviving.repoId, coldAppData: surviving.appData };
 }
 
 async function bench10k(fileCount: number, repoDir: string, verdicts: Verdict[]): Promise<void> {
-  const coldAppData = mkdtempSync(join(tmpdir(), 'onboard-bench-cold-10k-'));
+  let coldAppData: string | undefined;
   try {
-    const { engine, repoId } = await measureCold10k(fileCount, repoDir, coldAppData, verdicts);
+    const cold = await measureCold10k(fileCount, repoDir, verdicts);
+    const { engine, repoId } = cold;
+    coldAppData = cold.coldAppData;
     await measureWarm10k(fileCount, engine, repoDir, coldAppData, verdicts);
     await measureSearchP95(fileCount, engine, repoId, verdicts);
     await engine.session.call('engine.shutdown', {}, 5000).catch(() => undefined);
@@ -458,7 +547,9 @@ async function bench10k(fileCount: number, repoDir: string, verdicts: Verdict[])
     console.log('Reporting every budget it would have measured as BLOCKED rather than skipping.');
     pushBlocked10kVerdicts(fileCount, message, verdicts);
   } finally {
-    safeRmSync(coldAppData);
+    if (coldAppData !== undefined) {
+      safeRmSync(coldAppData);
+    }
   }
 }
 
@@ -495,7 +586,10 @@ async function runGraphBench(): Promise<{ output: string; hasFail: boolean }> {
   ]);
   await proc.exited;
   const output = stdout + (stderr.length > 0 ? `\n[stderr]\n${stderr}` : '');
-  return { output, hasFail: /FAIL/.test(output) };
+  // NOT `/FAIL/.test(output)` — see `support/graph-verdict.ts`. That matched
+  // the graph bench's own caveat sentence on every run, so the flag was
+  // permanently true and the gate fired regardless of what was measured.
+  return { output, hasFail: shouldFailBuild(evaluateGraphOutput(output)) };
 }
 
 /**
@@ -544,7 +638,25 @@ async function main(): Promise<void> {
   );
   printMeasurementIntegrityNote();
 
-  if (!allEnginePassed) {
+  /**
+   * BOTH halves gate the exit code.
+   *
+   * `graphHasFail` was previously computed, printed, and then discarded —
+   * so `bun run bench` printed "bench:graph budgets: AT LEAST ONE FAIL" and
+   * exited 0. Measured directly: `graphPanP95_1kMs` at 33.3ms against a
+   * 22ms budget and `graphPanP95_5kMs` at 33.4ms against a 33ms budget,
+   * both reported, exit code 0. A gate that reports failure and returns
+   * success is worse than no gate — it produces a green checkmark that
+   * actively certifies the opposite of what was measured, which is exactly
+   * how these two budgets stayed red across thirteen phases without anyone
+   * having to argue for them.
+   *
+   * This makes Phase 11's gate honest, and it makes it RED today. That is
+   * the correct state: the budgets are Section 11's, they are not met, and
+   * the fix belongs in the renderer (or in a re-derived budget backed by a
+   * trustworthy instrument), never in this line.
+   */
+  if (!allEnginePassed || graphHasFail) {
     process.exitCode = 1;
   }
 }

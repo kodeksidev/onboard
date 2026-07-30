@@ -20,12 +20,21 @@ pub enum Theme {
     Dark,
 }
 
+/// Wire form is `"anthropic"` / `"ollama"`, pinned by
+/// `ai_provider_serializes_to_exactly_these_bytes` below and mirrored on the
+/// TS side by `settings-schema.test.ts`.
+///
+/// This is `"lowercase"` rather than `"kebab-case"` because `"kebab-case"`
+/// was only ever adopted to spell an out-of-scope third variant
+/// (`OpenAiCompatible` -> `"openai-compatible"`); with that variant deleted,
+/// both rules produce identical bytes for these two single-word names, and
+/// the spec's own value is `"lowercase"`. See the SUPERSEDED markers on the
+/// two step-3B/step-5 entries in `docs/DECISIONS.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "lowercase")]
 pub enum AiProvider {
     Anthropic,
     Ollama,
-    OpenAiCompatible,
 }
 
 impl AiProvider {
@@ -38,7 +47,6 @@ impl AiProvider {
         match self {
             AiProvider::Anthropic => "anthropic",
             AiProvider::Ollama => "ollama",
-            AiProvider::OpenAiCompatible => "openai-compatible",
         }
     }
 
@@ -46,7 +54,7 @@ impl AiProvider {
     /// be considered "on" for it (Phase 12 step 5, owner's ruling). The
     /// single, provider-aware answer `ai::permit::acquire` consults — not
     /// "AI on + key always," but "AI on + the credentials THIS provider
-    /// requires." Anthropic and `openai-compatible` are cloud APIs and need
+    /// requires." Anthropic is a cloud API and needs
     /// one; Ollama is local and unauthenticated by default, so gating it
     /// behind a key that is never transmitted (see
     /// `ai::ollama`'s doc comment) would be backwards. This is the ONE
@@ -54,7 +62,7 @@ impl AiProvider {
     /// provider-conditional branch of its own; it just asks this.
     pub fn requires_stored_key(self) -> bool {
         match self {
-            AiProvider::Anthropic | AiProvider::OpenAiCompatible => true,
+            AiProvider::Anthropic => true,
             AiProvider::Ollama => false,
         }
     }
@@ -75,14 +83,6 @@ pub struct AiSettings {
     pub provider: AiProvider,
     pub model: String,
     pub ollama_base_url: String,
-    /// `openai-compatible`'s stored base URL (Phase 12 step 3B) — covers
-    /// DeepSeek/OpenAI/Groq/OpenRouter/Together and similar. Empty by
-    /// default (there is no single correct default across providers);
-    /// `ai::endpoint::resolve` rejects it exactly the way it already
-    /// rejects a malformed `ollama_base_url`. `#[serde(default)]` so
-    /// settings files written before this field existed still deserialize.
-    #[serde(default)]
-    pub openai_compatible_base_url: String,
     pub has_stored_key: bool,
 }
 
@@ -93,7 +93,6 @@ impl Default for AiSettings {
             provider: AiProvider::Anthropic,
             model: "claude-sonnet-4-5".to_string(),
             ollama_base_url: "http://127.0.0.1:11434".to_string(),
-            openai_compatible_base_url: String::new(),
             has_stored_key: false,
         }
     }
@@ -139,7 +138,6 @@ pub struct AiSettingsPatch {
     pub provider: Option<AiProvider>,
     pub model: Option<String>,
     pub ollama_base_url: Option<String>,
-    pub openai_compatible_base_url: Option<String>,
 }
 
 fn read_settings_file(path: &Path) -> Settings {
@@ -215,9 +213,6 @@ fn apply_patch(current: Settings, patch: SettingsPatch) -> Settings {
                 ollama_base_url: ai_patch
                     .ollama_base_url
                     .unwrap_or(current.ai.ollama_base_url),
-                openai_compatible_base_url: ai_patch
-                    .openai_compatible_base_url
-                    .unwrap_or(current.ai.openai_compatible_base_url),
                 has_stored_key: current.ai.has_stored_key,
             },
         },
@@ -266,10 +261,12 @@ pub fn clear_ai_key_core(ai_keys: &AiKeyStore, provider: &str) -> Result<(), App
 }
 
 /// Validated so a caller cannot pass an arbitrary string as `provider`
-/// beyond the three v1 adapters (A4, extended by Phase 12 step 3B to add
-/// `openai-compatible`).
+/// beyond the two v1 adapters (A4: "v1 ships exactly two AI adapters:
+/// Anthropic and Ollama"; non-goal #2 names DeepSeek/OpenAI/Azure/Bedrock
+/// and any other adapter explicitly). `openai-compatible` was built here in
+/// violation of both and has been removed — see `docs/V2_BACKLOG.md`.
 pub fn validate_provider(provider: &str) -> Result<(), AppError> {
-    if provider == "anthropic" || provider == "ollama" || provider == "openai-compatible" {
+    if provider == "anthropic" || provider == "ollama" {
         Ok(())
     } else {
         Err(AppError::new(
@@ -354,63 +351,122 @@ mod tests {
         }));
     }
 
+    /// Pins the SERIALIZED BYTES of every `AiProvider` variant.
+    ///
+    /// This test exists because its absence is what let the wire
+    /// representation drift for a reason unrelated to the wire: the
+    /// `rename_all` attribute was switched from `"lowercase"` to
+    /// `"kebab-case"` purely to spell an out-of-scope third variant, and
+    /// nothing anywhere asserted what bytes reached `settings.json`. A
+    /// `#[serde(rename_all = ...)]` change is invisible to every test that
+    /// only round-trips a value through serde, because both directions move
+    /// together — the only way to catch it is to assert the literal text.
+    ///
+    /// Both directions are pinned: the exact bytes out, and the exact bytes
+    /// in (so a settings file written by any prior version still loads).
     #[test]
-    fn validate_provider_rejects_anything_outside_the_three_v1_adapters() {
+    fn ai_provider_serializes_to_exactly_these_bytes() {
+        for (variant, expected) in [
+            (AiProvider::Anthropic, "\"anthropic\""),
+            (AiProvider::Ollama, "\"ollama\""),
+        ] {
+            let encoded = serde_json::to_string(&variant).expect("must serialize");
+            assert_eq!(
+                encoded, expected,
+                "AiProvider's wire form is a compatibility surface: it is what \
+                 lands in settings.json and what the TS AiProvider zod enum \
+                 parses. Changing it silently breaks every existing settings file."
+            );
+            let decoded: AiProvider = serde_json::from_str(expected).expect("must deserialize");
+            assert_eq!(decoded, variant);
+        }
+    }
+
+    /// The variant set itself, pinned as bytes. Complements
+    /// `validate_provider_rejects_anything_outside_the_two_v1_adapters`:
+    /// that one guards the string validator, this one guards the enum a
+    /// future contributor would have to edit to add an adapter.
+    #[test]
+    fn ai_provider_has_exactly_two_variants_on_the_wire() {
+        let all = [AiProvider::Anthropic, AiProvider::Ollama];
+        let encoded: Vec<String> = all
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("must serialize"))
+            .collect();
+        assert_eq!(encoded, vec!["\"anthropic\"", "\"ollama\""]);
+        assert!(
+            serde_json::from_str::<AiProvider>("\"openai-compatible\"").is_err(),
+            "A4: v1 ships exactly Anthropic and Ollama"
+        );
+    }
+
+    #[test]
+    fn validate_provider_rejects_anything_outside_the_two_v1_adapters() {
         assert!(validate_provider("anthropic").is_ok());
         assert!(validate_provider("ollama").is_ok());
-        assert!(validate_provider("openai-compatible").is_ok());
-        assert!(validate_provider("openai").is_err());
+        // A4 / non-goal #2. Each of these was either shipped in violation
+        // (`openai-compatible`) or is named explicitly in the non-goal.
+        for banned in [
+            "openai-compatible",
+            "openai",
+            "deepseek",
+            "azure",
+            "bedrock",
+            "groq",
+            "openrouter",
+        ] {
+            assert!(
+                validate_provider(banned).is_err(),
+                "provider {banned} must be rejected: v1 ships exactly Anthropic and Ollama (A4)"
+            );
+        }
     }
 
+    /// A settings file written by the version that shipped the
+    /// out-of-scope `openai-compatible` adapter must not break the app.
+    /// The stale `openaiCompatibleBaseUrl` key is simply ignored (serde
+    /// tolerates unknown fields), and the rest of the file loads intact.
     #[test]
-    fn openai_compatible_base_url_defaults_to_empty_and_round_trips() {
-        assert_eq!(AiSettings::default().openai_compatible_base_url, "");
-
+    fn a_settings_file_carrying_the_removed_base_url_field_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let ai_keys = AiKeyStore::new();
-        let updated = update_settings_core(
+        std::fs::write(
             &path,
-            &ai_keys,
-            SettingsPatch {
-                ai: Some(AiSettingsPatch {
-                    provider: Some(AiProvider::OpenAiCompatible),
-                    openai_compatible_base_url: Some("https://api.deepseek.com".to_string()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
+            r#"{"settingsVersion":1,"recentRepos":[],"excludeGlobs":[],"theme":"dark",
+                "ai":{"isEnabled":false,"provider":"ollama","model":"x",
+                      "ollamaBaseUrl":"http://127.0.0.1:11434",
+                      "openaiCompatibleBaseUrl":"https://api.deepseek.com",
+                      "hasStoredKey":false}}"#,
         )
         .unwrap();
-        assert_eq!(
-            updated.ai.openai_compatible_base_url,
-            "https://api.deepseek.com"
-        );
-
-        let reloaded = get_settings_core(&path, &ai_keys);
-        assert_eq!(
-            reloaded.ai.openai_compatible_base_url,
-            "https://api.deepseek.com"
-        );
+        let ai_keys = AiKeyStore::new();
+        let settings = get_settings_core(&path, &ai_keys);
+        assert!(matches!(settings.ai.provider, AiProvider::Ollama));
+        assert_eq!(settings.ai.ollama_base_url, "http://127.0.0.1:11434");
+        assert!(matches!(settings.theme, Theme::Dark));
     }
 
-    /// A settings file written before this field existed (no
-    /// `openaiCompatibleBaseUrl` key at all) must still deserialize —
-    /// `#[serde(default)]` on the field, not a hard requirement.
+    /// The harder half of the same migration: a settings file whose stored
+    /// `provider` IS the removed adapter. `AiProvider` no longer has that
+    /// variant, so deserialization fails and `read_settings_file` falls back
+    /// to `Settings::default()` — which has `isEnabled: false`. Fail-safe by
+    /// construction: the one thing that must never happen is silently
+    /// continuing to send snippets to a provider that no longer exists.
     #[test]
-    fn a_settings_file_without_the_openai_compatible_field_still_deserializes() {
+    fn a_settings_file_pinned_to_the_removed_provider_falls_back_to_ai_off() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(
             &path,
             r#"{"settingsVersion":1,"recentRepos":[],"excludeGlobs":[],"theme":"system",
-                "ai":{"isEnabled":false,"provider":"anthropic","model":"x",
-                      "ollamaBaseUrl":"http://127.0.0.1:11434","hasStoredKey":false}}"#,
+                "ai":{"isEnabled":true,"provider":"openai-compatible","model":"x",
+                      "ollamaBaseUrl":"http://127.0.0.1:11434","hasStoredKey":true}}"#,
         )
         .unwrap();
         let ai_keys = AiKeyStore::new();
         let settings = get_settings_core(&path, &ai_keys);
-        assert_eq!(settings.ai.openai_compatible_base_url, "");
+        assert!(!settings.ai.is_enabled, "AI must fall back to OFF");
+        assert!(matches!(settings.ai.provider, AiProvider::Anthropic));
     }
 
     #[test]

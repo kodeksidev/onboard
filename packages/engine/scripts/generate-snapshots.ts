@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stableStringify } from '@onboard/contract';
 import { analyze } from '../src/analyze';
+import { normalizeForSnapshot } from '../test/snapshot-identity';
 
 const ROOT = join(import.meta.dir, '..');
 const GRAMMARS_DIR = join(ROOT, 'grammars');
@@ -30,7 +31,9 @@ async function main(): Promise<void> {
     const outPath = join(SNAPSHOTS_DIR, `${fixture}.snap.json`);
     // stableStringify (not JSON.stringify) so the committed file itself uses
     // the same canonical, sorted-key form the fingerprint is computed over.
-    writeFileSync(outPath, `${stableStringify(result)}\n`);
+    // normalizeForSnapshot so it carries no trace of THIS machine's checkout
+    // path — otherwise the file only ever matches here.
+    writeFileSync(outPath, `${stableStringify(normalizeForSnapshot(result))}\n`);
     console.log(`wrote ${outPath}`);
   }
 }

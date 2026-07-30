@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { EntryPoint } from '@onboard/contract';
 import { byteCompare } from '../util/sort';
+import { parseManifest, type UnparseableSink } from '../util/json';
 
 export type EntryPointValue = z.infer<typeof EntryPoint>;
 
@@ -22,6 +23,8 @@ export interface EntryPointDetectionInput {
   readonly existingPaths: ReadonlySet<string>;
   readonly readFile: (repoRelPath: string) => string | null;
   readonly workspacePackages: readonly EntryPointWorkspaceRef[];
+  /** Notified with the path of any manifest that did not parse (see `util/json.ts`). */
+  readonly onUnparseable?: UnparseableSink;
 }
 
 interface Candidate {
@@ -33,15 +36,6 @@ interface Candidate {
 
 const CONVENTION_FILES = ['src/index.ts', 'src/index.js', 'index.ts', 'index.js'];
 const JS_TS_EXTENSIONS = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
-
-function parseJsonSafely(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
 
 function resolveExisting(base: string, existingPaths: ReadonlySet<string>): string | null {
   for (let i = 0; i < JS_TS_EXTENSIONS.length; i += 1) {
@@ -105,7 +99,11 @@ function packageJsonCandidates(dirPath: string, input: EntryPointDetectionInput)
   if (content === null) {
     return [];
   }
-  const parsed = parseJsonSafely(content) ?? {};
+  // `?? {}` is safe HERE and only here: the failure has already been reported
+  // through `onUnparseable`, so the empty object means "nothing to read from
+  // this manifest", not "this manifest was empty". That distinction is the
+  // whole point of `parseManifest` — see `util/json.ts`.
+  const parsed = parseManifest(content, path, input.onUnparseable) ?? {};
   return [
     ...mainCandidates(dirPath, parsed, input.existingPaths),
     ...binCandidates(dirPath, parsed, input.existingPaths),

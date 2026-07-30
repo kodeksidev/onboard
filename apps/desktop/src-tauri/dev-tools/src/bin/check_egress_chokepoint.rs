@@ -148,12 +148,17 @@ const REVIEWED_DOORS: &[(&str, &str)] = &[
     // `Command::new` is the entry that actually covers it — as
     // `every_reviewed_door_still_exists_in_the_real_crate` insists.
     ("sidecar/spawn.rs", "Command::new"),
+    // `lib.rs` names `std::process::Command` only as the target of
+    // `From<tauri_plugin_shell::process::Command>`, to read the sidecar path
+    // the plugin resolved (`.get_program()`). It never calls `.spawn()` —
+    // spawning stays the single door in `sidecar/spawn.rs` above. Reviewed
+    // as a door anyway because the type is genuinely process-capable, and a
+    // future edit could add the `.spawn()` this comment says is absent.
+    ("lib.rs", "std::process::Command"),
     ("ai/anthropic.rs", "std::net::"),
     ("ai/anthropic.rs", "TcpListener::"),
     ("ai/ollama.rs", "std::net::"),
     ("ai/ollama.rs", "TcpListener::"),
-    ("ai/openai_compatible.rs", "std::net::"),
-    ("ai/openai_compatible.rs", "TcpListener::"),
     ("commands/ai.rs", "std::net::"),
     ("commands/ai.rs", "TcpListener::"),
 ];
@@ -459,11 +464,36 @@ fn report(label: &str, subject: &Path, outcome: Result<(), Vec<Violation>>) -> b
     }
 }
 
+/// The crate this checker AUDITS — `onboard`, one level up.
+///
+/// This binary used to live inside `onboard` itself, where
+/// `CARGO_MANIFEST_DIR` was the audited crate. It now lives in the sibling
+/// `dev-tools` crate (so Tauri's bundler cannot ship it to users), which
+/// makes `CARGO_MANIFEST_DIR` point at `dev-tools/` instead. Scanning that
+/// would find no `src/ai/` at all and every check would pass vacuously —
+/// the exact failure mode this repository treats as worse than a missing
+/// check. So the parent is resolved explicitly, and asserted to be the
+/// crate we mean.
+fn audited_crate_dir() -> PathBuf {
+    let dev_tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let audited = dev_tools
+        .parent()
+        .expect("dev-tools must have a parent directory")
+        .to_path_buf();
+    assert!(
+        audited.join("src").join("ai").is_dir(),
+        "expected the audited crate at {} to contain src/ai — a vacuous pass is worse \
+         than a missing check, so this refuses to scan the wrong directory",
+        audited.display()
+    );
+    audited
+}
+
 fn main() {
     let root = std::env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        .unwrap_or_else(audited_crate_dir);
     let src_dir = root.join("src");
     let cargo_toml = root.join("Cargo.toml");
 
@@ -853,7 +883,7 @@ mod tests {
     /// nobody is looking at. Every entry must still match something real.
     #[test]
     fn every_reviewed_door_still_exists_in_the_real_crate() {
-        let src_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let src_dir = audited_crate_dir().join("src");
         let sources = read_scannable_sources(&src_dir);
         for (relative, door) in REVIEWED_DOORS {
             let found = sources
@@ -872,7 +902,7 @@ mod tests {
 
     #[test]
     fn the_real_crate_passes_every_check() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifest_dir = audited_crate_dir();
         let src_dir = manifest_dir.join("src");
         let cargo_toml = manifest_dir.join("Cargo.toml");
         assert_eq!(check_source_imports(&src_dir), Ok(()));

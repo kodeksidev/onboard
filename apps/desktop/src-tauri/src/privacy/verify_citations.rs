@@ -211,7 +211,30 @@ fn verify_match(
         return Err(AppError::ai_citation_rejected(&path));
     };
 
-    let line = line_group.and_then(|group| group.as_str().parse::<u64>().ok());
+    // `.ok()` here was a fail-open on the citation boundary. The regex captures
+    // `(\d+)`, so `parse::<u64>` fails ONLY on overflow — a digit run longer
+    // than u64 can hold. That collapsed to `None`, which skipped the range
+    // check below entirely, and `src/index.ts:99999999999999999999999` was
+    // accepted as a citation to `src/index.ts` with no line at all. The line
+    // number was in the model's output, was matched, and then silently vanished
+    // — the INV-3 shape, on the check that exists to stop an unresolvable
+    // citation reaching the user.
+    //
+    // A number too large for u64 is, by definition, larger than any real line
+    // count, so it takes the same refusal as any other out-of-range line.
+    let line = match line_group {
+        None => None,
+        Some(group) => match group.as_str().parse::<u64>() {
+            Ok(parsed) => Some(parsed),
+            Err(_) => {
+                return Err(AppError::ai_citation_line_out_of_range_text(
+                    &path,
+                    group.as_str(),
+                    real_line_count,
+                ))
+            }
+        },
+    };
     if let Some(line) = line {
         if line == 0 || line > real_line_count {
             return Err(AppError::ai_citation_line_out_of_range(
@@ -476,6 +499,40 @@ mod tests {
         let err = verify_citations(answer, &index()).unwrap_err();
         assert_eq!(err.code, "E_AI_CITATION_REJECTED");
         assert_eq!(err.path.as_deref(), Some("src/does-not-exist.ts"));
+    }
+
+    /// The fail-open the guard-disposition sweep found. The citation regex
+    /// captures `(\d+)`, so a digit run too long for `u64` still MATCHES and
+    /// then fails to parse. That used to collapse to `None` via `.ok()`, which
+    /// skipped the range check entirely: the citation was accepted, the line
+    /// number silently dropped, and the user was shown a resolved-looking
+    /// reference to a line nobody had checked.
+    ///
+    /// This is the INV-3 shape — drop the part that failed validation, return
+    /// the rest, tell nobody — on the check that exists to stop an
+    /// unresolvable citation reaching the user.
+    #[test]
+    fn rejects_a_cited_line_number_too_large_to_parse() {
+        let answer = "See `src/index.ts:99999999999999999999999` for the setup.";
+
+        let err = verify_citations(answer, &index()).unwrap_err();
+
+        assert_eq!(err.code, "E_AI_CITATION_REJECTED");
+        // The refusal names what the model actually wrote, not a substitute.
+        assert_eq!(
+            err.path.as_deref(),
+            Some("src/index.ts:99999999999999999999999")
+        );
+    }
+
+    /// Non-vacuity for the test above: an ordinary in-range citation on the
+    /// same path must still pass, so the fix refuses overflow rather than
+    /// refusing line numbers.
+    #[test]
+    fn still_accepts_an_in_range_line_on_the_same_path() {
+        let answer = "See `src/index.ts:22` for the setup.";
+
+        assert!(verify_citations(answer, &index()).is_ok());
     }
 
     #[test]

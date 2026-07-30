@@ -1,0 +1,59 @@
+[package]
+name = "onboard-dev-tools"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Developer tools for the Onboard shell — NEVER shipped to users"
+
+# WHY THIS CRATE EXISTS, so it is not folded back into `onboard` as a
+# simplification.
+#
+# Tauri's bundler enumerates the BUNDLED PACKAGE's [[bin]] targets and bundles
+# every one of them. While these two lived in `onboard`, that made them files
+# in a user's install: v0.1.0 shipped `onboard_engine_stub.exe` — a
+# fixture-replaying FAKE ENGINE — next to the real one, in a user-writable
+# directory, on a product whose entire thesis is that nothing leaves the
+# machine. `check_egress_chokepoint.exe`, a build-time source checker, shipped
+# too.
+#
+# `required-features` does not fix that: cargo stops BUILDING the binary but
+# the bundler still reads the target from cargo metadata, so bundling fails
+# outright rather than excluding it. The only fix is for these not to be
+# targets of the bundled package at all — which is this crate.
+#
+# It is a workspace member of `../Cargo.toml`, so it shares
+# `src-tauri/target/` and its binaries land at `target/<profile>/<name>` —
+# exactly where they landed before. Nothing that resolves them by path moved.
+#
+# The structural guarantee is asserted, not just described: the `onboard`
+# crate's `bundled_package_ships_exactly_one_binary` test reads cargo metadata
+# and fails if `onboard` ever grows a second bin target again. Re-adding one
+# is therefore a visible, deliberate manifest change rather than an accident.
+
+[[bin]]
+name = "onboard_engine_stub"
+path = "src/bin/onboard_engine_stub.rs"
+
+[[bin]]
+name = "check_egress_chokepoint"
+path = "src/bin/check_egress_chokepoint.rs"
+
+[dependencies]
+serde_json = "1"
+regex = "1"
+# The stub builds a fixture containing a CREDENTIAL-SHAPED (never real) key,
+# and takes it from the same `privacy::fake_secrets` helper the redaction
+# tests use, so the two cannot drift. The dependency points one way only —
+# `onboard` does not depend on this crate, and must not, or the binaries
+# would be back in the bundled package's graph.
+onboard_lib = { path = "..", package = "onboard" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+too_many_arguments = "allow"
+too_many_lines = "deny"
+cognitive_complexity = "deny"

@@ -3,7 +3,7 @@
 //! AppError>` and `async fn test(&self) -> Result<TestResult, AppError>` —
 //! nothing provider-specific leaks past it." Anthropic
 //! ([`crate::ai::anthropic`]) is the first (and, Phase 12 step 3A, only)
-//! implementation; `ollama` and `openai-compatible` slot in behind this
+//! implementation; `ollama` slots in behind this
 //! same trait unchanged, after the owner reviews this leg.
 //!
 //! ## Naming collision, deliberately, per the frozen contract
@@ -47,6 +47,10 @@ use crate::error::AppError;
 #[derive(Debug)]
 pub struct CompletionRequest {
     pub prompt: PromptSpec,
+    /// Consumed by `ai::http::send`. Carried on the request rather than
+    /// passed alongside it so a completion cannot be constructed without
+    /// the gate having run — one approval, one request.
+    pub approval: crate::ai::pipeline::SendApproval,
 }
 
 /// What comes back from a real completion — provider-specific response
@@ -85,5 +89,9 @@ pub trait AiProvider {
         req: CompletionRequest,
     ) -> impl std::future::Future<Output = Result<CompletionResponse, AppError>> + Send;
 
-    fn test(&self) -> impl std::future::Future<Output = Result<TestResult, AppError>> + Send;
+    fn test(
+        &self,
+        trace: &mut crate::ai::pipeline::PipelineTrace,
+        approval: crate::ai::pipeline::SendApproval,
+    ) -> impl std::future::Future<Output = Result<TestResult, AppError>> + Send;
 }

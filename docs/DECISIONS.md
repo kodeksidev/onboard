@@ -1986,7 +1986,10 @@ decided; it only records choices the spec left open.
   than silently adding a provider-conditional gate (which would mean two
   different "AI is on" checks in the same crate — exactly the kind of
   asymmetry a bypass hides in).
-- **Phase 12 step 3B — `openai-compatible`'s REST path is
+- **[OBSOLETE — the module this describes no longer exists; deleted in
+  `fa1fe5c` as an A4 / §3 non-goal 2 scope violation. Retained because a
+  deleted entry teaches nothing.]** **Phase 12 step 3B —
+  `openai-compatible`'s REST path is
   `{base_url}/chat/completions`, matching OpenAI/DeepSeek/Groq/OpenRouter/
   Together's shared convention when `base_url` includes the provider's own
   version segment (e.g. `https://api.openai.com/v1`).** Not verified
@@ -1994,7 +1997,14 @@ decided; it only records choices the spec left open.
   instruction); provisional like the rest of the body/response shapes in
   this sub-step, pending real-world confirmation whenever an actual key is
   available to test with.
-- **Phase 12 step 3B — `AiProvider`'s serde representation switched from
+- **[SUPERSEDED — reverted to `"lowercase"`. This entry and its duplicate
+  below are the two records of a wire-format change made solely to spell an
+  out-of-scope variant; with that variant deleted the justification is gone,
+  and inert residue is the form scope creep takes when it survives. The repr
+  is now a tested fact, not a floating choice:
+  `ai_provider_serializes_to_exactly_these_bytes` (Rust) and
+  `settings-schema.test.ts` (TS) pin the literal bytes in both directions.]**
+  **Phase 12 step 3B — `AiProvider`'s serde representation switched from
   `rename_all = "lowercase"` to `"kebab-case"`.** Adding
   `OpenAiCompatible` under `"lowercase"` would serialize as
   `"openaicompatible"` (concatenated, illegible); `"kebab-case"` produces
@@ -2130,7 +2140,12 @@ decided; it only records choices the spec left open.
   the same sentence twice — caught by wiring `TestKeyButton` to the real
   mock for the first time; nothing consumed `testAiKey`'s rejection shape
   before this step.
-- **Phase 12 step 5 — `AiProvider`'s Rust `#[serde(rename_all = ...)]`
+- **[SUPERSEDED — reverted to `"lowercase"`; see the identical step-3B entry
+  above. That the SAME change was recorded twice under two different step
+  numbers is itself the finding: neither record checked the other, and
+  nothing tested the serialized form, so the repr drifted for a reason
+  unrelated to the wire.]** **Phase 12 step 5 — `AiProvider`'s Rust
+  `#[serde(rename_all = ...)]`
   changed from `"lowercase"` to `"kebab-case"`.** Adding
   `OpenAiCompatible` under `"lowercase"` would serialize as
   `"openaicompatible"`; `"kebab-case"` produces `"openai-compatible"`
@@ -2323,3 +2338,488 @@ decided; it only records choices the spec left open.
   new process/socket allowlist is per-file AND per-symbol, and a test fails if
   an allowlist entry stops matching anything, so reviewed-door permissions
   cannot accumulate past the code that justified them.
+- **Phase 13 follow-up — the `openai-compatible` adapter is deleted, not
+  deprecated: it was a scope violation, not a feature.** A4 says "v1 ships
+  exactly **two AI adapters: Anthropic and Ollama**"; Section 3 non-goal 2
+  names "DeepSeek, OpenAI, Azure, Bedrock, or any adapter beyond Anthropic and
+  Ollama" and prescribes the response — "If you find yourself writing one,
+  stop and delete it." A third adapter was nevertheless built and shipped.
+
+  **How it got built, since that determines whether anything else drifted.**
+  The phase spec did *not* drift. Phase 12's Files list names exactly
+  `src-tauri/src/ai/{mod.rs,provider.rs,anthropic.rs,ollama.rs,http.rs,`
+  `prompt.rs,transcript.rs}` — there is no `openai_compatible.rs` in it, and
+  the word "openai" appears nowhere in the phase text. The drift was a
+  self-invented sub-step: entries in this file recorded under "Phase 12 step
+  3B" introduced the adapter, switched `AiProvider`'s serde representation
+  from `lowercase` to `kebab-case` to accommodate its name, and added the
+  `openai_compatible_base_url` setting — each entry reasoned carefully about
+  its own local trade-off, and none checked the new module against A4 or the
+  non-goal list. The `settings-schema.ts` doc comment then hardened the error
+  into an assertion, calling them "the three v1 adapters."
+
+  This is the same failure mode as the vacuous bench gate fixed alongside it:
+  a local decision recorded thoroughly enough to look reviewed, never checked
+  against the frozen constraint it violated. The generalisable rule is that a
+  DECISIONS entry justifies *how* something was built and can never authorise
+  *that* it be built — only Sections 2 and 3 do that.
+
+  **Scope of the removal.** The adapter module, `AiProvider::OpenAiCompatible`
+  (Rust) and the `'openai-compatible'` zod literal (TS), the
+  `ProviderShape::OpenAiCompatible` body shape, the `openaiCompatibleBaseUrl`
+  setting on both sides, its Settings-dialog field and copy strings, its
+  keychain account, its `validate_provider` acceptance, and every test
+  asserting the adapter worked. `privacy/patterns.rs`'s `OPENAI_KEY_RE` stays:
+  it is Section 8.9 rule 7, a *redaction* rule for OpenAI keys found in the
+  user's own repo, and is unrelated to which providers Onboard talks to.
+
+  **Deletions replaced by guards, not by silence.** `validate_provider` now
+  has a test asserting `openai-compatible`, `openai`, `deepseek`, `azure`,
+  `bedrock`, `groq` and `openrouter` are all rejected, and the Settings
+  dropdown test asserts the option list is exactly `['Anthropic',
+  'Ollama (local)']` rather than merely containing them — so re-adding an
+  out-of-scope adapter fails a test instead of shipping.
+
+  **Migration is fail-safe by construction.** An old `settings.json` carrying
+  `openaiCompatibleBaseUrl` still loads (serde ignores unknown fields). One
+  pinned to `provider: "openai-compatible"` no longer deserializes, so
+  `read_settings_file` falls back to `Settings::default()` — which has
+  `isEnabled: false`. The one outcome that must never happen is continuing to
+  send snippets to a provider that no longer exists; both paths are tested.
+- **AMENDMENT — Rust floor raised 1.82 -> 1.85 to delete the crate's only
+  `unsafe`.**
+  Authorised-by: product owner (chat), 2026-07-28
+  Departs-from: Section 4 — "Rust 1.82+"
+
+  `src-tauri` contained three `unsafe` blocks: `unsafe { Waker::from_raw(
+  noop_raw_waker()) }` in `ai/anthropic.rs`, `ai/ollama.rs` and
+  `commands/ai.rs`. They were not three uses of a shared helper — they were
+  the same hand-rolled no-op `RawWakerVTable`, copied verbatim into three
+  modules, with the second and third SAFETY comments citing the first rather
+  than restating the invariant. That citation reads as a convention and is
+  actually an admission of the duplication: the same shape as the
+  hand-rolled newline reader in `engine-rpc-client.ts`, this time in unsafe
+  code.
+
+  `Waker::noop()` makes all three unnecessary. Verified from the local
+  toolchain's own source rather than from memory —
+  `library/core/src/task/wake.rs:565` carries
+  `#[stable(feature = "noop_waker", since = "1.85.0")]`. Raising the floor
+  from 1.82 to 1.85 therefore trades a three-minor-version bump for the
+  removal of every `unsafe` block in the crate, plus ~30 lines of vtable
+  boilerplate and three imports.
+
+  Cost accepted: the floor is a declaration, not a build pin (see the CI
+  workflow's note — cargo enforces it by refusing to build with an older
+  toolchain), and 1.85 shipped in February 2025. Nothing in this repository
+  pins an older toolchain; the dev machine runs 1.97.1.
+
+  Consequence for the Windows DACL work that prompted this: the entry that
+  work needs is now accurate. It introduces the FIRST `unsafe` in the crate,
+  not the fourth — and the first in a shipped code path either way, since
+  all three deleted blocks were `#[cfg(test)]` and could never appear in a
+  release binary.
+- **AMENDMENT — ESLint 9.39 -> 10.8 so the `brace-expansion` advisory can be
+  closed without breaking the linter.**
+  Authorised-by: product owner (chat), 2026-07-29
+  Departs-from: Phase 0 entry above — "ESLint `~9.39.0` + `@eslint/js` `~9.39.0`"
+
+  The `overrides` entry `"brace-expansion": ">=5.0.8"` closes
+  GHSA-mh99-v99m-4gvg (high; DoS via unbounded expansion). The advisory has ONE
+  vulnerable range (`<= 5.0.7`) and ONE patched version (`5.0.8`) — confirmed
+  against `gh api /advisories/GHSA-mh99-v99m-4gvg`, not from memory, because it
+  is easily mistaken for the June-2025 ReDoS that did have per-line fixes.
+  There is therefore no patched v1 or v2 line to pin per-branch.
+
+  Under ESLint 9, `@eslint/config-array@0.21.2` required `minimatch@^3.1.2`,
+  and minimatch 3 consumes brace-expansion as `module.exports = expand`. v5
+  changed that export shape, so the override made ESLint crash with `TypeError:
+  expand is not a function` on every clean install, on every platform. That is
+  why `verify` had never once reached its own test stage in CI.
+
+  ESLint 10's `@eslint/config-array@0.23.5` requires `minimatch@^10.2.4`, which
+  requires `brace-expansion@^5.0.5` — the patched line. The conflict disappears
+  at the root rather than being worked around.
+
+  Correction to the working assumption this decision started from: the upgrade
+  alone does NOT close the advisory, and the override is NOT removable. With
+  ESLint 10 and no override, the resolved tree still contains
+  `brace-expansion@1.1.16` and `@2.1.3`, reached by `recursive-readdir` ->
+  `minimatch@3`, `mocha`/`glob@8` -> `minimatch@5`, and
+  `@typescript-eslint/typescript-estree`/`glob@10` -> `minimatch@9`; `bun audit`
+  reports 9 vulnerable paths. The correct configuration is ESLint 10 **and** the
+  override retained. Verified by inspecting the resolved tree, not by trusting
+  an exit code: after `rm -rf node_modules && bun install`, the entire tree
+  contains exactly one copy of the package, `brace-expansion@5.0.8`.
+
+  Cost accepted: one new lint error, from `no-useless-assignment` entering
+  `eslint:recommended` in v10. It was a true positive — a dead `''` initializer
+  on `member` in `packages/engine/src/graph/tarjan-scc.ts`, assigned by the
+  do-while body before any read. Fixed rather than suppressed. No plugin
+  upgrade was entangled: `typescript-eslint@8.65.0`, already pinned, declares
+  `eslint: ^8.57.0 || ^9.0.0 || ^10.0.0`. `@eslint/js` tracks its own version
+  line and moves to `~10.0.1`, not `~10.8.0`.
+
+  Consequence: `bun run verify` now passes all seven stages on a wiped
+  `node_modules` with `--frozen-lockfile`. That is the first green run in this
+  repository that a clean checkout reproduces — see `docs/SECURITY_AUDIT.md`
+  §6 on why every earlier one is attested but unverified.
+- **Phase 13 follow-up — `analyze()` may not be called concurrently in one
+  process. Found by accident, recorded before it can bite.**
+
+  A test that analysed the same fixture from two temp paths with `Promise.all`
+  produced results disagreeing on `edges`, `symbolCount`, `pageRank`,
+  `inDegree`/`outDegree`, `diagnostics` and `graph.componentCount` — 107
+  differing leaves. Run the identical two analyses SEQUENTIALLY and they differ
+  in exactly three: `repo.id`, `repo.rootPathHash`, `fingerprint`. So the
+  divergence is overlap, not location.
+
+  Not currently reachable, and that is luck rather than design:
+  `rpc/server.ts`'s `for await (const rawLine of options.lines)` awaits each
+  request before reading the next, so the sidecar can never have two `analyze()`
+  calls in flight. Nothing states that this serialization is load-bearing, and
+  "handle requests concurrently for throughput" is an obvious future change.
+
+  `verify:determinism` cannot catch this: all four of its comparisons run
+  sequentially, which is exactly the case that works.
+
+  Not fixed here — the shared state has not been located, and guessing at it is
+  worse than recording it. What IS fixed is the invisibility: the constraint is
+  written at `rpc/server.ts`'s loop, in
+  `test/analyze/snapshot-identity.test.ts`, and here. Queued for `ts-engine`:
+  find the shared mutable state (tree-sitter parser instances are the first
+  suspect), then either make it re-entrant or make the serialization explicit
+  and asserted rather than incidental.
+- **Phase 13 follow-up — A9's "one runner cross-compiles every target" holds on
+  Linux ONLY. Phase 14's release job must produce sidecars on Linux.**
+
+  `build-sidecar.ts` cross-compiles four triples through
+  `Bun.build({ compile: { target } })`. On ubuntu-22.04 all four succeed. On
+  windows-2022 it fails, identically, on three consecutive runs:
+
+  ```
+  built onboard-engine-x86_64-pc-windows-msvc.exe     <- host target fine
+  error: Failed to extract executable for 'bun-darwin-aarch64-v1.3.14'
+  ```
+
+  Bun downloads and unpacks a per-target executable to compile against; the
+  darwin ones do not extract on a Windows runner. The Windows target itself
+  builds fine, so this is not a Bun-on-Windows problem in general.
+
+  **Where it was actually biting was avoidable.** The `rust` job built all four
+  and needed exactly one: Tauri resolves `externalBin: ["binaries/onboard-engine"]`
+  to the HOST target triple, and `stage:sidecar` fails only when ZERO binaries
+  are found. So clippy and `cargo test` on windows-2022 were being blocked by
+  three binaries they never open. That job now runs `build:sidecar --host-only`
+  and the failure disappears without moving any work.
+
+  **The claim itself is not dropped.** The four-triple build moves to
+  `engine-no-network` on ubuntu, which is now the single place A9 is exercised,
+  and `build:sidecar` fails if any of the four filenames is missing.
+
+  **Consequence for Phase 14, recorded now rather than at packaging time:**
+  the release job that produces sidecars must run on Linux. A Windows or macOS
+  release runner cannot produce the darwin binaries. If a future change needs
+  per-OS release runners for the Tauri bundles themselves (`.msi` genuinely
+  needs Windows), the sidecars must still be built once on Linux and passed
+  between jobs as artifacts — not rebuilt per runner.
+
+  **Still unproven, and not addressed by any of the above:** nothing has
+  executed a darwin sidecar on macOS. A runner PRODUCING a binary is not a
+  runner RUNNING it. `build:sidecar`'s smoke test only ever launches the HOST
+  binary, so on ubuntu the two darwin outputs are checked for existence and
+  nothing else. Criterion 23 stays not-CI-evidenced (see
+  `docs/CRITERIA_MAP.md`), and `docs/MACOS_SMOKE.md` remains the only path to
+  retiring it.
+- **CROSS-DOMAIN — the engine's no-overlap requirement was held by the Rust
+  shell being accidentally stricter than the spec. Now enforced on both sides.**
+  Domains: `ts-engine` (owns the constraint), `rust-tauri` (was silently
+  satisfying it), spec Section 7.4 / Phase 6 (permits the violation).
+
+  **Reachability: NOT reachable today. Settled by reading, not assumed.**
+  Spec Phase 6 says "one analysis at a time PER REPO (`E_ANALYSIS_IN_PROGRESS`)",
+  which would permit two repositories to analyse concurrently. The
+  implementation does not do that:
+  `apps/desktop/src-tauri/src/sidecar/supervisor.rs` keeps a single
+  `analysis_in_progress: bool` on `State`, and `begin_analysis()` takes NO
+  repository argument — it rejects any second concurrent analysis whatever it
+  targets. There is exactly one `SidecarSupervisor`, owned by the single
+  `AppState` built in `lib.rs`, and exactly one production call site for
+  `engine.analyze` (`commands/analyze.rs:94`), which acquires the guard on the
+  line before and holds it by RAII across the whole call.
+
+  So the shell CANNOT currently issue overlapping analyses for different
+  repoIds. **The product is safe because it does not implement its own spec.**
+  That is a weaker guarantee than it looks: the defect is one faithful
+  "implement Phase 6 as written" refactor away, and that refactor would look
+  like a bug fix.
+
+  **What overlap actually costs**, measured: identical fixture content analysed
+  concurrently from two paths disagreed on `edges`, `symbolCount`, `pageRank`,
+  `inDegree`/`outDegree`, `diagnostics` and `graph.componentCount` — 107
+  differing leaves. Sequentially: 3, all path-derived. This is the product's
+  core determinism guarantee, and `verify:determinism` cannot see it because all
+  four of its comparisons are sequential.
+
+  **Both sides now state the property instead of relying on the other.**
+  - `packages/engine/src/analyze.ts` refuses a re-entrant `analyze()` with
+    `E_ANALYSIS_IN_PROGRESS` — the same code the shell returns, so Section 10's
+    copy is identical whichever layer refuses. Guarded with `try/finally`, so a
+    failed analysis does not wedge the process.
+  - `packages/engine/test/analyze/no-overlap.test.ts` fails if someone makes
+    `analyze()` re-entrant without fixing the shared state, and separately
+    proves the guard RELEASES — both after success and after failure, which a
+    `try` without `finally` would pass every other test while breaking.
+  - `apps/desktop/src-tauri/tests/sidecar_supervisor.rs`'s
+    `the_analysis_guard_is_process_wide_not_per_repo` binds `begin_analysis` to
+    a function pointer of the exact expected type, so adding a repo parameter
+    fails to COMPILE rather than silently re-opening the defect.
+
+  **Still open, and deliberately not guessed at:** the shared mutable state has
+  not been located. Tree-sitter parser instances in `packages/engine/src/parse/`
+  are the first suspect. Until then the constraint is enforced, not removed —
+  the engine refuses concurrency rather than supporting it. Queued for
+  `ts-engine`.
+
+  **Spec disposition:** Section 7.4's table and Phase 6's prose say "per repo".
+  The code says per process. The code is right and the spec should be amended
+  when Section 7.4 is next revised; recorded here rather than editing a FROZEN
+  section unilaterally.
+- **Phase 13 follow-up — the concurrency defect's ROOT CAUSE, located and fixed:
+  per-loader memoization of a process-global initialization.**
+
+  The previous cross-domain entry recorded that two overlapping `analyze()`
+  calls disagree on 107 leaves and that the shared state had not been found.
+  It has. It was not the parser pool — that is clean, and its factory,
+  concurrency counter and result array are all per-call.
+
+  `parse/grammar-loader.ts` did this:
+
+  ```ts
+  export function createGrammarLoader(grammarsDir: string): GrammarLoader {
+    let initPromise: Promise<void> | null = null;   // <- per LOADER
+    ...
+    initPromise ??= Bun.file(TREE_SITTER_WASM_PATH).arrayBuffer()
+      .then((wasmBinary) => Parser.init({ wasmBinary }));
+  ```
+
+  `Parser` is a module singleton over ONE Emscripten WASM runtime, so
+  `Parser.init()` initializes shared global state. Memoizing it per loader is
+  the bug: the memo is correctly scoped for the `Language` cache beside it,
+  which genuinely depends on `grammarsDir`, and wrong for this, which does not.
+  Two loaders created concurrently each called it, the second re-initialized
+  the runtime while the first's `Language.load()` was in flight, and the
+  language came back as version 0:
+
+  ```
+  Incompatible language version 0. Compatibility range 13 through 15
+  ```
+
+  Every file in the losing run then failed to parse. Zero symbols, zero
+  imports, so zero edges, so a different `componentCount`, different pageRank,
+  different `importanceRank`, and a longer `diagnostics` array — the exact 107
+  leaves, all downstream of one failure.
+
+  **Why every existing test missed it.** The defect is invisible once anything
+  has warmed the runtime, and every test in this repository runs sequentially,
+  so by the second run the global is already initialized. The first probe
+  written for this even missed it by warming up first. The load-bearing word in
+  `test/parse/parse-concurrency.test.ts` is COLD.
+
+  **Fix:** hoist the init promise to module scope. Bounded, as hoped.
+  **Measured after:** two concurrent `analyze()` calls now differ in 3 leaves —
+  `fingerprint`, `repo.id`, `repo.rootPathHash` — which is exactly what two
+  SEQUENTIAL runs from different paths differ by. 107 -> 3.
+
+  **The `analyze()` re-entrancy guard is kept anyway.** What is demonstrated is
+  that one known global was wrong and is now right, not that the engine is
+  re-entrant: the SQLite cache store and the no-network guard also hold
+  process-scoped state and nothing has exercised them under overlap. Refusing
+  costs nothing while the Rust shell serializes analyses regardless.
+
+  **Shape worth noting.** `grammar-loader.ts`'s own header already documented an
+  earlier `Parser.init()` defect, where a compiled binary's WASM lookup failed
+  with ENOENT and — in that module's words — "silently degrad[ed] every parse to
+  `PARSE_FAILED` rather than throwing". Same function, same silent degradation
+  to an empty-but-well-formed result, second time. That is the same fail-open
+  family as INV-3, and it is why the fix ships with a test rather than a
+  comment.
+- **Phase 13 follow-up — criterion 28's gate is wired, and pre-merge history
+  predates it.**
+
+  `scripts/commit-message-check.py` enforces `<type>: <description>` over the
+  commits a branch adds, and runs as its own CI job. The type set is recorded in
+  the script rather than assumed, because Section 13 #28 does not enumerate one.
+
+  **One subject on `phase13/gate-evidence` fails it:** `ci,docs: build only the
+  sidecar a job uses...`. `<type>` is one type; a comma-joined pair is two, and
+  the gate is right to reject it.
+
+  It is NOT rewritten. Reworking nine commits and force-pushing to an open PR to
+  clear one subject is disproportionate, and this branch squash-merges — so its
+  subjects never land on `main` and the gate is clean from the merge commit
+  onward. Product owner's call, 2026-07-29.
+
+  Recorded here for one reason: a future reader running `commit:check` against
+  the pre-merge branch will see it fail, and should know that is history
+  predating the gate rather than the gate being broken. Anything authored after
+  the merge has no such excuse.
+- **AMENDMENT — Linux ships `.deb` + `.rpm`, not `.AppImage` + `.deb`.**
+  Authorised-by: product owner (chat), 2026-07-29
+  Departs-from: Section 13 #23 — "`.AppImage` + `.deb`"
+
+  Two departures, recorded separately because they have different causes.
+
+  **`.AppImage` is NOT shipped — it does not build.** Tauri bundles it through
+  `linuxdeploy`, which fails on a GitHub runner:
+
+  ```
+  Bundling Onboard_0.1.0_amd64.AppImage
+  failed to bundle project `failed to run linuxdeploy`
+  ```
+
+  Measured with `libfuse2` installed AND `APPIMAGE_EXTRACT_AND_RUN=1` set — both
+  applied, same failure — so it is specific to the AppImage path rather than to
+  FUSE availability. `.deb` and `.rpm` bundle cleanly in the same run. Shipping a
+  format that has never been produced is precisely what the macOS hold exists to
+  prevent, and the same rule applies here.
+
+  **`.rpm` IS shipped, and Section 13 does not name it.** Tauri produces it from
+  the same bundle step at no extra cost, and it covers the Fedora/RHEL half of
+  Linux that a `.deb` alone does not. Adding a format the spec omits is still a
+  departure, and going unrecorded is how a criteria map starts describing
+  something other than what ships.
+
+  **Why this is an AMENDMENT and not just a KNOWN_ISSUES line.** KI-9 records the
+  DEFECT — that the AppImage build fails. This records the DECISION — that the
+  release ships a different set of formats than the spec names. They are
+  different claims: one could be fixed tomorrow without changing the other, and
+  a reader checking criterion 23 against the spec needs the second, not the
+  first. KNOWN_ISSUES is where defects go; this file is where departures go.
+
+  **Consequence for criterion 23:** its text is now "`.deb` + `.rpm`" on Linux.
+  The `.AppImage` returns to scope if the `linuxdeploy` failure is resolved, at
+  which point this amendment is superseded rather than deleted.
+
+- **AMENDMENT — Section 10 gains an `E_ENGINE_NOT_STARTED` row; the engine
+  failing to START is not the engine CRASHING.**
+
+  Section 10's error table had rows for a sidecar that dies mid-analysis
+  (`E_ENGINE_CRASHED`) and one that hangs (`E_ENGINE_TIMEOUT`), but none for a
+  sidecar that was never spawned at all. `spawn_sidecar` therefore reported the
+  nearest available code, and the v0.1.0 Windows `.msi` shipped this to a user
+  on a clean machine:
+
+  ```
+  Analysis stopped unexpectedly
+  Failed to start the analysis engine process: The system cannot find the
+  path specified. (os error 3)
+  ```
+
+  Two defects in one string. The **code is false**, not merely imprecise: it
+  points the reader at a crash log for a process that never existed, and at a
+  Retry that cannot help, because the install is broken rather than the run.
+  And the **body is a raw OS error**, which Section 12 forbids — OS strings
+  belong in `detail`, behind the Details disclosure.
+
+  The new row's copy, frozen here and asserted byte-exact in both
+  `copy/messages.test.ts` and `error.rs`:
+
+  > **Onboard could not start its analysis engine**
+  > The analysis engine is missing from this installation, so nothing was
+  > analyzed. Reinstalling Onboard should restore it. The log is at {logPath}.
+
+  It deliberately offers no Retry framing, which is the substantive difference
+  from `E_ENGINE_CRASHED` rather than a stylistic one.
+
+  **Why this is an AMENDMENT and not just a KNOWN_ISSUES line.** The packaging
+  bug that produced it is a defect and belongs there. That Section 10's table
+  was *missing a state the product can actually be in* is a spec gap, and the
+  new code is a departure from the frozen table. A reader checking criterion 19
+  against the spec needs to find the row.
+
+  **Consequence:** `SidecarConfig::program` became `Option<PathBuf>` so
+  "unresolved" is representable. The previous code constructed a path that
+  existed nowhere and let the OS explain it — which is how the raw string
+  reached the UI in the first place.
+
+- **AMENDMENT — never read-modify-write a tracked file through a shell.**
+
+  `Section 7` of `docs/SESSION_HANDOFF.md` already said to prefer Python
+  scripts over shell one-liners for anything touching Rust string literals.
+  This widens it, because the failure recurred twice in one session on files
+  that contained no string literals at all.
+
+  The specific idiom, which looks harmless and is not:
+
+  ```powershell
+  (Get-Content $f -Raw) -replace 'a','b' | Set-Content $f -Encoding utf8
+  ```
+
+  `Get-Content -Raw` decodes with the console's default encoding, not UTF-8.
+  On this machine that reads every UTF-8 em-dash as three cp1252 characters,
+  and `Set-Content -Encoding utf8` then writes those three characters back as
+  UTF-8 — double-encoding the file. Seven source files lost 77 runs of text
+  this way; `Cargo.toml` lost 6 more an hour later, to the same idiom, after
+  the first repair.
+
+  **Both were caught by byte-exact assertions**, not by review: the Section 10
+  copy comparison in `tests/sidecar_supervisor.rs` failed on a corrupted
+  em-dash, which is the third time this session an escaping layer has cost
+  real time. A test asserting "an error rendered" would have shipped it.
+
+  **The rule:** edit tracked files with a real editor tool, or with Python
+  reading and writing `encoding="utf-8"` explicitly. Never with a shell
+  read-modify-write. Detect with `grep -c 'â€'` — clean text never contains
+  that sequence, so it is a reliable canary. Note that a PowerShell console
+  DISPLAYING mojibake proves nothing; only a content search does.
+
+- **AMENDMENT — criterion 28's gate is scoped to commits after the gate landed,
+  and the squash-merge decision is RETRACTED.**
+
+  Two changes, recorded together because the second is what makes the first
+  load-bearing.
+
+  **The scope.** `commit:check` now examines every commit after `d67b30e` — the
+  commit that ADDED `scripts/commit-message-check.py` — with no exceptions list.
+
+  The justification is not "some commits fail". It is that **a commit-message
+  linter cannot retroactively govern history that predates it**: before that
+  commit there was no check to run, so no author could have conformed to it, and
+  failing them is not enforcement but a permanently red job that reports rather
+  than holds. The test for whether a scope is principled or merely convenient is
+  *would we choose it if history were already clean?* — and the answer here is
+  yes, because a linter's authority begins when the linter exists.
+
+  Two facts show the boundary was not reverse-engineered from the current
+  failure, which is the trap this kind of change usually falls into:
+
+  1. **It does not clear today's red.** `209c740` (a 103-character subject)
+     POSTDATES the boundary, is in scope, and still fails. A boundary chosen to
+     make the job green would have been placed after it.
+  2. **The other candidate boundary changes nothing.** The gate could have been
+     dated from where CI began running it (`32ad079`, two commits later)
+     instead. The earlier is correct — the obligation begins when an author can
+     run the check, not when someone else starts enforcing it — but either
+     choice yields the same result today.
+
+  `commit:check --all-history` keeps the full picture available. It is
+  INFORMATIONAL and wired to nothing; it currently reports three non-conforming
+  subjects, of which two predate the gate.
+
+  Non-vacuity, as everywhere: `scope_self_test` builds a throwaway repository
+  with a non-conforming subject on each side of a boundary and asserts the
+  split in both directions. A matcher-only test would pass equally on a scope
+  bug that examined zero commits or every commit.
+
+  **The retraction.** This PR was previously authorised to squash-merge, and the
+  criterion-28 job's own comment leaned on that: the branch's subjects would
+  never reach `main`. **That is withdrawn.** `docs:check` now requires every SHA
+  cited in `docs/` to resolve, and `DECISIONS.md` cites branch SHAs. A squash
+  collapses those commits; once the branch is deleted the citations dangle and
+  `docs:check` fails on `main` — a gate breaking a gate. **The PR merges with a
+  merge commit, history preserved.**
+
+  The general shape is worth keeping: a merge strategy is not only a history
+  preference once something else in the repository depends on the commits being
+  reachable.

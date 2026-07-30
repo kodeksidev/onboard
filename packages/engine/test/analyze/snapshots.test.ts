@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AnalysisResult, stableStringify } from '@onboard/contract';
 import { findCycleOrderViolations, findSortOrderViolations } from '@onboard/contract/test/sort-order';
 import { analyze } from '../../src/analyze';
+import { deriveFingerprint, normalizeForSnapshot } from '../snapshot-identity';
 
 const GRAMMARS_DIR = join(import.meta.dir, '..', '..', 'grammars');
 const FIXTURES_DIR = join(import.meta.dir, '..', '..', 'fixtures');
@@ -31,7 +32,24 @@ describe('analyze() reproduces each fixture\'s committed snapshot exactly', () =
       engineVersion: '0.0.0-snapshot',
     });
     const snapshot = loadSnapshot(fixture);
-    expect(stableStringify(result)).toBe(stableStringify(snapshot));
+    // Normalized on BOTH sides: `repo.rootPathHash` hashes the absolute path by
+    // design, so an un-normalized comparison asserts which directory the test
+    // ran in. See `test/snapshot-identity.ts`.
+    expect(stableStringify(normalizeForSnapshot(result))).toBe(stableStringify(snapshot));
+  });
+});
+
+describe('each fixture\'s fingerprint is the correct hash of its own content', () => {
+  // What normalization gives up in the comparison above, this gets back, and
+  // more: a stored fingerprint only proves the value has not changed, whereas
+  // this proves the engine computed it correctly — on whatever machine runs it.
+  test.each(FIXTURES.map((f) => [f] as const))('%s carries a self-consistent fingerprint', async (fixture) => {
+    const result = await analyze({
+      repoRootAbs: join(FIXTURES_DIR, fixture),
+      grammarsDir: GRAMMARS_DIR,
+      engineVersion: '0.0.0-snapshot',
+    });
+    expect(result.fingerprint).toBe(deriveFingerprint(result));
   });
 });
 

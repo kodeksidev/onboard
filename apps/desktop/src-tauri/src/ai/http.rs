@@ -61,7 +61,7 @@
 //!
 //! An early version of `send` took `reqwest::header::HeaderMap` directly
 //! from its caller — which meant every adapter module (`ai/anthropic.rs`,
-//! `ai/ollama.rs`, `ai/openai_compatible.rs`) had to `use reqwest::header`
+//! `ai/ollama.rs`) had to `use reqwest::header`
 //! itself just to build an auth header, making `reqwest` a *second*
 //! consumer of the crate even though those adapters never touch the client
 //! or send anything themselves. [`RequestHeaders`] is plain, `reqwest`-free
@@ -77,6 +77,7 @@ use reqwest::StatusCode;
 
 use crate::ai::endpoint::ResolvedEndpoint;
 use crate::ai::permit::EgressPermit;
+use crate::ai::pipeline::{SendApproval, TraceKind};
 use crate::ai::prompt::PromptSpec;
 use crate::error::AppError;
 
@@ -113,13 +114,13 @@ fn build_header_map(
     Ok(map)
 }
 
-/// The exactly-three request-body shapes §3 non-goal 2 caps v1 at. Adapters
-/// name their shape; they never build or supply the body itself — see this
-/// module's doc comment.
+/// The exactly-two request-body shapes §3 non-goal 2 caps v1 at ("DeepSeek,
+/// OpenAI, Azure, Bedrock, or any adapter beyond Anthropic and Ollama").
+/// Adapters name their shape; they never build or supply the body itself —
+/// see this module's doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderShape {
     Anthropic,
-    OpenAiCompatible,
     Ollama,
 }
 
@@ -174,13 +175,6 @@ pub(crate) fn build_body(
             "max_tokens": ANTHROPIC_MAX_TOKENS,
             "system": task,
             "messages": [{ "role": "user", "content": blocks }],
-        }),
-        ProviderShape::OpenAiCompatible => serde_json::json!({
-            "model": model,
-            "messages": [
-                { "role": "system", "content": task },
-                { "role": "user", "content": blocks },
-            ],
         }),
         ProviderShape::Ollama => serde_json::json!({
             "model": model,
@@ -240,14 +234,47 @@ pub struct AiResponse {
 /// constructible from a `RedactedPayload` (see `ai::prompt`). There is no
 /// way to reach the network with content that did not come from `prompt`,
 /// because `send` never accepts a body from its caller at all.
+/// The approval-kind comparison, extracted so its branch is directly
+/// testable.
+///
+/// It lives outside `send` because `send` cannot be called from a unit test
+/// at all: its first parameter is `&EgressPermit`, which has no public
+/// constructor and no test seam, by design. Adding one would punch a hole in
+/// the WHETHER leg purely to exercise the approval leg — a bad trade. A pure
+/// function needs neither.
+///
+/// What this does NOT prove is ORDERING: that the refusal happens before any
+/// network work. That needs an integration test driving a real pipeline, and
+/// is on the CI list.
+fn check_kind(minted: TraceKind, expected: TraceKind) -> Result<(), AppError> {
+    if minted == expected {
+        return Ok(());
+    }
+    Err(AppError::ai_pipeline_incomplete(format!(
+        "send refused: approval minted for {minted:?} but this is a {expected:?} request"
+    )))
+}
+
 pub fn send(
     _permit: &EgressPermit,
+    approval: SendApproval,
+    expected_kind: TraceKind,
     endpoint: &ResolvedEndpoint,
     headers: &RequestHeaders,
     shape: ProviderShape,
     model: &str,
     prompt: &PromptSpec,
 ) -> Result<AiResponse, AppError> {
+    // Consumed BY VALUE: one approval, one request. A borrowed token would
+    // prove only that some gate passed at some point, letting a single mint
+    // authorise N sends — including one issued after a later gate would have
+    // refused.
+    //
+    // The kind check is the other half: trace orders being disjoint achieves
+    // nothing if their tokens are interchangeable. A connectivity approval is
+    // minted after five steps with no Redacted and no Capped, so without this
+    // it would authorise a full feature payload.
+    check_kind(approval.kind(), expected_kind)?;
     let body = build_body(shape, model, prompt);
     let header_map = build_header_map(headers, "the AI provider")?;
 
@@ -426,13 +453,33 @@ mod tests {
         );
     }
 
+    /// Both directions of the kind check, so it cannot decay to "any token
+    /// works" if the polarity is ever flipped. The Connectivity->Feature
+    /// direction is the one that matters: a connectivity approval is minted
+    /// after five steps with no Redacted and no Capped, so accepting it for
+    /// a feature request would authorise a full repo payload past three
+    /// skipped privacy steps.
     #[test]
-    fn build_body_produces_the_three_named_shapes_without_panicking() {
-        for shape in [
-            ProviderShape::Anthropic,
-            ProviderShape::OpenAiCompatible,
-            ProviderShape::Ollama,
+    fn a_mismatched_approval_kind_is_refused_in_both_directions() {
+        for (minted, expected) in [
+            (TraceKind::Connectivity, TraceKind::Feature),
+            (TraceKind::Feature, TraceKind::Connectivity),
         ] {
+            let err = check_kind(minted, expected)
+                .expect_err("a mismatched approval kind must be refused");
+            assert_eq!(err.code, "E_AI_PAYLOAD_UNSAFE");
+        }
+    }
+
+    #[test]
+    fn a_matching_approval_kind_is_accepted() {
+        assert!(check_kind(TraceKind::Feature, TraceKind::Feature).is_ok());
+        assert!(check_kind(TraceKind::Connectivity, TraceKind::Connectivity).is_ok());
+    }
+
+    #[test]
+    fn build_body_produces_the_two_named_shapes_without_panicking() {
+        for shape in [ProviderShape::Anthropic, ProviderShape::Ollama] {
             let prompt = prompt_from(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 "a.ts",
@@ -445,7 +492,7 @@ mod tests {
 }
 
 /// Shared by every adapter's own real-bytes redaction test
-/// (`ai::anthropic::tests`, `ai::ollama::tests`, `ai::openai_compatible::tests`)
+/// (`ai::anthropic::tests`, `ai::ollama::tests`)
 /// — `pub(crate)` so those sibling modules can use it, `#[cfg(test)]` so
 /// none of it exists in a non-test build.
 #[cfg(test)]

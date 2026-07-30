@@ -66,5 +66,42 @@ export default defineConfig({
      * simply the wrong one.
      */
     exclude: [...configDefaults.exclude, '**/*.perf.test.tsx', 'e2e/**'],
+    /**
+     * Section 13 #10: ">=80% lines and branches per package".
+     *
+     * `include` is an explicit allow-list rather than a default, because the
+     * default is actively misleading here. Measured before this block existed:
+     * `vitest run --coverage` reported `All files | 6.02% Stmts`, because the
+     * v8 provider had swept 191 files including ~120 Tauri build artifacts
+     * under `src-tauri/target/{debug,release}/build/onboard-<hash>/out/`
+     * `tauri-codegen-assets/` (generated asset blobs, never executed by a
+     * test), plus `wdio.conf.ts`, `bench/` and `e2e/support/`. A 6% figure
+     * that is really "we measured the Rust build directory" is worse than no
+     * figure: it cannot fail honestly and it cannot pass honestly.
+     *
+     * What is left in is the whole shipped UI source tree — including
+     * `main.tsx`, which is NOT excluded despite being the hardest file here to
+     * reach from jsdom. Excluding an untested file to lift the average is the
+     * same vacuity this project rejects everywhere else; if it is uncovered,
+     * the number should say so.
+     */
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      /**
+       * Test files and the test-only helpers they import are excluded from
+       * being *measured* (they are still executed). Coverage of a test file by
+       * itself is a tautology — it reports how much of the assertions ran, not
+       * how much product code they reached.
+       */
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.perf.test.tsx', 'src/test/**'],
+      thresholds: {
+        lines: 80,
+        branches: 80,
+        functions: 80,
+        statements: 80,
+      },
+    },
   },
 });

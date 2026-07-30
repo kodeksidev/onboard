@@ -11,3 +11,4 @@ export * from './search';
 export * from './rpc';
 export * from './error';
 export * from './stable-stringify';
+export * from './line-framing';

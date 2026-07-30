@@ -28,9 +28,6 @@ describe('resolveAiAvailability', () => {
     expect(
       resolveAiAvailability(aiSettings({ isEnabled: true, provider: 'anthropic' })),
     ).toBe('missing-key');
-    expect(
-      resolveAiAvailability(aiSettings({ isEnabled: true, provider: 'openai-compatible' })),
-    ).toBe('missing-key');
   });
 
   test('is ready for Ollama with no key at all — it needs no credential', () => {
