@@ -38,6 +38,7 @@
     "commit:check": "python scripts/commit-message-check.py",
     "release:check-assets": "python scripts/release-assets-check.py",
     "release:check-notes": "python scripts/release-notes-check.py",
+    "release:check-body": "python scripts/release-body-check.py",
     "release:plan": "python scripts/release-plan.py"
   },
   "overrides": {
