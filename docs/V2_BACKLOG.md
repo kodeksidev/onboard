@@ -86,7 +86,13 @@ and no Tauri dependency, which is the shaping that non-goal refers to.
 
 ## Other standing non-goals
 
-Listed so v2 planning starts from the frozen set rather than re-deriving it:
+Listed so v2 planning starts from the frozen set rather than re-deriving it.
+
+**Section 3 names TWELVE non-goals and every one is accounted for here** —
+1 to 4 have sections of their own above, 5 to 12 are below. The numbers are
+kept so the correspondence can be checked against the spec rather than trusted;
+this list was found short of 10, 11 and 12 when it was audited against Section 3
+during Phase 15, which is exactly the kind of omission an unnumbered list hides.
 
 - Git history analysis, blame, churn, PR integration (non-goal 5).
 - Any write to the analyzed repository — Onboard is strictly read-only on user
@@ -96,6 +102,18 @@ Listed so v2 planning starts from the frozen set rather than re-deriving it:
 - Multi-repo workspaces, remote repos, clone-by-URL, network filesystems as a
   supported target (non-goal 8).
 - Telemetry, crash reporting, analytics, update checks (A17, non-goal 9).
+- **Server-side anything. There is no backend** (non-goal 10). This one is not
+  merely deferred: it is load-bearing for the guarantee in `docs/PRIVACY.md`.
+  A v2 that grows a server changes what the product *is*, and the privacy
+  document would have to be rewritten rather than extended.
+- Streaming token-by-token AI rendering, AI-driven refactoring suggestions, or
+  AI writing to the index (non-goal 11). The last of the three is the one to be
+  careful with: an AI that can write to the index would put unverified model
+  output where the citation check currently reads ground truth from.
+- Custom themes, plugin systems, or user-authored analyzers (non-goal 12). A
+  plugin system is also an egress surface — arbitrary user code inside the app
+  would end the single-HTTP-client guarantee that `check_egress_chokepoint`
+  enforces today.
 
 ---
 
