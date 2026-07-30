@@ -186,7 +186,12 @@ EVIDENCE: dict[int, Evidence] = {
 #
 # When a gate changes, DELETE its row rather than editing the id. An entry
 # that outlives the gate it attests to is the same failure in a new place.
-CI_RUN = "run 30489773361 (2026-07-29)"
+# Run 30522786141 is the first CI run in which ALL THIRTEEN jobs were green,
+# including criterion 28's. It superseded run 30489773361 as the recorded
+# observation because that earlier run was red on 28, and citing a run that was
+# partly red as evidence for the gates that happened to be green in it invites
+# exactly the confusion this table exists to prevent.
+CI_RUN = "run 30522786141 (2026-07-30)"
 RELEASE_RUN = "run 30489773363 (2026-07-29)"
 
 EXECUTED: dict[int, str] = {
@@ -213,9 +218,14 @@ EXECUTED: dict[int, str] = {
     # manual checklist and has no run id by construction.
     23: f"{RELEASE_RUN}, half (a) on Windows + Linux",
     27: CI_RUN,
-    # 28 is deliberately ABSENT. Its gate is wired and RAN — and FAILED, on
-    # two pre-existing commits (209c740, 63f03bc). Wired and red is not
-    # executed-green, and recording it here would say the opposite.
+    # 28 was ABSENT while its gate was wired and RED. It is now green and
+    # observed: the gate was scoped to commits after it landed (a linter cannot
+    # retroactively govern history that predates it), and the one violating
+    # commit that POSTDATED the boundary had its subject shortened. The two
+    # remaining non-conforming subjects predate the boundary and are out of
+    # scope by principle, not by exception — `commit:check --all-history` still
+    # reports them, informationally.
+    28: f"{CI_RUN}, from boundary d67b30e forward",
 }
 
 

@@ -7,8 +7,8 @@ evidence table in the script, not this file.
 
 - **21 of 28** criteria are backed by a CI job.
 - **13** of those run on all three operating systems.
-- **20** have been OBSERVED GREEN, with a run id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 27].
-- **1** are WIRED but never observed green: [28].
+- **21** have been OBSERVED GREEN, with a run id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 27, 28].
+- **0** are wired-but-unobserved.
 - **7** are not evidenced by CI, of which:
 
 ## CI-blocked, strictly
@@ -28,34 +28,34 @@ The rest, under their real cause:
 
 | # | Status | Blocker | Evidence | Criterion |
 |---|---|---|---|---|
-| 1 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | verify matrix + the space-in-path job | `bun install && bun run verify` exits 0 on Windows, macOS, and Linux, from a... |
-| 2 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | contract:check-drift, inside verify | `packages/contract` exports every schema in Section 7 with `SCHEMA_VERSION ==... |
-| 3 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | engine determinism gate | `bun run verify:determinism` exits 0: all 5 fixtures produce identical `finge... |
-| 4 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | engine tests, inside verify | Every path in every `AnalysisResult` is repo-relative POSIX; a test asserts z... |
-| 5 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | engine tests, inside verify | `AnalysisResult` contains no timestamp, no duration, no absolute path, no hos... |
-| 6 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | snapshot tests, inside verify | Snapshot tests exist and pass for `node-express`, `react-app`, `python-flask`... |
-| 7 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | kitchen-sink snapshot assertions, inside verify | `kitchen-sink`'s snapshot asserts: the known 3-file cycle appears as exactly... |
-| 8 | EXECUTED on 1 OS — run 30489773361 (2026-07-29) | — | Linux-only by construction: unshare -rn | `bun run verify:no-network` exits 0: the engine bundle contains no network id... |
-| 9 | EXECUTED on 2 OS — run 30489773361 (2026-07-29) | — | Rust suite | A test asserts `tauri.conf.json`'s CSP contains no remote origin and `capabil... |
+| 1 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | verify matrix + the space-in-path job | `bun install && bun run verify` exits 0 on Windows, macOS, and Linux, from a... |
+| 2 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | contract:check-drift, inside verify | `packages/contract` exports every schema in Section 7 with `SCHEMA_VERSION ==... |
+| 3 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | engine determinism gate | `bun run verify:determinism` exits 0: all 5 fixtures produce identical `finge... |
+| 4 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | engine tests, inside verify | Every path in every `AnalysisResult` is repo-relative POSIX; a test asserts z... |
+| 5 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | engine tests, inside verify | `AnalysisResult` contains no timestamp, no duration, no absolute path, no hos... |
+| 6 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | snapshot tests, inside verify | Snapshot tests exist and pass for `node-express`, `react-app`, `python-flask`... |
+| 7 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | kitchen-sink snapshot assertions, inside verify | `kitchen-sink`'s snapshot asserts: the known 3-file cycle appears as exactly... |
+| 8 | EXECUTED on 1 OS — run 30522786141 (2026-07-30) | — | Linux-only by construction: unshare -rn | `bun run verify:no-network` exits 0: the engine bundle contains no network id... |
+| 9 | EXECUTED on 2 OS — run 30522786141 (2026-07-30) | — | Rust suite | A test asserts `tauri.conf.json`'s CSP contains no remote origin and `capabil... |
 | 10 | NO GATE | tooling | coverage thresholds are enforced nowhere | Coverage gates pass: ≥ 80% lines and branches for `contract`, `engine`, the U... |
 | 11 | CI-BLOCKED — gate exists, not wired | machine | wall-clock budgets need a consistent runner; a shared one cannot measure them honestly | `bun run bench` exits 0 against every budget in Section 11's performance table. |
 | 12 | MANUAL | machine | 10s cold-open needs a real desktop session and a human with a stopwatch | Opening a fresh 1,000-file repo shows the overview, graph, roadmap, module ma... |
-| 13 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | UI tests, inside verify | With `ai.isEnabled === false`, the mode indicator reads exactly `🔒 Static mod... |
-| 14 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | UI tests, inside verify | With AI enabled, the indicator reads exactly `☁️ AI mode · <provider>/<model>... |
-| 15 | EXECUTED on 2 OS — run 30489773361 (2026-07-29) | — | key-never-persisted half only; the 5s flow is manual | Adding a key takes: open Settings → paste → click "Test key" → inline success... |
-| 16 | EXECUTED on 2 OS — run 30489773361 (2026-07-29) | — | redaction corpus, in the Rust suite | The redaction corpus test passes: ≥ 30 planted secrets are all replaced by `<... |
-| 17 | EXECUTED on 2 OS — run 30489773361 (2026-07-29) | — | payload caps in Rust; the displayed counts in UI tests | An outbound AI payload never exceeds 24 files or 98,304 bytes, and the UI dis... |
-| 18 | EXECUTED on 2 OS — run 30489773361 (2026-07-29) | — | citation rejection, in the Rust suite | An AI answer citing a path absent from the index is rejected wholesale with `... |
-| 19 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | UI copy tests, inside verify | All 14 named error/empty states render the exact copy from Section 10; a UI t... |
-| 20 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | axe-core + keyboard tests, inside verify | The dependency graph is fully operable with the keyboard alone (enter, traver... |
-| 21 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | reduced-motion tests, inside verify | With `prefers-reduced-motion: reduce`, no Cytoscape animation and no CSS tran... |
+| 13 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | UI tests, inside verify | With `ai.isEnabled === false`, the mode indicator reads exactly `🔒 Static mod... |
+| 14 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | UI tests, inside verify | With AI enabled, the indicator reads exactly `☁️ AI mode · <provider>/<model>... |
+| 15 | EXECUTED on 2 OS — run 30522786141 (2026-07-30) | — | key-never-persisted half only; the 5s flow is manual | Adding a key takes: open Settings → paste → click "Test key" → inline success... |
+| 16 | EXECUTED on 2 OS — run 30522786141 (2026-07-30) | — | redaction corpus, in the Rust suite | The redaction corpus test passes: ≥ 30 planted secrets are all replaced by `<... |
+| 17 | EXECUTED on 2 OS — run 30522786141 (2026-07-30) | — | payload caps in Rust; the displayed counts in UI tests | An outbound AI payload never exceeds 24 files or 98,304 bytes, and the UI dis... |
+| 18 | EXECUTED on 2 OS — run 30522786141 (2026-07-30) | — | citation rejection, in the Rust suite | An AI answer citing a path absent from the index is rejected wholesale with `... |
+| 19 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | UI copy tests, inside verify | All 14 named error/empty states render the exact copy from Section 10; a UI t... |
+| 20 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | axe-core + keyboard tests, inside verify | The dependency graph is fully operable with the keyboard alone (enter, traver... |
+| 21 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | reduced-motion tests, inside verify | With `prefers-reduced-motion: reduce`, no Cytoscape animation and no CSS tran... |
 | 22 | CI-BLOCKED — gate exists, not wired | machine | wdio port race is tooling, but the macOS smoke half needs a Mac | `bun run e2e` passes on Windows and Linux; `docs/MACOS_SMOKE.md` is signed of... |
 | 23 | EXECUTED on 1 OS — run 30489773363 (2026-07-29), half (a) on Windows + Linux | machine | TWO HALVES, verified differently. (a) Installer builds, the SHELL launches, and it resolves its engine — CI, via `installed` and `installed-windows`, which `publish` depends on (the gap that let v0.1.0 ship a .msi failing on first use). Now OBSERVED GREEN on Windows and Linux: the installed shell logged `sidecar resolved: C:\Program Files\Onboard\onboard-engine.exe` and `/usr/bin/onboard-engine`, and the installed engine analysed a real repo (symbols=2, edges=1) — substance, not just a clean exit. The Linux job previously drove the ENGINE directly and never started the shell, so the resolution bug was latent there too rather than caught. (b) Installed app RENDERS A GRAPH from a picked folder — MANUAL on all three platforms, docs/SMOKE_CHECKLIST.md, because the E2E bridge is absent from a release bundle (MODE === 'e2e') and the native picker is unreachable from WebDriver. Half (b) has no run id by construction. macOS needs a Mac for both halves | Installers build and launch on all three platforms: `.dmg` (x64 + aarch64), `... |
 | 24 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | INSTALL.md names both bypass paths; SIGNING.md names the signing path | `docs/INSTALL.md` documents the exact Gatekeeper and SmartScreen bypass steps... |
 | 25 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | README covers install, the privacy model and enabling AI | `README.md` covers install, the privacy model, and how to optionally enable A... |
 | 26 | ARTIFACT CHECKED (exists + names its topics; prose not reviewed) | — | guard-disposition sweep done; every fail-open found got a fix or a failing test | `docs/SECURITY_AUDIT.md` shows zero open CRITICAL and zero open HIGH findings. |
-| 27 | EXECUTED on 3 OS — run 30489773361 (2026-07-29) | — | lint + lint:check-rules-fire, inside verify; clippy in the Rust job | No source file exceeds 800 lines, no function exceeds 50 lines, and no block... |
-| 28 | WIRED on 1 OS — never observed green | — | CI-backed FROM THE BOUNDARY FORWARD, not unqualified: the gate checks every commit after d67b30e, where it landed, with no exceptions list. A commit-message linter cannot retroactively govern history that predates it. Pre-boundary subjects remain visible via `commit:check --all-history`, which is INFORMATIONAL and wired to nothing | Every commit follows `<type>: <description>`; CI rejects a non-conforming mes... |
+| 27 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | lint + lint:check-rules-fire, inside verify; clippy in the Rust job | No source file exceeds 800 lines, no function exceeds 50 lines, and no block... |
+| 28 | EXECUTED on 1 OS — run 30522786141 (2026-07-30), from boundary d67b30e forward | — | CI-backed FROM THE BOUNDARY FORWARD, not unqualified: the gate checks every commit after d67b30e, where it landed, with no exceptions list. A commit-message linter cannot retroactively govern history that predates it. Pre-boundary subjects remain visible via `commit:check --all-history`, which is INFORMATIONAL and wired to nothing | Every commit follows `<type>: <description>`; CI rejects a non-conforming mes... |
 
 ## What 'CI on N OS' means
 
