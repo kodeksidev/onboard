@@ -184,7 +184,79 @@ def main() -> int:
         return 1
 
     print("all cited SHAs resolve")
+
+    problems = check_error_codes_documented() + check_constants_documented()
+    if problems:
+        print("\nFAILED — undocumented public surface:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
     return 0
+
+
+def names_present(text: str, names: list[str]) -> set[str]:
+    """Which of `names` appear as WHOLE identifiers in `text`.
+
+    Whole-identifier, not substring. A substring test is vacuous here in both
+    directions: `ROLE_BOOST_HIGH` would be satisfied by
+    `ROLE_BOOST_HIGH_CLASSIFICATIONS` without ever being documented itself, and
+    a typo'd `W_PAGERANK_TYPO` would satisfy `W_PAGERANK`. Both were live holes
+    in the first version of this check, found by trying to make it fail.
+    """
+    found: set[str] = set()
+    for name in names:
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text):
+            found.add(name)
+    return found
+
+
+def docs_text() -> str:
+    """Every markdown file under docs/ and the top-level README, concatenated."""
+    parts = [p.read_text(encoding="utf-8") for p in sorted((REPO_ROOT / "docs").rglob("*.md"))]
+    readme = REPO_ROOT / "README.md"
+    if readme.exists():
+        parts.append(readme.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
+def check_error_codes_documented() -> list[str]:
+    """Every `E_*` the shell can surface must be named in the documentation.
+
+    Derived from `error.rs`'s own `as_str` arms, never hand-listed — a
+    hand-maintained copy is a second source of truth that goes stale the first
+    time someone adds a code, which is exactly what happened when
+    `E_ENGINE_NOT_STARTED` was introduced.
+    """
+    source = REPO_ROOT / "apps" / "desktop" / "src-tauri" / "src" / "error.rs"
+    if not source.exists():
+        return [f"{source} is missing — the error-code scan cannot run"]
+    codes = sorted(set(re.findall(r'"(E_[A-Z0-9_]+)"', source.read_text(encoding="utf-8"))))
+    if not codes:
+        return ["no E_* codes found in error.rs — the scan is broken, not passing"]
+    present = names_present(docs_text(), codes)
+    missing = [code for code in codes if code not in present]
+    print(f"docs:check — {len(codes)} error code(s) derived from error.rs")
+    return [f"error code {code} is documented nowhere in docs/" for code in missing]
+
+
+def check_constants_documented() -> list[str]:
+    """Every exported constant in the engine's `constants.ts` must be named.
+
+    A number that shapes user-visible output and lives only in code is a number
+    nobody can review.
+    """
+    source = REPO_ROOT / "packages" / "engine" / "src" / "constants.ts"
+    if not source.exists():
+        return [f"{source} is missing — the constants scan cannot run"]
+    names = sorted(
+        set(re.findall(r"^export const ([A-Z][A-Z0-9_]*)", source.read_text(encoding="utf-8"), re.M))
+    )
+    if not names:
+        return ["no exported constants found — the scan is broken, not passing"]
+    present = names_present(docs_text(), names)
+    missing = [name for name in names if name not in present]
+    print(f"docs:check — {len(names)} engine constant(s) derived from constants.ts")
+    return [f"constant {name} is named nowhere in docs/" for name in missing]
 
 
 if __name__ == "__main__":

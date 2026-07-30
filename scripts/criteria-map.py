@@ -108,20 +108,21 @@ EVIDENCE: dict[int, Evidence] = {
     23: Evidence(
         "installed-app-check",
         "ci",
-        "REGRESSED, and weaker than previously recorded: builds on all three, "
-        "launches on Linux, FAILED on Windows (v0.1.0 .msi installed and then "
-        "could not start its engine). The Linux job drives the ENGINE directly "
-        "over stdio RPC and never starts the app shell, so it proves the engine "
-        "runs, not that the app can start it — the packaged-sidecar resolution "
-        "bug was latent on Linux too, just unexercised. TWO HALVES, verified "
-        "differently: (a) installer builds + shell launches and resolves its "
-        "engine — CI, via `installed` and `installed-windows`, which `publish` "
-        "now depends on (the gap that let v0.1.0 ship); (b) installed app "
-        "RENDERS A GRAPH from a picked folder — manual on all three platforms, "
-        "docs/SMOKE_CHECKLIST.md, because the E2E bridge is absent from a "
-        "release bundle and the native picker is unreachable from WebDriver. "
-        "Half (a)'s jobs have NOT EXECUTED YET and an unrun gate reads exactly "
-        "like a passing one. macOS needs a Mac for both halves",
+        "TWO HALVES, verified differently. (a) Installer builds, the SHELL "
+        "launches, and it resolves its engine — CI, via `installed` and "
+        "`installed-windows`, which `publish` depends on (the gap that let "
+        "v0.1.0 ship a .msi failing on first use). Now OBSERVED GREEN on "
+        "Windows and Linux: the installed shell logged `sidecar resolved: "
+        "C:\\Program Files\\Onboard\\onboard-engine.exe` and "
+        "`/usr/bin/onboard-engine`, and the installed engine analysed a real "
+        "repo (symbols=2, edges=1) — substance, not just a clean exit. The "
+        "Linux job previously drove the ENGINE directly and never started the "
+        "shell, so the resolution bug was latent there too rather than caught. "
+        "(b) Installed app RENDERS A GRAPH from a picked folder — MANUAL on "
+        "all three platforms, docs/SMOKE_CHECKLIST.md, because the E2E bridge "
+        "is absent from a release bundle (MODE === 'e2e') and the native "
+        "picker is unreachable from WebDriver. Half (b) has no run id by "
+        "construction. macOS needs a Mac for both halves",
         blocker="machine",
     ),
     24: Evidence(
@@ -153,6 +154,59 @@ EVIDENCE: dict[int, Evidence] = {
     ),
     27: Evidence(VERIFY, "ci", "lint + lint:check-rules-fire, inside verify; clippy in the Rust job"),
     28: Evidence(None, "no-gate", "conventional-commit linting is not wired", blocker="tooling"),
+}
+
+
+# ---------------------------------------------------------------------------
+# OBSERVED, not derived — the one table in this file a human must edit
+# ---------------------------------------------------------------------------
+#
+# Everything above is DERIVED from the workflow files: which job claims a
+# criterion, on how many operating systems. That derivation can prove a job
+# EXISTS. It cannot prove the job has ever RUN GREEN, and printing the first
+# as though it were the second is the unrun-gate problem one level up — which
+# is exactly how criterion 23 read "CI-backed" for weeks while its jobs had
+# never executed at all.
+#
+# So the observation is recorded by hand, with a run id anyone can open.
+# Deliberately NOT a network check: a check that queries the API would make
+# this file's output depend on credentials and on GitHub's retention window,
+# and would turn a stale claim into a flaky one. A hand-entered run id is an
+# honest claim about what a human saw; a derived "the job exists" is what just
+# went stale.
+#
+# When a gate changes, DELETE its row rather than editing the id. An entry
+# that outlives the gate it attests to is the same failure in a new place.
+CI_RUN = "run 30489773361 (2026-07-29)"
+RELEASE_RUN = "run 30489773363 (2026-07-29)"
+
+EXECUTED: dict[int, str] = {
+    1: CI_RUN,
+    2: CI_RUN,
+    3: CI_RUN,
+    4: CI_RUN,
+    5: CI_RUN,
+    6: CI_RUN,
+    7: CI_RUN,
+    8: CI_RUN,
+    9: CI_RUN,
+    13: CI_RUN,
+    14: CI_RUN,
+    15: CI_RUN,
+    16: CI_RUN,
+    17: CI_RUN,
+    18: CI_RUN,
+    19: CI_RUN,
+    20: CI_RUN,
+    21: CI_RUN,
+    # Half (a) only — installer builds, shell launches, engine resolves and
+    # analyses, on Windows and Linux. Half (b), the rendered graph, is the
+    # manual checklist and has no run id by construction.
+    23: f"{RELEASE_RUN}, half (a) on Windows + Linux",
+    27: CI_RUN,
+    # 28 is deliberately ABSENT. Its gate is wired and RAN — and FAILED, on
+    # two pre-existing commits (209c740, 63f03bc). Wired and red is not
+    # executed-green, and recording it here would say the opposite.
 }
 
 
@@ -246,7 +300,16 @@ def classify(number: int, evidence: Evidence, jobs: dict[str, tuple[list[str], i
     if evidence.kind == "ci":
         assert evidence.gate is not None
         count = platforms_running(evidence.gate, jobs)
-        return f"CI on {count} OS" if count else "DECLARED CI BUT NO JOB RUNS IT"
+        if not count:
+            return "DECLARED CI BUT NO JOB RUNS IT"
+        # WIRED is derived from the workflows; EXECUTED is observed by a
+        # human and carries a run id. A gate that is wired but has never been
+        # seen green reads exactly like one that passes, so the two are never
+        # collapsed into a single word here.
+        seen = EXECUTED.get(number)
+        if seen:
+            return f"EXECUTED on {count} OS — {seen}"
+        return f"WIRED on {count} OS — never observed green"
     if evidence.kind == "not-wired":
         return "CI-BLOCKED — gate exists, not wired"
     if evidence.kind == "manual":
@@ -291,9 +354,11 @@ def main() -> int:
         )
         return 1
 
-    ci_backed = [n for n, s in statuses.items() if s.startswith("CI on")]
-    three_os = [n for n, s in statuses.items() if s == "CI on 3 OS"]
-    not_ci = [n for n, s in statuses.items() if not s.startswith("CI on")]
+    ci_backed = [n for n, s in statuses.items() if s.startswith(("EXECUTED on", "WIRED on"))]
+    three_os = [n for n, s in statuses.items() if "on 3 OS" in s]
+    executed = sorted(n for n, s in statuses.items() if s.startswith("EXECUTED on"))
+    wired_only = sorted(n for n, s in statuses.items() if s.startswith("WIRED on"))
+    not_ci = [n for n, s in statuses.items() if not s.startswith(("EXECUTED on", "WIRED on"))]
 
     by_blocker: dict[str, list[int]] = {}
     for number in not_ci:
@@ -310,6 +375,12 @@ def main() -> int:
         "",
         f"- **{len(ci_backed)} of {len(criteria)}** criteria are backed by a CI job.",
         f"- **{len(three_os)}** of those run on all three operating systems.",
+        f"- **{len(executed)}** have been OBSERVED GREEN, with a run id: {executed}.",
+        (
+            f"- **{len(wired_only)}** are WIRED but never observed green: {wired_only}."
+            if wired_only
+            else "- **0** are wired-but-unobserved."
+        ),
         f"- **{len(not_ci)}** are not evidenced by CI, of which:",
         "",
         "## CI-blocked, strictly",
@@ -349,6 +420,26 @@ def main() -> int:
         "A job in `ci.yml` invokes the gate, and its matrix names N operating systems.",
         "It does NOT mean the job is currently passing — that is what the run itself",
         "says. It means the evidence is reachable without a human.",
+        "",
+        "**WIRED vs EXECUTED.** This file DERIVES which job claims a criterion, from",
+        "the workflow files. Derivation can prove a job exists; it cannot prove the job",
+        "has ever run green, and treating the first as the second is how criterion 23",
+        "read CI-backed for weeks while its jobs had never executed at all. So a status",
+        "says EXECUTED only when a human recorded a run id (the `EXECUTED` table in",
+        "`scripts/criteria-map.py`), and WIRED otherwise. A wired-but-unobserved gate",
+        "reads exactly like a passing one, which is the failure this distinction exists",
+        "to make visible.",
+        "",
+        "Criterion 28 is neither: its gate is wired and has RUN, and FAILED, on two",
+        "pre-existing commits. Wired-and-red is recorded as no-gate-passed, not as",
+        "executed.",
+        "",
+        "**What the OS count means.** It is the largest matrix among the jobs invoking",
+        "the gate — not the number of distinct platforms covered. Where a criterion is",
+        "covered by SEVERAL single-OS jobs it therefore UNDERSTATES coverage: criterion",
+        "23 reads `1 OS` while `installed` (Linux) and `installed-windows` both ran it.",
+        "Stated rather than silently corrected, because a figure whose derivation is not",
+        "described is the kind that gets quoted as something it is not.",
         "",
     ]
 
