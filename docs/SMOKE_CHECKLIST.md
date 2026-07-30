@@ -52,6 +52,28 @@ positively: the mode indicator rendered byte-exact on a clean machine.
 
 Runs are recorded at the bottom of this file. An unrecorded run did not happen.
 
+## What CI now covers, so this checklist can be honest about the remainder
+
+Release **run 30489773363** (2026-07-29) was the first execution of the two
+install jobs, and half (a) of criterion 23 passed on both platforms:
+
+| job | evidence |
+|---|---|
+| `installed .msi …` (90706006536) | `sidecar resolved: \\?\C:\Program Files\Onboard\onboard-engine.exe` · `installed engine: symbols=2, edges=1` |
+| `installed .deb …` (90706006541) | `sidecar resolved: /usr/bin/onboard-engine` · `installed engine: symbols=2, edges=1` |
+
+The `.msi`'s own file table, read with `msiexec /a` before installing, is
+`onboard.exe`, `onboard-engine.exe` and `resources/grammars/*.wasm` — two
+executables, the sidecar beside the shell with no `binaries/` subdirectory,
+and no test binaries.
+
+**So the boxes below that CI already covers are: install, launch, and that the
+engine resolves and parses.** What remains genuinely manual is everything from
+the folder pick onward — the picker, the rendered graph, node → file, search,
+and the byte-exact mode indicator on a real display. Those are the boxes that
+still need a human, and the 2026-07-29 Windows run is what proves that matters:
+it found a defect no automated gate could see.
+
 ---
 
 ## Prerequisites (all platforms)
@@ -132,6 +154,7 @@ An unrecorded run did not happen. Add a row; do not edit an existing one.
 | date | platform | build | performed by | outcome |
 |---|---|---|---|---|
 | 2026-07-29 | Windows 11 (clean Sandbox) | v0.1.0 draft `.msi` | product owner | **FAILED** — engine never started (`os error 3`); mode indicator byte-exact ✓ |
+| 2026-07-29 | Windows + Linux (CI, automated half only) | run 30489773363 | CI | **half (a) PASSED** — see below; half (b) not covered |
 | | Windows | | | |
 | | Linux | | | |
 | | macOS | | | |
