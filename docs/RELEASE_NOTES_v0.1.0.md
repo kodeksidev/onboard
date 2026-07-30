@@ -15,8 +15,8 @@ With AI off — the default — **it makes no network connections at all.**
 
 | platform | status |
 |---|---|
-| **Windows** | Verified end to end. The `.msi` is installed on a clean machine in CI, the app is launched, it resolves its engine and analyses a real repository. |
-| **Linux** | Same, via the `.deb` on a clean machine. `.rpm` is built from the same run. |
+| **Windows** | Installed on a clean machine in CI and verified to launch, resolve its engine, and analyse a real repository. |
+| **Linux** | Installed on a clean machine in CI and verified to launch, resolve its engine, and analyse a real repository, via the `.deb`. `.rpm` is built from the same run. |
 | **macOS** | **Built, never run.** No macOS hardware has been available to this project. The binaries exist and are not included in this release. |
 
 macOS is excluded deliberately rather than forgotten. Publishing a binary that
@@ -74,8 +74,27 @@ plugins. The full list and the reasoning are in
 ## Verification status
 
 Of 28 acceptance criteria: **19 proven**, **5 partial**, **4 unproven**.
-Three of the four unproven need hardware or a consistent runner this project
-does not have; the fourth is a coverage threshold that is measured but not
-enforced. Every criterion backed by CI has been **observed green with a
-recorded run id** — none is claimed on the strength of a job merely existing.
-The full table is [docs/CRITERIA_MAP.md](docs/CRITERIA_MAP.md).
+
+**The 19 includes one criterion proven with a qualifier**, stated here rather
+than only in the map: the commit-message gate is enforced from the commit where
+it landed, not retroactively over prior history.
+
+**The 5 partial are the number most worth understanding**, since "partial" is
+the least self-explanatory status:
+
+- **Two have a verified half and a manual half.** The AI key is proven never to
+  be persisted to disk, while the five-second add-a-key flow is timed by a
+  human. Installers are proven to install and launch, while the rendered graph
+  is checked against `docs/SMOKE_CHECKLIST.md` by hand.
+- **Three are documents.** A check confirms each exists and names the topics its
+  criterion demands — it cannot confirm the prose is *correct*. Whether the
+  Windows SmartScreen wording in `docs/INSTALL.md` matches the dialog a user
+  actually sees is verified by a person, not a script.
+
+**Three of the four unproven** need hardware or a consistent runner this project
+does not have; **the fourth** is a coverage threshold that is measured but not
+enforced — ordinary unfinished work, not an external constraint.
+
+Every criterion backed by CI has been **observed green with a recorded run id**
+— none is claimed on the strength of a job merely existing. The full table is
+[docs/CRITERIA_MAP.md](docs/CRITERIA_MAP.md).
