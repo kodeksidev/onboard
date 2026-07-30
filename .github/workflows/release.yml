@@ -414,23 +414,28 @@ jobs:
       - name: Assert no macOS artefact is about to be published
         run: python scripts/release-assets-check.py release-assets
 
+      # Runs on EVERY release run, not only on tag pushes. A release whose
+      # notes are a generated commit list, while a written notes file sits
+      # unread in the repository, is two sources of truth with the wrong one
+      # reaching users — the same shape as the `.rpm` the matrix asked for and
+      # the upload glob never sent. This fails on a dry run, while it is cheap.
+      - name: Assert the release notes for this version exist
+        run: >
+          python scripts/release-notes-check.py
+          ${{ (startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push') && format('--tag {0}', github.ref_name) || '' }}
+
+      - name: Resolve the notes path for the body
+        id: notes
+        run: echo "path=$(python scripts/release-notes-check.py --emit-path)" >> "$GITHUB_OUTPUT"
+
       - name: Create the release
         if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           files: release-assets/**/*
           draft: true
-          generate_release_notes: true
-          body: |
-            **Unsigned build.** Windows SmartScreen will object; the exact steps
-            are in [docs/INSTALL.md](docs/INSTALL.md). Code signing and
-            notarization are out of scope for v1 — see
-            [docs/SIGNING.md](docs/SIGNING.md).
-
-            **macOS is not included in this release.** The build exists but has
-            never been executed on a Mac, and publishing it would ship an
-            assumption rather than a verified artefact. It is released once
-            `docs/MACOS_SMOKE.md` is signed off on real hardware.
-
-            What this release does not verify is listed under "What is not
-            verified" in the README.
+          # `body_path`, NOT `generate_release_notes`. One place decides what
+          # the notes say, it is reviewable in a pull request, and it is the
+          # same text whether you read the release page or the repository.
+          body_path: ${{ steps.notes.outputs.path }}
+          generate_release_notes: false
