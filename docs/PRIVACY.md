@@ -86,18 +86,40 @@ shape-independent: if a full redaction pass leaves anything the scanner still
 matches, the request is abandoned. That protects against a redactor that
 half-works, not against one that never recognised the secret at all.
 
-## The security audit enumerated invariants; it could not see fail-open
+## The security audit asked the wrong question, and we found out the hard way
 
-`docs/SECURITY_AUDIT.md` §6 records this in its own terms, and it is the most
-important limitation on this page. The audit worked by enumerating invariants
-and checking each. That method finds a missing check. It is structurally
-blind to a check that **exists, runs, and silently permits** — a guard that
-fails open.
+This is the most important limitation on this page.
 
-The guard-disposition sweep in `docs/KNOWN_ISSUES.md` exists because of that
-gap. Read it: it is where the honest list of known defects lives, with
-severities and dispositions. This page deliberately does not restate it,
-because two copies of a defect list is how one of them goes stale.
+The audit enumerated invariants and asked, of each, **whether it holds**. That
+is a real question and it catches real defects — *can this guard be bypassed?*
+But it is structurally blind to a different one: **what does this guard do when
+it fires?** A check that exists, runs, and then silently permits passes an
+"does it hold" audit perfectly.
+
+The concrete miss was `engine.snippets`. It dropped a path that failed
+repository containment, returned a shorter array, and told nobody. The audit
+had inspected that method **twice** and recorded two conclusions, both correct.
+Correct, and blind to what the guard did on failure.
+
+Asking the second question across the codebase — 285 absorbing sites in 181
+files — found **four fail-open defects** (`KI-1`, `KI-2`, `KI-3`, `KI-6` in
+`docs/KNOWN_ISSUES.md`). Every one is now dispositioned **FIXED plus a
+regression TEST**, never "recorded". That policy exists because of a specific
+failure: `Parser.init()`'s fail-open was *already documented in its own file
+header* — and six months later the same function acquired a second fail-open of
+the same shape, with the same symptom. **Documenting a fail-open does not close
+it.**
+
+**And the sweep cannot see everything.** It scans our code. Both `Parser.init()`
+defects degraded inside a *dependency* — `web-tree-sitter`'s global WASM runtime
+— and surfaced as a structurally valid analysis with nothing in it. No scan of
+our source would have found either. Dependency degradation is covered only by
+assertions on *output*, so read "no findings in a dependency" as **not looked
+at**, not as clean.
+
+`docs/KNOWN_ISSUES.md` is the honest list, with severities and dispositions.
+This page links it rather than restating it, because two copies of a defect list
+is how one of them goes stale.
 
 ## macOS is unverified
 
