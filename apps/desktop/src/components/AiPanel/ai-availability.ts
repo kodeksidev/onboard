@@ -9,7 +9,7 @@ import type { AiProvider, AiSettings } from '@/ipc/settings-schema';
  * `missing-key` is provider-aware rather than an Ollama exemption: the rule
  * is "a provider that needs a credential must have one", and Ollama is READY
  * with no key because it needs none (it is a local, unauthenticated server) —
- * the same single rule that makes Anthropic and openai-compatible blocked.
+ * the same single rule that makes Anthropic blocked.
  * Written as one predicate so this side can never drift into believing
  * Ollama is a special case the backend also has to remember.
  */

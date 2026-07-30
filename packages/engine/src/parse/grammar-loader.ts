@@ -78,20 +78,51 @@ async function loadLanguage(grammarsDir: string, languageId: SupportedLanguageId
 }
 
 /**
- * Creates a loader scoped to `grammarsDir`. `Parser.init()` runs at most once
- * per loader (cached internally), and each language's `Language` is loaded
- * and cached at most once, so the parser pool never reloads a WASM grammar
- * once it has been requested (schema.sql's `idx_file_cache_lang` comment).
+ * PROCESS-GLOBAL, not per-loader, and that distinction is the whole point.
+ *
+ * `Parser` is a module singleton over ONE Emscripten WASM runtime, so
+ * `Parser.init()` initializes shared global state. This promise used to live
+ * inside `createGrammarLoader`, which memoized it PER LOADER — correct for the
+ * `Language` cache below (that genuinely depends on `grammarsDir`) and wrong
+ * for this (which does not). Two loaders created concurrently therefore each
+ * called `Parser.init()`, the second re-initialized the runtime while the
+ * first's `Language.load()` was in flight, and the language came back as
+ * version 0:
+ *
+ *     Incompatible language version 0. Compatibility range 13 through 15
+ *
+ * Every file in the losing run then failed to parse, so its symbols, imports
+ * and edges vanished and its diagnostics grew — which is precisely the
+ * divergence measured between two overlapping `analyze()` calls (107 differing
+ * leaves; see `docs/DECISIONS.md`).
+ *
+ * Note the shape: this module's header already records an earlier
+ * `Parser.init()` defect that "silently degrad[ed] every parse to
+ * `PARSE_FAILED` rather than throwing". Same function, same silent
+ * degradation, second time — which is why `parse-concurrency.test.ts` now
+ * pins it instead of a comment.
+ */
+let globalInitPromise: Promise<void> | null = null;
+
+function ensureParserInitialized(): Promise<void> {
+  globalInitPromise ??= Bun.file(TREE_SITTER_WASM_PATH)
+    .arrayBuffer()
+    .then((wasmBinary) => Parser.init({ wasmBinary }));
+  return globalInitPromise;
+}
+
+/**
+ * Creates a loader scoped to `grammarsDir`. Each language's `Language` is
+ * loaded and cached at most once per loader, so the parser pool never reloads
+ * a WASM grammar once it has been requested (schema.sql's
+ * `idx_file_cache_lang` comment). The runtime initialization those loads
+ * depend on is shared across every loader in the process — see above.
  */
 export function createGrammarLoader(grammarsDir: string): GrammarLoader {
-  let initPromise: Promise<void> | null = null;
   const cache = new Map<SupportedLanguageId, Promise<Language>>();
 
   async function ensureInitialized(): Promise<void> {
-    initPromise ??= Bun.file(TREE_SITTER_WASM_PATH)
-      .arrayBuffer()
-      .then((wasmBinary) => Parser.init({ wasmBinary }));
-    await initPromise;
+    await ensureParserInitialized();
   }
 
   return {

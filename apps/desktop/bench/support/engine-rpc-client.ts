@@ -2,10 +2,24 @@
  * A minimal newline-delimited JSON-RPC 2.0 client over stdio (Section 7.3),
  * driving the REAL staged sidecar binary directly — the same protocol the
  * Rust shell speaks (`apps/desktop/src-tauri/src/sidecar/rpc.rs`) and the
- * same one `packages/engine/scripts/test-rpc.ts` already exercises. Kept
- * deliberately small and bench-scoped rather than importing `@onboard/engine`
- * as a dependency of `apps/desktop`.
+ * same one `packages/engine/scripts/test-rpc.ts` already exercises.
+ *
+ * The framing reader is imported from `@onboard/contract`, NOT hand-rolled
+ * here. It used to be: this file carried its own copy, justified in a comment
+ * as "kept deliberately small and bench-scoped rather than importing
+ * `@onboard/engine` as a dependency of `apps/desktop`". That reasoning was
+ * sound about the dependency and wrong about the conclusion — the copy was
+ * missing the `scanFrom` fix the engine's reader had received in Phase 11,
+ * making every large `engine.analyze` response quadratic in the length of its
+ * single JSON-RPC line, which is exactly the shape of a 10,000-file
+ * `AnalysisResult`. Every 10k bench row measured through this client before
+ * this change was inflated by the harness.
+ *
+ * Framing belongs to the transport contract, so it now lives in
+ * `@onboard/contract` — a package `apps/desktop` already depends on, so the
+ * dependency concern that motivated the copy does not arise.
  */
+import { readLines } from '@onboard/contract';
 
 export interface JsonRpcMessage {
   readonly jsonrpc?: '2.0';
@@ -14,32 +28,6 @@ export interface JsonRpcMessage {
   readonly params?: unknown;
   readonly result?: unknown;
   readonly error?: { readonly code: number; readonly message: string; readonly data?: unknown };
-}
-
-async function* readLines(stream: ReadableStream<Uint8Array>): AsyncIterable<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let newlineIndex = buffer.indexOf('\n');
-      while (newlineIndex !== -1) {
-        yield buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-        newlineIndex = buffer.indexOf('\n');
-      }
-    }
-    if (buffer.length > 0) {
-      yield buffer;
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 export class EngineRpcSession {

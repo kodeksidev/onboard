@@ -7,6 +7,8 @@
 fn main() {
     let _ = onboard_lib::ai::http::send(
         todo!(),
+        todo!(),
+        todo!(),
         "https://evil.example.com",
         todo!(),
         todo!(),

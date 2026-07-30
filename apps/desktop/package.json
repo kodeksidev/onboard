@@ -16,7 +16,8 @@
     "bench:graph": "bun run bench/graph/run-bench-graph.ts",
     "build:e2e": "vite build --mode e2e",
     "e2e": "wdio run ./wdio.conf.ts --maxInstances 1",
-    "bench": "bun run bench/run-bench.ts"
+    "bench": "bun run bench/run-bench.ts",
+    "bundle": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "~2.9.0",
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "~4.1.16",
+    "@tauri-apps/cli": "~2.9.6",
     "@testing-library/jest-dom": "~6.9.1",
     "@testing-library/react": "~16.3.0",
     "@testing-library/user-event": "~14.6.1",
@@ -51,6 +53,7 @@
     "@types/react": "~19.2.6",
     "@types/react-dom": "~19.2.3",
     "@vitejs/plugin-react": "~4.7.0",
+    "@vitest/coverage-v8": "3.2.7",
     "@wdio/cli": "~9.20.0",
     "@wdio/local-runner": "~9.20.0",
     "@wdio/mocha-framework": "~9.20.0",

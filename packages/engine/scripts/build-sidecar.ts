@@ -10,11 +10,12 @@
  * `apps/desktop/src-tauri/binaries/` themselves (Phase 5 instructions).
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readLines } from '../src/rpc/server';
 import { binaryNameForHost } from './lib/sidecar-binary-name';
+import { HEADER_BYTES_NEEDED, readExecutableHeader } from './lib/executable-header';
 
 const ENTRYPOINT = join(import.meta.dir, '..', 'src', 'main.ts');
 const OUT_DIR = join(import.meta.dir, '..', 'dist');
@@ -54,14 +55,66 @@ interface SidecarTarget {
   readonly bunTarget: 'bun-windows-x64' | 'bun-darwin-arm64' | 'bun-darwin-x64' | 'bun-linux-x64';
   /** Tauri's `<name>-<target-triple>[.exe]` convention (Section 7/9). */
   readonly outfileName: string;
+  /** Executable container this artefact must be, checked from its header bytes. */
+  readonly format: 'pe' | 'macho' | 'elf';
+  /** Architecture the header must declare, so a target cannot silently emit the wrong one. */
+  readonly arch: 'x86_64' | 'arm64';
 }
 
 const SIDECAR_TARGETS: readonly SidecarTarget[] = [
-  { bunTarget: 'bun-windows-x64', outfileName: 'onboard-engine-x86_64-pc-windows-msvc.exe' },
-  { bunTarget: 'bun-darwin-arm64', outfileName: 'onboard-engine-aarch64-apple-darwin' },
-  { bunTarget: 'bun-darwin-x64', outfileName: 'onboard-engine-x86_64-apple-darwin' },
-  { bunTarget: 'bun-linux-x64', outfileName: 'onboard-engine-x86_64-unknown-linux-gnu' },
+  { bunTarget: 'bun-windows-x64', outfileName: 'onboard-engine-x86_64-pc-windows-msvc.exe', format: 'pe', arch: 'x86_64' },
+  { bunTarget: 'bun-darwin-arm64', outfileName: 'onboard-engine-aarch64-apple-darwin', format: 'macho', arch: 'arm64' },
+  { bunTarget: 'bun-darwin-x64', outfileName: 'onboard-engine-x86_64-apple-darwin', format: 'macho', arch: 'x86_64' },
+  { bunTarget: 'bun-linux-x64', outfileName: 'onboard-engine-x86_64-unknown-linux-gnu', format: 'elf', arch: 'x86_64' },
 ];
+
+/**
+ * A compiled Bun sidecar is 60-100 MB. This floor is far below that on purpose:
+ * it exists to catch a truncated or empty artefact, not to police size.
+ */
+const MIN_ARTIFACT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * WHAT THIS GATE DOES AND DOES NOT PROVE.
+ *
+ * Phase 5's "Done when" says `build:sidecar` emits four artefacts. It did — and
+ * for three of them it proved only that a file existed at the expected path. A
+ * gate that emits four names and verifies one is the vacuity pattern this
+ * project has been removing all week, so the limits are now written down and
+ * the checkable part is actually checked.
+ *
+ * Checked, per artefact: the container format and declared architecture, read
+ * out of the header bytes, plus a size floor. That catches a truncated build, a
+ * cross-compile that silently produced the host's format, and a target table
+ * that has drifted from its filenames.
+ *
+ * NOT checked, and no wording here should suggest otherwise: **the three
+ * non-host binaries are never executed.** Only the host binary is launched, by
+ * `smokeTestHostBinary()` below, which runs a real `engine.analyze`. Nothing in
+ * this repository has ever run a darwin sidecar on macOS. Criterion 23 stays
+ * unproven until `docs/MACOS_SMOKE.md` is signed off on real hardware — see
+ * `docs/CRITERIA_MAP.md`.
+ */
+function verifyArtifact(target: SidecarTarget): void {
+  const outfile = join(OUT_DIR, target.outfileName);
+  const size = statSync(outfile).size;
+  if (size < MIN_ARTIFACT_BYTES) {
+    throw new Error(
+      `build-sidecar: ${target.outfileName} is ${String(size)} bytes, below the ${String(MIN_ARTIFACT_BYTES)}-byte floor — truncated or empty build.`,
+    );
+  }
+
+  const head = readFileSync(outfile).subarray(0, HEADER_BYTES_NEEDED);
+  const actual = readExecutableHeader(head);
+  if (actual.format !== target.format || actual.arch !== target.arch) {
+    throw new Error(
+      `build-sidecar: ${target.outfileName} declares ${actual.format}/${actual.arch ?? 'unknown'}, expected ${target.format}/${target.arch}.`,
+    );
+  }
+
+  const mb = (size / 1024 / 1024).toFixed(1);
+  console.log(`  verified ${target.outfileName}: ${actual.format}/${actual.arch}, ${mb} MB (header + size only; NOT executed)`);
+}
 
 async function buildOne(target: SidecarTarget, buildHash: string): Promise<void> {
   const outfile = join(OUT_DIR, target.outfileName);
@@ -171,15 +224,45 @@ async function smokeTestHostBinary(): Promise<void> {
   );
 }
 
+/**
+ * `--host-only` builds just this platform's binary.
+ *
+ * Tauri resolves `externalBin: ["binaries/onboard-engine"]` to the HOST target
+ * triple at build time, so `cargo clippy`/`cargo test` need exactly one sidecar
+ * — the other three are dead weight in a gate job. That is not a micro-
+ * optimisation: cross-compiling the two darwin targets is what fails on
+ * windows-2022 (`Failed to extract executable for 'bun-darwin-aarch64'`), and
+ * it was failing a job that never needed those binaries.
+ *
+ * The full four-triple build is not weakened, only moved to where it works and
+ * is meaningful — see the `engine-no-network` job, which keeps it and is the
+ * standing evidence for A9's "all four triples from one runner".
+ */
+function targetsToBuild(): readonly SidecarTarget[] {
+  if (!process.argv.includes('--host-only')) {
+    return SIDECAR_TARGETS;
+  }
+  const hostName = binaryNameForHost();
+  const host = SIDECAR_TARGETS.filter((target) => target.outfileName === hostName);
+  if (host.length !== 1) {
+    // Refuse rather than build nothing: an unmatched host means the triple
+    // table and `binaryNameForHost` have drifted apart.
+    throw new Error(`build-sidecar: --host-only matched ${String(host.length)} targets for ${hostName}`);
+  }
+  return host;
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
   const buildHash = await computeBuildHash();
   console.log(`build hash: ${buildHash}`);
+  const targets = targetsToBuild();
   // Sequential by design: clear per-target progress output, one target at a time.
-  for (const target of SIDECAR_TARGETS) {
+  for (const target of targets) {
     await buildOne(target, buildHash);
+    verifyArtifact(target);
   }
-  console.log(`all ${String(SIDECAR_TARGETS.length)} sidecar binaries written to ${OUT_DIR}`);
+  console.log(`${String(targets.length)} of ${String(SIDECAR_TARGETS.length)} sidecar binaries written to ${OUT_DIR}`);
   await smokeTestHostBinary();
 }
 

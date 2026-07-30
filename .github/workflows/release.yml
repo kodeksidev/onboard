@@ -1,0 +1,436 @@
+name: Release
+
+# Phase 14. Per A3 and Section 3's third non-goal: UNSIGNED, ad-hoc installers.
+# No code signing, no notarization, no stapling, no auto-update. The path out of
+# that is documented in docs/SIGNING.md and deliberately not taken here.
+#
+# Builds every target. Publishes Windows and Linux. HOLDS macOS.
+#
+# The macOS hold is not caution, it is the absence of evidence: no macOS build
+# has ever been executed on a Mac. This project has no Apple hardware, and a
+# runner that can PRODUCE a darwin binary cannot RUN one — `build:sidecar`
+# smoke-tests only the host binary, so on Linux the two darwin outputs are
+# checked for format and size and nothing else. Publishing a `.dmg` whose engine
+# has never started on the platform it targets would ship an assumption. The
+# artefact is still built and uploaded to the workflow run, so whoever performs
+# `docs/MACOS_SMOKE.md` has something to install.
+
+# `workflow_dispatch` only registers from the DEFAULT BRANCH, so a release
+# workflow cannot be dry-run before it is merged — `gh workflow run` answers
+# "not found on the default branch". That would force this file's first real
+# execution to be the release itself, which is the failure mode this project has
+# spent a week removing.
+#
+# The `pull_request` trigger below is the answer, and it is permanent rather
+# than scaffolding: the workflow that produces the artefacts users install
+# should be exercised whenever it changes. The path filter keeps it off every
+# unrelated PR, and the release-creation step is tag-gated, so a PR run builds
+# every artefact and publishes nothing.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/release-assets-check.py'
+      # The install jobs' entire body. Without this a change to what
+      # "installed correctly" MEANS would not run the jobs that assert it.
+      - 'scripts/installed-app-check.py'
+      - 'scripts/sidecar-received-check.py'
+      - 'packages/engine/scripts/build-sidecar.ts'
+      - 'scripts/stage-sidecar.ts'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build every artefact but publish no release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  BUN_VERSION: '1.3.14'
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  plan:
+    # ONE table decides what ships. `release-formats.json` feeds this job, which
+    # emits the bundle matrix and each platform's upload glob — and feeds
+    # `release-assets-check.py`, which asserts the received set EQUALS the
+    # expected set. Previously the matrix and the upload glob each decided and
+    # disagreed: the matrix asked for deb+rpm, the glob had no *.rpm, and a dry
+    # run went green staging three assets while the docs promised four.
+    name: plan (read release-formats.json)
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Derive the bundle matrix
+        id: plan
+        run: python scripts/release-plan.py --github
+
+  sidecars:
+    # ALL FOUR TRIPLES, ON LINUX, ONCE. `bun build --compile` cross-compiles
+    # every target from a Linux runner and FAILS on Windows when extracting the
+    # darwin bun executables ("Failed to extract executable for
+    # 'bun-darwin-aarch64'"), measured across three consecutive runs. A9's "one
+    # runner cross-compiles every target" holds on Linux only — see
+    # docs/DECISIONS.md.
+    #
+    # So the sidecars are built here and passed to the bundle jobs as an
+    # artifact. They are NOT rebuilt per runner: a Windows or macOS bundle job
+    # rebuilding them would either fail (Windows) or reintroduce the assumption
+    # that each runner produces identical bytes.
+    name: engine sidecars (all four triples, Linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Verifies each artefact's container format, declared architecture and a
+      # size floor, and prints that the three non-host binaries are NOT
+      # executed. See the doc comment on `verifyArtifact`.
+      - name: Build all four sidecars
+        run: bun run build:sidecar
+
+      - name: Upload the sidecars
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecars
+          path: packages/engine/dist/onboard-engine-*
+          retention-days: 7
+          if-no-files-found: error
+
+  bundle:
+    name: bundle (${{ matrix.os }})
+    needs: [plan, sidecars]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Python (the received-sidecar check is a Python script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # `libfuse2` is for the BUNDLER, not the app. Tauri's AppImage step shells
+      # out to `linuxdeploy`, which is itself an AppImage and mounts via FUSE —
+      # and a GitHub runner has no FUSE. Without it the build compiles cleanly
+      # for six minutes and then dies on `failed to run linuxdeploy`, which
+      # reads like a Tauri bug and is a missing system library.
+      - name: Install Tauri's Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download the sidecars built on Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecars
+          path: packages/engine/dist
+
+      # `download-artifact` does not preserve the executable bit, and Tauri's
+      # externalBin resolution needs it on Unix.
+      - name: Restore the executable bit
+        if: runner.os != 'Windows'
+        run: chmod +x packages/engine/dist/onboard-engine-*
+
+      # The claim Phase 14 rests on and that had never executed: the sidecars
+      # built on Linux arrive INTACT and UNDER THEIR EXACT NAMES on a different
+      # runner. `build:sidecar` verifies format and architecture where the files
+      # are produced; this verifies identity and permissions where they are
+      # consumed, which is a different claim. Expected names are derived from
+      # build-sidecar.ts's own target table.
+      - name: Assert the Linux-built sidecars arrived intact
+        run: python scripts/sidecar-received-check.py
+
+      - name: Stage the sidecar into the Tauri shell
+        run: bun run stage:sidecar
+
+      - name: Build the frontend bundle
+        run: bun run --cwd "apps/desktop" build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+          key: release-cargo-${{ runner.os }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+
+      # No signing arguments anywhere, deliberately (A3). Tauri signs nothing it
+      # is not given credentials for, and none are configured — so this produces
+      # ad-hoc, unsigned installers by construction rather than by a flag
+      # someone could flip.
+      #
+      # `tauri build` compiles the Rust binary and bundles it in one step; a
+      # separate `cargo build --release` beforehand would just build it twice.
+      - name: Build the unsigned installers
+        working-directory: apps/desktop
+        env:
+          # Belt and braces with `libfuse2` above: if FUSE is still unavailable
+          # (a container, a hardened runner), the AppImage tools extract
+          # themselves instead of mounting. Without one of the two, the bundle
+          # fails after the full Rust compile — the most expensive place to
+          # discover a missing dependency.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: bun run bundle -- --bundles ${{ matrix.bundles }}
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          # An extension list here is a SECOND place that decides what ships,
+          # and it silently disagreed with the first: the matrix asked for
+          # `deb,rpm`, Tauri built both, and this glob had no `*.rpm` — so the
+          # dry run staged three assets while the docs promised four. Nothing
+          # failed; the format just was not there.
+          #
+          # `release:check-assets` could not catch it either: it validates what
+          # ARRIVES, and an asset that was never uploaded arrives as nothing.
+          #
+          # So this now uploads whatever the bundler produced and lets the
+          # classifier be the single place that decides. An unrecognised
+          # extension fails there by name rather than vanishing here.
+          # Generated by `release:plan` from release-formats.json, so this
+          # cannot disagree with the `--bundles` argument above — they are the
+          # same table, read once.
+          path: ${{ matrix.uploadGlob }}
+          retention-days: 7
+          if-no-files-found: error
+
+  installed:
+    # Criterion 23's second half, on the platform where it is reachable today.
+    #
+    # The criteria map recorded #23 as blocked because "launching the .dmg needs
+    # a Mac". That was the wrong reason: no installer had been built ANYWHERE,
+    # because @tauri-apps/cli was never a dependency. A criterion marked blocked
+    # for reason X and actually blocked by Y is a status nobody re-examines.
+    #
+    # A fresh GitHub runner IS a clean machine — no repository checkout on the
+    # PATH, no bun, no cargo, no node_modules. So this installs the .deb the way
+    # a user would, with apt, and then asks the INSTALLED engine to analyse a
+    # real repository over the same stdio RPC the app uses. That is a stronger
+    # claim than "the process started": an app whose grammars did not ship would
+    # start fine and analyse nothing.
+    #
+    # What is NOT covered, stated so the gap is not mistaken for coverage:
+    # driving the window to a rendered graph needs the WebDriver harness, whose
+    # fixed-port race makes it unfit as a gate (see ci.yml). Criterion 23's
+    # "launch" is proven for the engine and unproven for the UI.
+    name: installed .deb launches and analyses (clean runner)
+    needs: bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (for the check script only)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download the Linux installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-ubuntu-22.04
+          path: installers
+
+      # `apt-get install ./file.deb` resolves the package's own dependencies,
+      # which `dpkg -i` does not. A user on Ubuntu gets this behaviour; a gate
+      # that used dpkg would pass while a real install failed on a missing
+      # webkit runtime.
+      - name: Install the .deb the way a user would
+        run: |
+          sudo apt-get update
+          # ABSOLUTE path. `apt-get install foo/bar.deb` treats the argument as a
+          # PACKAGE NAME unless it starts with `./` or `/`, and fails with exit
+          # 100 — which reads like an unmet dependency and is a path bug.
+          DEB=$(find "$PWD/installers" -name '*.deb' | head -n 1)
+          if [ -z "$DEB" ]; then
+            echo "no .deb found in the downloaded artifact" >&2
+            exit 1
+          fi
+          echo "installing $DEB"
+          sudo apt-get install -y "$DEB"
+
+      # Xvfb, because the shell claim below starts a real window. Without a
+      # display the process dies before it reaches sidecar resolution, which
+      # would read as a resolution failure — a wrong finding, and a wrong
+      # finding is worse than a missing one.
+      - name: Start a virtual display
+        run: |
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1280x800x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      # This job previously drove the ENGINE directly and never started the
+      # shell, so it never called the shell's sidecar resolution — which is
+      # why the packaging bug that broke the Windows .msi was latent here too
+      # rather than caught. `--skip-shell` is deliberately NOT passed.
+      - name: Assert the installed app starts, resolves its engine, and analyses
+        run: python scripts/installed-app-check.py
+
+  installed-windows:
+    # Criterion 23's Windows half. This is the job whose absence let the
+    # v0.1.0 .msi ship: the Linux job above proved layout and engine launch,
+    # Windows had no equivalent, and the installer was published on the
+    # strength of "it built".
+    #
+    # A fresh windows runner is clean in the way that matters here — no repo
+    # checkout on the PATH, so the dev fallback that masked the bug on every
+    # developer machine cannot resolve. Same reasoning that moved #23 from
+    # machine-blocked to partially proven on Linux.
+    name: installed .msi starts, resolves its engine, and analyses (clean runner)
+    needs: bundle
+    runs-on: windows-2022
+    steps:
+      - name: Checkout (for the check script only)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download the Windows installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-windows-2022
+          path: installers
+
+      # Reads the .msi's own file table WITHOUT installing it, by doing an
+      # administrative install (an extract, not a real install) into a temp
+      # directory. This closes the NSIS-proven / MSI-inferred gap with
+      # evidence: the diagnosis of the resolution bug was made against an
+      # NSIS install, and inferred for the .msi. Now it is neither inferred
+      # nor trusted — it is enumerated.
+      - name: Enumerate what the .msi actually contains
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem installers -Filter *.msi -Recurse | Select-Object -First 1
+          if (-not $msi) { Write-Error "no .msi in the downloaded artifact"; exit 1 }
+          Write-Host "administrative install of $($msi.FullName)"
+          $extract = Join-Path $env:RUNNER_TEMP "msi-extract"
+          $log = Join-Path $env:RUNNER_TEMP "msi-admin.log"
+          $p = Start-Process msiexec -ArgumentList @("/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$extract`"", "/l*v", "`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; Write-Error "msiexec /a failed: $($p.ExitCode)"; exit 1 }
+          Write-Host "=== files inside the .msi ==="
+          Get-ChildItem -Recurse -File $extract |
+            ForEach-Object { $_.FullName.Substring($extract.Length).TrimStart('\') } |
+            Sort-Object
+
+      - name: Install the .msi the way a user would
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem installers -Filter *.msi -Recurse | Select-Object -First 1
+          $log = Join-Path $env:RUNNER_TEMP "msi-install.log"
+          $p = Start-Process msiexec -ArgumentList @("/i", "`"$($msi.FullName)`"", "/qn", "/norestart", "/l*v", "`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 60; Write-Error "install failed: $($p.ExitCode)"; exit 1 }
+          Write-Host "installed"
+
+      # Asserts the shipped file list by SET EQUALITY, not presence — which is
+      # what catches `onboard_engine_stub.exe` shipping beside the real engine.
+      # It would also have printed the sidecar's real installed location on day
+      # one, which is the single fact that would have prevented the bug.
+      - name: Assert the installed app starts, resolves its engine, and analyses
+        shell: pwsh
+        run: python scripts/installed-app-check.py
+
+  publish:
+    # Windows and Linux only. `release-assets-check.py` asserts that mechanically
+    # rather than trusting the glob below — a `.dmg` reaching this job would
+    # otherwise be one careless pattern away from being published.
+    name: publish (Windows + Linux only)
+    # THIS is the gap that let v0.1.0 ship a broken .msi. `publish` depended
+    # only on `bundle`, so an installer that built was an installer that
+    # shipped — the Linux `installed` job existed but gated nothing, and
+    # Windows had no such job at all. Both are now prerequisites, on the two
+    # platforms this workflow actually publishes. An installer that cannot
+    # start and resolve its engine no longer reaches a release page.
+    needs: [bundle, installed, installed-windows]
+    # NO job-level `if`. The asset check must run on a workflow_dispatch dry run
+    # too — it is the first thing that sees what the bundlers ACTUALLY produce,
+    # including any format nobody anticipated, and gating the whole job behind
+    # the tag would mean its first real execution is the release itself. Only
+    # the final step is tag-gated.
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (the asset check is a Python script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download the Windows installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-windows-2022
+          path: release-assets
+
+      - name: Download the Linux installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-ubuntu-22.04
+          path: release-assets
+
+      - name: Assert no macOS artefact is about to be published
+        run: python scripts/release-assets-check.py release-assets
+
+      - name: Create the release
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            **Unsigned build.** Windows SmartScreen will object; the exact steps
+            are in [docs/INSTALL.md](docs/INSTALL.md). Code signing and
+            notarization are out of scope for v1 — see
+            [docs/SIGNING.md](docs/SIGNING.md).
+
+            **macOS is not included in this release.** The build exists but has
+            never been executed on a Mac, and publishing it would ship an
+            assumption rather than a verified artefact. It is released once
+            `docs/MACOS_SMOKE.md` is signed off on real hardware.
+
+            What this release does not verify is listed under "What is not
+            verified" in the README.

@@ -360,28 +360,61 @@ fn redact_base64_blob(line: &str) -> String {
         .into_owned()
 }
 
+/// Section 8.9's rules 2-15, as a NAMED, ORDERED list.
+///
+/// A list rather than a straight-line sequence of statements so that
+/// `apply_single_line_rules_except` can skip exactly one and everything else
+/// stays identical. That is what makes the corpus's per-rule non-vacuity
+/// demonstration possible: for each planted secret, disable the one rule
+/// meant to catch it and assert the secret SURVIVES. Without that, a corpus
+/// entry could be caught incidentally by a different rule and the corpus
+/// would look complete while proving less than it claims.
+///
+/// One implementation, not two: the production path and the demonstration
+/// path fold the same list, so a rule added here is automatically covered by
+/// both. A parallel test-only copy would be free to drift — the same defect
+/// as the duplicated newline reader.
+type SingleLineRule = fn(&str) -> String;
+
+pub const SINGLE_LINE_RULES: &[(&str, SingleLineRule)] = &[
+    ("aws", |l| redact_whole_match(l, &AWS_KEY_RE)),
+    ("github", |l| redact_whole_match(l, &GITHUB_TOKEN_RE)),
+    ("slack", |l| redact_whole_match(l, &SLACK_TOKEN_RE)),
+    ("stripe", |l| redact_whole_match(l, &STRIPE_KEY_RE)),
+    ("google", |l| redact_whole_match(l, &GOOGLE_KEY_RE)),
+    ("openai", |l| redact_whole_match(l, &OPENAI_KEY_RE)),
+    ("anthropic", |l| redact_whole_match(l, &ANTHROPIC_KEY_RE)),
+    ("jwt", |l| redact_whole_match(l, &JWT_RE)),
+    ("connection", redact_connection_string),
+    ("assignment", redact_assignment_heuristic),
+    ("entropy", redact_high_entropy_literal),
+    ("auth-header", redact_auth_header),
+    ("hex-blob", |l| redact_whole_match(l, &HEX_BLOB_RE)),
+    ("base64-blob", redact_base64_blob),
+];
+
 /// Rules 2 through 15, applied in Section 8.9's fixed order, to one line.
 /// Rule 1 (PEM blocks) is multi-line and handled separately by
-/// `redact_pem_blocks` before this ever runs. Rules 13-15 are Phase 13's
-/// additive extension and run last, so no rule 2-12 match changes — see
-/// this module's doc comment.
+/// `redact_pem_blocks` before this ever runs.
 pub fn apply_single_line_rules(line: &str) -> String {
-    let mut current = line.to_string();
-    current = redact_whole_match(&current, &AWS_KEY_RE);
-    current = redact_whole_match(&current, &GITHUB_TOKEN_RE);
-    current = redact_whole_match(&current, &SLACK_TOKEN_RE);
-    current = redact_whole_match(&current, &STRIPE_KEY_RE);
-    current = redact_whole_match(&current, &GOOGLE_KEY_RE);
-    current = redact_whole_match(&current, &OPENAI_KEY_RE);
-    current = redact_whole_match(&current, &ANTHROPIC_KEY_RE);
-    current = redact_whole_match(&current, &JWT_RE);
-    current = redact_connection_string(&current);
-    current = redact_assignment_heuristic(&current);
-    current = redact_high_entropy_literal(&current);
-    current = redact_auth_header(&current);
-    current = redact_whole_match(&current, &HEX_BLOB_RE);
-    current = redact_base64_blob(&current);
-    current
+    SINGLE_LINE_RULES
+        .iter()
+        .fold(line.to_string(), |acc, (_, rule)| rule(&acc))
+}
+
+/// The same pipeline with exactly one rule removed — the mechanism behind
+/// the corpus's non-vacuity demonstration. `#[cfg(test)]` so no shipped build
+/// can skip a redaction rule.
+#[cfg(test)]
+pub fn apply_single_line_rules_except(line: &str, skip: &str) -> String {
+    assert!(
+        SINGLE_LINE_RULES.iter().any(|(name, _)| *name == skip),
+        "no rule named {skip:?} — a renamed rule must not silently disable this check"
+    );
+    SINGLE_LINE_RULES
+        .iter()
+        .filter(|(name, _)| *name != skip)
+        .fold(line.to_string(), |acc, (_, rule)| rule(&acc))
 }
 
 #[cfg(test)]
@@ -432,7 +465,10 @@ mod tests {
 
     #[test]
     fn redacts_aws_key() {
-        let out = apply_single_line_rules("key = REDACTED-AWS-BY-HISTORY-REWRITE");
+        let out = apply_single_line_rules(&format!(
+            "key = {}",
+            crate::privacy::fake_secrets::aws_synthetic_key_id()
+        ));
         assert_eq!(out, "key = <redacted>");
     }
 
@@ -596,9 +632,10 @@ mod tests {
     /// so the older corpus expectation is untouched.
     #[test]
     fn an_earlier_rule_still_wins_over_the_appended_ones() {
-        let out = apply_single_line_rules(
-            "Authorization: Bearer REDACTED-JWT-BY-HISTORY-REWRITE.abcdefghij1234567890",
-        );
+        let out = apply_single_line_rules(&format!(
+            "Authorization: Bearer {}",
+            crate::privacy::fake_secrets::jwt_hs256_with_typ()
+        ));
         assert_eq!(out, "Authorization: Bearer <redacted>");
     }
 

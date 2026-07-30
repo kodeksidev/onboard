@@ -6,7 +6,7 @@ import { SETTINGS_COPY } from '@/copy/messages';
 import { useSettingsStore } from '@/state/settingsStore';
 import { TestKeyButton } from './TestKeyButton';
 
-const PROVIDER_OPTIONS: readonly AiProvider[] = ['anthropic', 'ollama', 'openai-compatible'];
+const PROVIDER_OPTIONS: readonly AiProvider[] = ['anthropic', 'ollama'];
 
 const FIELD_CLASS =
   'rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900';
@@ -50,7 +50,7 @@ function ProviderAndModelFields({ ai, onChange }: AiFieldsProps): JSX.Element {
   );
 }
 
-/** Ollama's own base url, and `openai-compatible`'s stored base url — each
+/** Ollama's own base url — each
  * shown only for its own provider. */
 function BaseUrlField({ ai, onChange }: AiFieldsProps): JSX.Element | null {
   if (ai.provider === 'ollama') {
@@ -61,20 +61,6 @@ function BaseUrlField({ ai, onChange }: AiFieldsProps): JSX.Element | null {
           type="text"
           value={ai.ollamaBaseUrl}
           onChange={(event) => onChange({ ollamaBaseUrl: event.target.value })}
-          className={FIELD_CLASS}
-        />
-      </label>
-    );
-  }
-  if (ai.provider === 'openai-compatible') {
-    return (
-      <label className="flex flex-col gap-1 text-sm">
-        {SETTINGS_COPY.openaiCompatibleBaseUrlLabel}
-        <input
-          type="text"
-          value={ai.openaiCompatibleBaseUrl}
-          placeholder={SETTINGS_COPY.openaiCompatibleBaseUrlPlaceholder}
-          onChange={(event) => onChange({ openaiCompatibleBaseUrl: event.target.value })}
           className={FIELD_CLASS}
         />
       </label>
@@ -147,7 +133,7 @@ function ApiKeySection({ ai }: { readonly ai: AiSettings }): JSX.Element | null 
 /**
  * Section 9 Phase 12 step 5 / Section 6.2: the "AI (optional)" settings
  * section — master toggle, provider dropdown (three), `base_url` (shown
- * for `openai-compatible` and Ollama's own base url), a single API-key
+ * for Ollama's own base url), a single API-key
  * paste field with Save/Clear, a model field, and `TestKeyButton`. A20/A5
  * still hold: the toggle defaults to off (`DEFAULT_SETTINGS`) and nothing
  * here changes that.

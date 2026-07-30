@@ -12,6 +12,8 @@ fn main() {
         todo!(),
         todo!(),
         todo!(),
+        todo!(),
+        todo!(),
         todo!(), // the deleted body/content argument
     );
 }

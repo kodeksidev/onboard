@@ -30,6 +30,14 @@ pub enum AppErrorCode {
     ENoSupportedFiles,
     ERepoTooLarge,
     EEngineCrashed,
+    /// The engine process could never be STARTED — the binary is missing
+    /// from the installation, or the OS refused to execute it. Distinct
+    /// from `EEngineCrashed`, which means a running engine died mid-work:
+    /// here there was never a process at all, so "crashed" is not merely
+    /// imprecise but false, and it sends the reader looking for a crash log
+    /// that does not exist. Introduced after a packaged Windows build
+    /// reported `E_ENGINE_CRASHED` for a sidecar it had never spawned.
+    EEngineNotStarted,
     EEngineTimeout,
     EAnalysisInProgress,
     ENoAnalysis,
@@ -62,7 +70,7 @@ pub enum AppErrorCode {
     /// answer is withheld — Section 8.10 step 3: "Never show a partially
     /// verified answer."
     EAiCitationRejected,
-    /// Phase 12 step 5: Ollama specifically (never Anthropic/openai-compatible)
+    /// Phase 12 step 5: Ollama specifically (never Anthropic)
     /// could not be reached at all — reclassified from a generic
     /// `E_AI_NETWORK` transport failure by `ai::ollama`, since for a
     /// local-only target that almost always means "Ollama isn't running,"
@@ -81,6 +89,7 @@ impl AppErrorCode {
             AppErrorCode::ENoSupportedFiles => "E_NO_SUPPORTED_FILES",
             AppErrorCode::ERepoTooLarge => "E_REPO_TOO_LARGE",
             AppErrorCode::EEngineCrashed => "E_ENGINE_CRASHED",
+            AppErrorCode::EEngineNotStarted => "E_ENGINE_NOT_STARTED",
             AppErrorCode::EEngineTimeout => "E_ENGINE_TIMEOUT",
             AppErrorCode::EAnalysisInProgress => "E_ANALYSIS_IN_PROGRESS",
             AppErrorCode::ENoAnalysis => "E_NO_ANALYSIS",
@@ -129,6 +138,26 @@ impl AppError {
     pub fn with_path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
         self
+    }
+
+    /// Section 10 amendment — "Onboard could not start its analysis engine".
+    /// Kept byte-identical to `copy/messages.ts`'s `engineNotStarted`
+    /// description; `messages.test.ts` asserts the rendered string, and
+    /// `error.rs`'s own test asserts this one, so the two cannot drift apart
+    /// silently.
+    ///
+    /// Deliberately says nothing about retrying: the install is broken, not
+    /// the run, so a Retry button would loop the user through the identical
+    /// failure. Contrast `E_ENGINE_CRASHED`, where retrying genuinely helps
+    /// because the cache keeps completed files.
+    pub fn engine_not_started(log_path: &str) -> Self {
+        Self::new(
+            AppErrorCode::EEngineNotStarted,
+            format!(
+                "The analysis engine is missing from this installation, so nothing was \
+                 analyzed. Reinstalling Onboard should restore it. The log is at {log_path}."
+            ),
+        )
     }
 
     pub fn path_not_found(display_name: &str) -> Self {
@@ -392,6 +421,21 @@ impl AppError {
     /// citation (`path:line`), not just the path — the line is the part
     /// that failed, so hiding it would make the message unactionable.
     pub fn ai_citation_line_out_of_range(path: &str, line: u64, real_line_count: u64) -> Self {
+        Self::ai_citation_line_out_of_range_text(path, &line.to_string(), real_line_count)
+    }
+
+    /// Same refusal, for a line number that does not fit in a `u64` at all.
+    ///
+    /// The citation regex captures `(\d+)`, so a digit run longer than `u64`
+    /// can hold still MATCHES — it just cannot be parsed. Collapsing that to
+    /// `None` skipped the range check and let the citation through, which is
+    /// why this takes the raw text rather than a number: the refusal must be
+    /// able to name what the model actually wrote.
+    pub fn ai_citation_line_out_of_range_text(
+        path: &str,
+        line: &str,
+        real_line_count: u64,
+    ) -> Self {
         Self::new(
             AppErrorCode::EAiCitationRejected,
             format!(

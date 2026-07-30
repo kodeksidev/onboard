@@ -197,9 +197,21 @@ pub async fn test_ai_key(
     model: String,
 ) -> Result<TestAiKeyResponse, AppError> {
     validate_provider(&provider)?;
-    let path = settings_path(&app)?;
-    let ai_keys = state.ai_keys.clone();
-    test_ai_key_core(path, ai_keys, &provider, &model).await
+    // M1: the connectivity probe now runs the traced pipeline, so it needs
+    // the same context the feature commands build — `transcripts_dir`
+    // included, because the probe writes a transcript entry before sending.
+    let ctx = ai_command_context(&app, &state)?;
+    let path = ctx.settings_path.clone();
+    let ai_keys = ctx.ai_keys.clone();
+    test_ai_key_core(
+        &state,
+        &ctx.transcripts_dir,
+        path,
+        ai_keys,
+        &provider,
+        &model,
+    )
+    .await
 }
 
 /// Section 12: the AI transcript lives at

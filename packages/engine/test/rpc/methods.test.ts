@@ -224,7 +224,7 @@ describe('engine.snippets', () => {
     await removeDirWithRetry(appDataDir);
   });
 
-  test('returns a truncated snippet per valid path and silently omits an escaping path', async () => {
+  test('refuses the WHOLE request when any path escapes the repo (INV-3)', async () => {
     const { methods } = makeMethods();
     const analyzeResult = await methods.analyze({
       repoPath: join(FIXTURES_DIR, 'node-express'),
@@ -235,17 +235,36 @@ describe('engine.snippets', () => {
     const repoId = analyzeResult.result.repo.id;
     const somePath = analyzeResult.result.files[0]?.path ?? '';
 
-    const result = await methods.snippets({
+    // One escaping path among otherwise-valid ones must refuse everything.
+    // Returning the good snippets plus an error would let a caller proceed
+    // with a partially validated set — Section 8.9 R3's precedent.
+    let refusedCode: string | undefined;
+    try {
+      await methods.snippets({
+        repoId,
+        paths: [somePath, '../../etc/passwd'],
+        maxLinesPerFile: 2,
+        maxBytesPerFile: 1_000_000,
+      });
+    } catch (error: unknown) {
+      refusedCode = (error as { appError?: { code?: string } }).appError?.code;
+    }
+    // Asserted on the CODE, not the message: the message is user copy and
+    // would still match if the guard were replaced by an unrelated failure.
+    expect(refusedCode).toBe('E_PATH_ESCAPES_REPO');
+
+    // Non-vacuity: the same call without the escaping path must SUCCEED and
+    // return exactly one snippet, so the rejection above is caused by the
+    // bad path and not by the request shape.
+    const ok = await methods.snippets({
       repoId,
-      paths: [somePath, '../../etc/passwd'],
+      paths: [somePath],
       maxLinesPerFile: 2,
       maxBytesPerFile: 1_000_000,
     });
-
-    expect(result.snippets).toHaveLength(1);
-    expect(result.snippets[0]?.path).toBe(somePath);
-    expect(result.snippets[0]?.startLine).toBe(1);
-    expect(result.snippets[0]?.endLine).toBeLessThanOrEqual(2);
+    expect(ok.snippets).toHaveLength(1);
+    expect(ok.snippets[0]?.path).toBe(somePath);
+    expect(ok.snippets[0]?.endLine).toBeLessThanOrEqual(2);
     await methods.shutdown({});
   });
 });

@@ -114,7 +114,9 @@ mod tests {
         // spawnable program is needed here (unlike `tests/analyze_repo.rs`
         // and `tests/search_repo.rs`).
         let config = SidecarConfig {
-            program: std::path::PathBuf::from("unused-read-file-never-calls-the-sidecar"),
+            program: Some(std::path::PathBuf::from(
+                "unused-read-file-never-calls-the-sidecar",
+            )),
             args: vec![],
             log_path: "C:/fake/onboard.log".to_string(),
             max_restarts: 3,

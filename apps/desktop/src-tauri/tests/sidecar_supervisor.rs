@@ -1,20 +1,18 @@
-//! Integration tests for `sidecar::supervisor`, driven against the real
+﻿//! Integration tests for `sidecar::supervisor`, driven against the real
 //! compiled stub sidecar binary (`onboard_engine_stub`, Phase 6's stand-in
 //! for the Phase 5 engine). These live under `tests/` — not inside
 //! `src/sidecar/supervisor.rs`'s unit test module — because
 //! `CARGO_BIN_EXE_<name>` is only populated by Cargo for integration test
 //! and benchmark targets, never for `--lib` unit tests.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use onboard_lib::constants::SIDECAR_MAX_RESTARTS;
 use onboard_lib::sidecar::supervisor::{SidecarConfig, SidecarSupervisor};
 use serde_json::json;
 
-fn stub_program() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_onboard_engine_stub"))
-}
+mod common;
+use common::stub_program;
 
 fn test_config(extra_env_args: &[(&str, &str)]) -> SidecarConfig {
     // The stub reads behavior toggles from argv (`key=value` pairs) so each
@@ -25,7 +23,7 @@ fn test_config(extra_env_args: &[(&str, &str)]) -> SidecarConfig {
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     SidecarConfig {
-        program: stub_program(),
+        program: Some(stub_program()),
         args,
         log_path: "C:/fake/onboard.log".to_string(),
         max_restarts: SIDECAR_MAX_RESTARTS,
@@ -34,6 +32,41 @@ fn test_config(extra_env_args: &[(&str, &str)]) -> SidecarConfig {
 
 const ANALYZE_PARAMS: fn() -> serde_json::Value =
     || json!({"repoPath": "x", "appDataDir": "y", "excludeGlobs": [], "isForceRefresh": false});
+
+/// The v0.1.0 Windows `.msi` shipped an app that reported
+/// `E_ENGINE_CRASHED` with the body "Failed to start the analysis engine
+/// process: The system cannot find the path specified. (os error 3)" — for
+/// an engine it had never spawned. Two defects in one string: the wrong
+/// code, and a raw OS error in the copy a user reads.
+///
+/// Startup resolution now yields `None` instead of a constructed path, so
+/// this asserts what the user actually gets in that state.
+#[test]
+fn an_unresolved_engine_reports_not_started_and_keeps_os_strings_out_of_the_message() {
+    let supervisor = SidecarSupervisor::new(SidecarConfig {
+        program: None,
+        args: vec![],
+        log_path: "C:/fake/onboard.log".to_string(),
+        max_restarts: SIDECAR_MAX_RESTARTS,
+    });
+
+    let err = supervisor
+        .call("engine.analyze", ANALYZE_PARAMS(), Duration::from_secs(5))
+        .expect_err("an unresolved engine cannot analyze anything");
+
+    assert_eq!(err.code, "E_ENGINE_NOT_STARTED");
+    assert!(
+        !err.message.to_lowercase().contains("os error"),
+        "Section 12: the OS string belongs in `detail`, not `message` — got {:?}",
+        err.message
+    );
+    // The copy names the log, so the user has somewhere to look.
+    assert!(
+        err.message.contains("C:/fake/onboard.log"),
+        "expected the log path in the message, got {:?}",
+        err.message
+    );
+}
 
 #[test]
 fn a_healthy_handshake_starts_the_sidecar_successfully() {
@@ -110,6 +143,42 @@ fn a_second_concurrent_analysis_is_rejected() {
         Err(err) => assert_eq!(err.code, "E_ANALYSIS_IN_PROGRESS"),
         Ok(_) => panic!("expected a second concurrent analysis to be rejected"),
     }
+}
+
+/// CROSS-DOMAIN. The engine (`packages/engine`) does not survive two
+/// overlapping `analyze()` calls: identical content analysed concurrently
+/// disagrees on `edges`, `symbolCount`, `pageRank` and `diagnostics` (107
+/// differing leaves, against 3 sequentially — see `docs/DECISIONS.md`).
+///
+/// This guard is what keeps that unreachable from the shell, and it is
+/// DELIBERATELY STRICTER than the build spec's Phase 6 wording, "one analysis
+/// at a time per repo". Implementing that wording faithfully — keying the flag
+/// by `repoId` so two different repositories may run at once — would corrupt
+/// both results.
+///
+/// The no-repo-argument signature is therefore load-bearing, not incidental.
+/// Binding the method to a function pointer of the exact expected type means
+/// adding a repo parameter fails to COMPILE here, rather than silently
+/// re-opening the defect. `packages/engine` now refuses overlap on its own side
+/// too (`test/analyze/no-overlap.test.ts`); this is the other half.
+#[test]
+fn the_analysis_guard_is_process_wide_not_per_repo() {
+    let begin: for<'a> fn(
+        &'a SidecarSupervisor,
+    ) -> Result<
+        onboard_lib::sidecar::supervisor::AnalysisGuard<'a>,
+        onboard_lib::error::AppError,
+    > = SidecarSupervisor::begin_analysis;
+
+    let supervisor = SidecarSupervisor::new(test_config(&[]));
+    let _held = begin(&supervisor).expect("first analysis should acquire the guard");
+
+    // No repository identity is involved anywhere in this rejection.
+    let second = begin(&supervisor);
+    match second {
+        Err(err) => assert_eq!(err.code, "E_ANALYSIS_IN_PROGRESS"),
+        Ok(_) => panic!("a second analysis must be rejected, whatever repo it targets"),
+    };
 }
 
 #[test]

@@ -37,6 +37,7 @@ use std::path::PathBuf;
 use crate::ai::endpoint::{self, ResolvedEndpoint};
 use crate::ai::http::{self, ProviderShape, RequestHeaders};
 use crate::ai::permit::{self, EgressPermit};
+use crate::ai::pipeline::{PipelineStep, PipelineTrace, SendApproval, TraceKind};
 use crate::ai::provider::{AiProvider, CompletionRequest, CompletionResponse, TestResult};
 use crate::commands::settings::load_stored_ai_settings;
 use crate::error::AppError;
@@ -97,9 +98,14 @@ impl OllamaProvider {
     /// — handled coherently by routing through the exact same
     /// `resolve_context`/`run_test` shape every other provider uses, not a
     /// special case in the button or the command layer.
-    pub async fn test_with_model(&self, model: &str) -> Result<TestResult, AppError> {
+    pub async fn test_with_model(
+        &self,
+        model: &str,
+        trace: &mut PipelineTrace,
+        approval: SendApproval,
+    ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(Some(model))?;
-        run_test(&ctx).await
+        run_test(&ctx, trace, approval).await
     }
 }
 
@@ -116,7 +122,11 @@ impl OllamaProvider {
 /// target "the request failed at the transport level" and "Ollama isn't
 /// running" are the same event in practice, and Section 10 gives the
 /// latter its own literal copy.
-async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
+async fn run_test(
+    ctx: &ResolvedContext,
+    trace: &mut PipelineTrace,
+    approval: SendApproval,
+) -> Result<TestResult, AppError> {
     let headers = build_headers();
     // The same `PromptSpec` path a real feature takes (Section 12: "Test
     // key" must prove the real chokepoint, not a lighter-weight variant) —
@@ -131,6 +141,8 @@ async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
     );
     let result = http::send(
         &ctx.permit,
+        approval,
+        TraceKind::Connectivity,
         &ctx.endpoint,
         &headers,
         ProviderShape::Ollama,
@@ -138,7 +150,12 @@ async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
         &ping,
     );
     match result {
-        Ok(_) => Ok(TestResult { is_ok: true }),
+        Ok(_) => {
+            // Recorded next to the send itself, so the step cannot drift
+            // away from the thing it attests to.
+            trace.record(PipelineStep::Sent);
+            Ok(TestResult { is_ok: true })
+        }
         Err(err) if err.code == "E_AI_NETWORK" => Err(AppError::ai_ollama_unreachable(
             &ctx.model,
             err.detail.unwrap_or_default(),
@@ -188,6 +205,8 @@ impl AiProvider for OllamaProvider {
         let headers = build_headers();
         let response = http::send(
             &ctx.permit,
+            req.approval,
+            TraceKind::Feature,
             &ctx.endpoint,
             &headers,
             ProviderShape::Ollama,
@@ -197,9 +216,13 @@ impl AiProvider for OllamaProvider {
         parse_completion_response(&response.body)
     }
 
-    async fn test(&self) -> Result<TestResult, AppError> {
+    async fn test(
+        &self,
+        trace: &mut PipelineTrace,
+        approval: SendApproval,
+    ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(None)?;
-        run_test(&ctx).await
+        run_test(&ctx, trace, approval).await
     }
 }
 
@@ -215,29 +238,15 @@ mod tests {
     use std::net::TcpListener;
     use std::pin::Pin;
     use std::sync::mpsc;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::task::{Context, Poll, Waker};
 
     // Same hand-rolled single-poll executor as `ai::anthropic::tests` — see
     // that module's doc comment for why this crate doesn't add a
     // dependency to drive a future that never actually suspends.
-    fn noop_raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            noop_raw_waker()
-        }
-        fn no_op(_: *const ()) {}
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-
-    fn noop_waker() -> Waker {
-        // SAFETY: see `ai::anthropic::tests::noop_waker` — identical
-        // invariant, identical vtable shape.
-        unsafe { Waker::from_raw(noop_raw_waker()) }
-    }
-
     fn block_on_never_pending<F: Future>(future: F) -> F::Output {
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
+        // `Waker::noop()` (stable since Rust 1.85) replaces a hand-rolled
+        // no-op vtable that was duplicated verbatim across three modules.
+        let mut cx = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
         loop {
             if let Poll::Ready(value) = Pin::new(&mut future).poll(&mut cx) {
@@ -336,7 +345,7 @@ mod tests {
         let (settings_path, ai_keys) = enable_real_ollama(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
-        let planted_secret = "REDACTED-AWS-BY-HISTORY-REWRITE"; // Section 8.9 rule 2 (AWS key)
+        let planted_secret = crate::privacy::fake_secrets::aws_example_key_id(); // Section 8.9 rule 2 (AWS key)
         let redacted_payload = crate::privacy::redact::redact(
             &EngineSnippetsResult {
                 snippets: vec![EngineSnippet {
@@ -355,6 +364,7 @@ mod tests {
         let provider = OllamaProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let result = block_on_never_pending(provider.complete(CompletionRequest {
+            approval: SendApproval::forge_for_test(TraceKind::Feature),
             prompt: crate::ai::prompt::build(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 redacted_payload,
@@ -374,7 +384,7 @@ mod tests {
             "expected <redacted> in the bytes actually sent, got: {received_text}"
         );
         assert!(
-            !received_text.contains(planted_secret),
+            !received_text.contains(planted_secret.as_str()),
             "the planted secret leaked into the bytes actually sent: {received_text}"
         );
 
@@ -396,7 +406,11 @@ mod tests {
 
         let provider = OllamaProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
-        let result = block_on_never_pending(provider.test());
+        let mut trace = PipelineTrace::new_connectivity();
+        let result = block_on_never_pending(provider.test(
+            &mut trace,
+            SendApproval::forge_for_test(TraceKind::Connectivity),
+        ));
         let received = rx
             .recv_timeout(std::time::Duration::from_secs(15))
             .expect("the local listener never received a request");
@@ -415,6 +429,7 @@ mod tests {
             crate::privacy::redact::redact(&EngineSnippetsResult { snippets: vec![] }, &[])
                 .unwrap();
         let result = block_on_never_pending(provider.complete(CompletionRequest {
+            approval: SendApproval::forge_for_test(TraceKind::Feature),
             prompt: crate::ai::prompt::build(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 empty_payload,
@@ -440,7 +455,11 @@ mod tests {
 
         let provider = OllamaProvider::new(settings_path, ai_keys)
             .with_test_endpoint(format!("http://{addr}"));
-        let result = block_on_never_pending(provider.test());
+        let mut trace = PipelineTrace::new_connectivity();
+        let result = block_on_never_pending(provider.test(
+            &mut trace,
+            SendApproval::forge_for_test(TraceKind::Connectivity),
+        ));
 
         let err = result.expect_err("expected the connection to fail");
         assert_eq!(err.code, "E_AI_OLLAMA_UNREACHABLE");
@@ -459,7 +478,12 @@ mod tests {
         let (base_url, rx) = spawn_capturing_server();
 
         let provider = OllamaProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
-        let result = block_on_never_pending(provider.test_with_model("override-model"));
+        let mut trace = PipelineTrace::new_connectivity();
+        let result = block_on_never_pending(provider.test_with_model(
+            "override-model",
+            &mut trace,
+            SendApproval::forge_for_test(TraceKind::Connectivity),
+        ));
         assert!(result.is_ok(), "test_with_model failed: {:?}", result.err());
 
         let received_body = rx

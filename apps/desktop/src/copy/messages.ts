@@ -71,6 +71,18 @@ export const ERRORS = {
     description: `The analysis engine exited before finishing. The log is at ${logPath}. Retrying usually works — the cache keeps completed files.`,
   }),
   /**
+   * Amendment to Section 10: the table had no row for "the engine was never
+   * started". A packaged Windows build reported E_ENGINE_CRASHED for a
+   * sidecar it had never spawned, which is not a wording problem — it points
+   * the reader at a crash log for a process that never existed. Retrying
+   * cannot help either, so this copy deliberately offers no Retry framing;
+   * the install is broken, not the run. See docs/DECISIONS.md.
+   */
+  engineNotStarted: (logPath: string): TitledCopy => ({
+    title: 'Onboard could not start its analysis engine',
+    description: `The analysis engine is missing from this installation, so nothing was analyzed. Reinstalling Onboard should restore it. The log is at ${logPath}.`,
+  }),
+  /**
    * Gap: Section 10's "Sidecar hangs" row names E_ENGINE_TIMEOUT and the
    * 600s/30s budgets but gives no literal copy. Filled with the most
    * conventional phrasing consistent with the other AppError strings; see
@@ -345,7 +357,6 @@ export const SETTINGS_COPY = {
   providerOptionLabels: {
     anthropic: 'Anthropic',
     ollama: 'Ollama (local)',
-    'openai-compatible': 'OpenAI-compatible',
   },
   modelLabel: 'Model',
   modelPlaceholder: 'e.g. claude-sonnet-4-5',
@@ -356,8 +367,6 @@ export const SETTINGS_COPY = {
    * boolean-derived hint. */
   apiKeyAlreadyStoredHint: 'A key is already stored for this provider.',
   ollamaBaseUrlLabel: 'Ollama address',
-  openaiCompatibleBaseUrlLabel: 'Base URL',
-  openaiCompatibleBaseUrlPlaceholder: 'e.g. https://api.deepseek.com',
   saveKeyLabel: 'Save key',
   clearKeyLabel: 'Clear key',
   /**
@@ -442,6 +451,7 @@ export const ERROR_TITLES: Readonly<Record<string, string>> = {
   E_NO_SUPPORTED_FILES: ERRORS.noSupportedFiles().title,
   E_REPO_TOO_LARGE: ERRORS.repoTooLarge(0).title,
   E_ENGINE_CRASHED: ERRORS.engineCrashed('').title,
+  E_ENGINE_NOT_STARTED: ERRORS.engineNotStarted('').title,
   E_ENGINE_TIMEOUT: ERRORS.engineTimeout().title,
   E_ANALYSIS_IN_PROGRESS: ERRORS.analysisInProgress().title,
   E_FILE_TOO_LARGE: ERRORS.fileTooLarge('', '').title,

@@ -35,7 +35,7 @@ export interface ReadRepoFileRequest {
 /** `read_repo_file`'s response shape is identical to the sidecar's `engine.readFile` result. */
 export type ReadRepoFileResult = EngineReadFileResult;
 
-export type AiProviderName = 'anthropic' | 'ollama' | 'openai-compatible';
+export type AiProviderName = 'anthropic' | 'ollama';
 
 export interface StoreAiKeyRequest {
   readonly provider: AiProviderName;

@@ -1,6 +1,6 @@
 # Security audit — Phase 13
 
-**Scope:** whole repository at `main` / HEAD `7d48980`.
+**Scope:** whole repository at `main` / HEAD `76f84be`.
 **Auditor:** `agent-security` (read-only; no source file was modified by this audit).
 **Method:** code reading plus targeted execution — `cargo test`, `cargo audit`, `bun audit`, and a
 throwaway probe crate *outside* the repo that links `onboard_lib` and calls the real
@@ -286,7 +286,7 @@ Alternatively record an explicit deviation in `DECISIONS.md` if the owner judges
 | `MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA...` (PEM body, no markers) | **not redacted** |
 | `// key: sk-proj-Ab1Cd2...` | redacted (rule 11) |
 | `//registry.npmjs.org/:_authToken=npm_aBcD...` | redacted (rule 11) |
-| `REDACTED-ANTHROPIC-BY-HISTORY-REWRITE` | redacted (rule 8) |
+| `an `sk-ant-` prefix followed by 30 lowercase-alphanumeric characters (elided: the literal itself is credential-shaped and blocks push protection — see `privacy::fake_secrets::anthropic_key()`, which assembles it)` | redacted (rule 8) |
 
 Why each gap exists: rule 11's value group is a run of non-space, non-quote characters starting
 **immediately** after the `:`/`=`, so in `Authorization: Basic ...` the value it sees is `Basic`
@@ -425,7 +425,7 @@ with mode `0700`.
 
 ## 4. Dependencies
 
-Re-verified at HEAD `7d48980`.
+Re-verified at HEAD `76f84be`.
 
 - **`bun audit`** (bun 1.3.14, repo root): **No vulnerabilities found.** The `overrides` block in
   `package.json:24-27` (`brace-expansion >= 5.0.8`, `serialize-javascript >= 7.0.7`) is what keeps it
@@ -491,3 +491,154 @@ Remaining open findings (5 MEDIUM, 7 LOW) do not block the gate and are carried 
 M1/M2/M3/M6/M7 to `rust-tauri`, L4/L6/L7 to `react-ui`. Two handoffs also arose from the fixes: the
 `wdio.conf.ts` fixed-port race that makes e2e unfit for a per-push gate (`react-ui`), and a
 `rust-toolchain.toml` pin so `stable` drift cannot break `-D warnings` (`rust-tauri`).
+
+---
+
+## 6. Coverage of this audit — added 2026-07-28
+
+### The claim this document is entitled to make
+
+**"Zero open CRITICAL and zero open HIGH" is a claim about what was examined, not a
+claim about what exists.**
+
+That sentence is added because a real fail-open was found afterwards, in a method this
+audit had inspected twice.
+
+### The evidence behind every figure in this document is also narrower than it looks
+
+**Every green run in this project before 2026-07-28 — every `verify` exit 0, every
+coverage figure, every test count, including the ones cited in this audit — executed
+against a `node_modules` that no clean checkout reproduces.** Those results are not
+known to be wrong. They are *unverified*: nothing has yet re-derived them on a tree
+that a fresh checkout actually produces.
+
+The cause is mundane and was invisible from inside the machine that had it. A stale
+local install carried `brace-expansion@1.1.16` and `@2.1.2` alongside `@5.0.8`, so
+`minimatch@3` resolved to a compatible copy here and to the incompatible v5 on every
+clean install — the divergence that GHSA-mh99-v99m-4gvg's override introduces
+everywhere else. `bun install` is permitted to resolve differently from `bun.lock` and
+rewrite it in place, so CI reproduced the same class of drift rather than catching it.
+Wiping `node_modules` and reinstalling from the frozen lockfile changed nothing else
+about the tree.
+
+This is the same defect as INV-3 one level out: the checks ran, reported, and were
+believed, and no one asked what they were running *against*. The durable half of the
+fix is `--frozen-lockfile` at every workflow install site, enforced by
+`scripts/ci-install-check.py` over a derived scope so a new job cannot reintroduce it.
+The remaining half is a green run: **until `verify` completes on a frozen clean
+install, treat every figure in this document as attested but not reproduced.**
+
+### INV-3, and how it was missed
+
+`engine.snippets` silently discarded any path that failed repo containment. This audit
+examined that method and recorded two conclusions, both correct:
+
+- §2 CRITICAL, "specifically checked and not found": *"a path-traversal escape in
+  `read_repo_file`, `engine.readFile`, or `engine.snippets`"*
+- §3 invariant 6, **HOLDS**: *"`engine.snippets`/`engine.readFile`: dot-dot segment
+  rejection plus `realpathSync` containment"*
+
+Both asked **whether a path can escape**. Neither asked **what the method does with a
+path that fails**. The answer was: drop it, return a shorter array, tell nobody.
+
+It was not undiscoverable. `docs/DECISIONS.md`'s Phase 5 entry flagged it explicitly —
+*"flagged here for the AI-path owner to confirm or override"* — in the same file this
+audit was reading. A search of this document for "silently omit" / "partial" / "drops"
+returns nothing.
+
+### Why it reached the user interface
+
+Nothing between the engine and the UI compared paths requested against snippets
+returned. So a dropped path produced a shorter array, `redact()` saw only survivors,
+and `RedactedPayload::sent_file_count()` — which counts what survived, not what was
+asked for — reported it as the total. The UI displayed **"23 files sent"**.
+
+That number is accurate. It satisfies acceptance criterion 17's *"the UI displays the
+actual `sentFileCount`"*. **The criterion was met, and meeting it is what hid the
+refusal.** A user auditing what left their machine saw a truthful count with no
+indication that a security control had fired.
+
+### The method finding, which generalises
+
+This audit's method was: enumerate the invariants and check that each holds. That
+method catches *"can the guard be bypassed"* and **cannot, structurally, surface what a
+guard does when it fires** — no invariant in §3's table asks that question. Every
+fail-open in this codebase is invisible to it. INV-3 is the one now known.
+
+A derived sweep of every guard, refusal and validation point — recording, for each,
+what it does when it fires (errors, returns null, drops silently, logs, continues) —
+is tracked in `docs/KNOWN_ISSUES.md`.
+
+### Status
+
+Fixed. `engine.snippets` refuses the whole request on any bad path (Section 8.9 R3's
+precedent: never send a partially validated set), and `ai::snippets::fetch` treats
+`returned.len() != requested.len()` as an error so a future silent drop anywhere
+upstream fails at the boundary instead of laundering into a smaller number.
+
+**Acceptance criterion 26 was PARTIAL** until a re-audit was performed with a method
+that can see fail-open behaviour. That sweep is now done — `docs/KNOWN_ISSUES.md`,
+derived by `scripts/guard-disposition-scan.py` over 285 absorbing sites in 181 files.
+
+It found two further fail-opens, both on security boundaries, and both are FIXED with
+a test that fails against the old code: a cited line number too large for `u64`
+bypassed the citation range check entirely (KI-1), and the no-network module poison
+was reversible by plain assignment while `fetch` was not (KI-2).
+
+Two limits of that sweep bound what this criterion can now claim. It scans OUR code,
+and both of this project's `Parser.init()` defects degraded inside a dependency — so
+`web-tree-sitter` and `bun:sqlite`, the two Section 4 names whose failure modes reach
+our results, are covered only by assertions on output, never by the scan. And ~280 of
+the 285 sites were classified rather than individually reviewed; the triage went to
+the sites matching INV-3's shape on privacy, AI, secrets, RPC, walk and cache paths.
+
+---
+
+## 7. M4 — what the redaction corpus proves, measured — added 2026-07-28
+
+### The corpus proves shape coverage, not completeness
+
+M4 accepted the corpus on the grounds that it demonstrates the SHAPES it contains are
+caught, and explicitly not that the rule set is complete. Two things sharpen that,
+both now measured rather than asserted.
+
+**R3 idempotence is not coverage.** It detects a rule that fails to converge, never a
+rule that never matched. Unchanged from M4's original statement, repeated here because
+it is the most common misreading of what the property test buys.
+
+### Criterion 16's evidence is the dependence proof, not the entry count
+
+Acceptance criterion 16 asks for "≥ 30 planted secrets ... all replaced". The corpus
+has 37 entries and they all pass — but **entry count is the weaker claim**, because
+entries overlap. Measured directly: `aws1` (`aws_access_key_id = AKIA...`) stays
+redacted with the AWS rule disabled, because rule 11's assignment heuristic also
+catches it. An entry can therefore be present, passing, and never exercise the rule it
+was written for.
+
+The stronger evidence is `privacy::redact::per_rule_non_vacuity`: for each of the
+eight scanner-relevant families, **at least one corpus entry survives when that
+family's rule alone is disabled**. That is what proves each rule is genuinely
+exercised. Eight families, eight demonstrations. Cite that test for criterion 16, not
+the entry count.
+
+### R2.12 is the only catch-all, and exactly two entries depend on it
+
+Every rule except R2.12 (high-entropy quoted literal) keys off a recognisable prefix
+or structure, so R2.12 is the whole of the corpus's defence against a secret shape
+nobody enumerated.
+
+Measured by `privacy::redact::r2_12_reliance`, which disables R2.12 alone and counts
+what escapes:
+
+> **2 of 37 corpus entries are caught ONLY by R2.12: `entropy3` and `entropy4`.**
+
+Both use the variable name `blob`. `entropy1` and `entropy2` use `token` and
+`apiSecret`, so rule 11 catches them first — which is why the corpus deliberately
+includes `blob` variants. Without them, R2.12 would have no uniquely-dependent entry
+and the catch-all would be untested.
+
+**Read that number as a floor on exposure, not a reassurance.** It says the corpus
+exercises R2.12 through two entries. It says nothing about the space of real secret
+shapes that only R2.12 could catch, which is unbounded and unenumerated — that is
+precisely M4's point. The figure is pinned by an assertion so a future rule change
+fails the test rather than silently invalidating this section.

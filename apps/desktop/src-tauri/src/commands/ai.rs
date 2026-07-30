@@ -1,4 +1,4 @@
-//! `commands/ai.rs` — Section 7.4's `test_ai_key` (Phase 12 step 5) plus
+﻿//! `commands/ai.rs` — Section 7.4's `test_ai_key` (Phase 12 step 5) plus
 //! the three AI features (`ai_project_summary`, `ai_explain_module`,
 //! `ai_ask`, Phase 12 step 6).
 //!
@@ -31,7 +31,7 @@
 //! through the full chokepoint — permit → redaction → `ResolvedEndpoint`
 //! → `http::send`." [`test_ai_key_core`] does not hand-roll a lighter-weight
 //! connectivity check; it calls the SAME `AiProvider` adapter
-//! (`ai::anthropic`/`ai::ollama`/`ai::openai_compatible`) real feature code
+//! (`ai::anthropic`/`ai::ollama`) real feature code
 //! will eventually use, via each adapter's `test_with_model` — which
 //! resolves a real `EgressPermit`, builds a real (empty but genuinely
 //! `redact()`-produced) `RedactedPayload`, resolves a real
@@ -58,7 +58,7 @@
 //! adapter's `test_with_model`/`run_test` propagates the real `AppError`
 //! from `ai::http::send` for exactly this reason.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -66,8 +66,7 @@ use serde::Serialize;
 use crate::ai::anthropic::AnthropicProvider;
 use crate::ai::http::ProviderShape;
 use crate::ai::ollama::OllamaProvider;
-use crate::ai::openai_compatible::OpenAiCompatibleProvider;
-use crate::ai::pipeline::{PipelineStep, PipelineTrace};
+use crate::ai::pipeline::{PipelineStep, PipelineTrace, SendApproval};
 use crate::ai::prompt::{AiFeature, ModuleId, PromptSpec, UserQuestion};
 use crate::ai::provider::{AiProvider as AiProviderTrait, CompletionRequest};
 use crate::ai::{permit, snippets, transcript};
@@ -93,7 +92,23 @@ pub struct TestAiKeyResponse {
 /// round-trip latency, and echoes back the exact `model` string that was
 /// tested (see this module's doc comment for why that is the caller's
 /// value, not necessarily whatever is currently persisted).
+/// M1: this used to reach `ai::http::send` with no `PipelineTrace`, no
+/// `transcript::record` and no `ai_rate_limiter.acquire()` — the one path
+/// that went around the traced pipeline while still using the single egress
+/// door, and the one path that transmits the API key. There is one door; a
+/// key test does not get to go around it.
+///
+/// The probe runs the connectivity order (`ai::pipeline`), not the feature
+/// order: it has no repo, no snippets and no answer to verify, so claiming
+/// `Redacted` over its empty payload would be an attestation about nothing.
+///
+/// Known consequence, recorded rather than discovered later: the rate
+/// limiter is the SHARED per-minute budget, so ten key tests exhaust it and
+/// the eleventh returns `E_AI_RATE_LIMITED`. That is correct — one door, one
+/// budget — but it interacts with criterion 15's "under 5 seconds".
 pub async fn test_ai_key_core(
+    state: &AppState,
+    transcripts_dir: &Path,
     settings_path: PathBuf,
     ai_keys: AiKeyStore,
     provider: &str,
@@ -101,26 +116,46 @@ pub async fn test_ai_key_core(
 ) -> Result<TestAiKeyResponse, AppError> {
     validate_provider(provider)?;
     let started = Instant::now();
+    let mut trace = PipelineTrace::new_connectivity();
+
+    // (1) permit — Section 12's "E_AI_DISABLED before any other work".
+    let stored = load_stored_ai_settings(&settings_path, &ai_keys);
+    let _permit = permit::acquire(stored.ai(), &ai_keys)?;
+    trace.record(PipelineStep::PermitAcquired);
+
+    // (2) rate limit, on the same shared budget as every feature request.
+    let _slot = state.ai_rate_limiter.acquire()?;
+    trace.record(PipelineStep::RateLimitAcquired);
+
+    // (3) the probe payload. Distinct from Redacted/Capped on purpose.
+    let shape = provider_shape(stored.ai().provider);
+    trace.record(PipelineStep::ConnectivityProbeBuilt);
+
+    // (4) transcript BEFORE the send, same ordering the feature path uses:
+    // an unrecorded request must not be possible.
+    transcript::record_connectivity(transcripts_dir, shape, model)?;
+    trace.record(PipelineStep::TranscriptRecorded);
+
+    // (5) the fail-closed gate. The approval it mints is consumed by the
+    // send below — one approval, one request.
+    let approval = trace.ensure_ready_to_send()?;
 
     match provider {
         "anthropic" => {
             AnthropicProvider::new(settings_path, ai_keys)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         "ollama" => {
             OllamaProvider::new(settings_path, ai_keys)
-                .test_with_model(model)
-                .await?;
-        }
-        "openai-compatible" => {
-            OpenAiCompatibleProvider::new(settings_path, ai_keys)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         // `validate_provider` above already rejected anything else.
-        _ => unreachable!("validate_provider only accepts anthropic/ollama/openai-compatible"),
+        _ => unreachable!("validate_provider only accepts anthropic/ollama"),
     }
+    // `Sent` is recorded inside the adapter, next to the send itself.
+    trace.ensure_complete_and_ordered()?;
 
     Ok(TestAiKeyResponse {
         is_ok: true,
@@ -150,27 +185,27 @@ async fn test_ai_key_core_against_test_endpoint(
 ) -> Result<TestAiKeyResponse, AppError> {
     validate_provider(provider)?;
     let started = Instant::now();
+    // The twin exercises adapter dispatch only; the traced pipeline itself
+    // is covered by `test_ai_key_core`. A connectivity trace is still built
+    // so `run_test` has somewhere to record `Sent`, and the approval is
+    // forged rather than minted — there is no pipeline here to mint one.
+    let mut trace = PipelineTrace::new_connectivity();
+    let approval = SendApproval::forge_for_test(crate::ai::pipeline::TraceKind::Connectivity);
 
     match provider {
         "anthropic" => {
             AnthropicProvider::new(settings_path, ai_keys)
                 .with_test_endpoint(test_endpoint)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
         "ollama" => {
             OllamaProvider::new(settings_path, ai_keys)
                 .with_test_endpoint(test_endpoint)
-                .test_with_model(model)
+                .test_with_model(model, &mut trace, approval)
                 .await?;
         }
-        "openai-compatible" => {
-            OpenAiCompatibleProvider::new(settings_path, ai_keys)
-                .with_test_endpoint(test_endpoint)
-                .test_with_model(model)
-                .await?;
-        }
-        _ => unreachable!("validate_provider only accepts anthropic/ollama/openai-compatible"),
+        _ => unreachable!("validate_provider only accepts anthropic/ollama"),
     }
 
     Ok(TestAiKeyResponse {
@@ -230,7 +265,6 @@ fn provider_shape(provider: AiProvider) -> ProviderShape {
     match provider {
         AiProvider::Anthropic => ProviderShape::Anthropic,
         AiProvider::Ollama => ProviderShape::Ollama,
-        AiProvider::OpenAiCompatible => ProviderShape::OpenAiCompatible,
     }
 }
 
@@ -305,10 +339,11 @@ async fn complete_with_provider(
     ctx: &AiCommandContext,
     provider: AiProvider,
     prompt: PromptSpec,
+    approval: SendApproval,
 ) -> Result<String, AppError> {
     let settings_path = ctx.settings_path.clone();
     let ai_keys = ctx.ai_keys.clone();
-    let req = CompletionRequest { prompt };
+    let req = CompletionRequest { prompt, approval };
 
     let response = match provider {
         AiProvider::Anthropic => {
@@ -322,15 +357,6 @@ async fn complete_with_provider(
         }
         AiProvider::Ollama => {
             let adapter = OllamaProvider::new(settings_path, ai_keys);
-            #[cfg(test)]
-            let adapter = match &ctx.test_endpoint {
-                Some(url) => adapter.with_test_endpoint(url.clone()),
-                None => adapter,
-            };
-            adapter.complete(req).await?
-        }
-        AiProvider::OpenAiCompatible => {
-            let adapter = OpenAiCompatibleProvider::new(settings_path, ai_keys);
             #[cfg(test)]
             let adapter = match &ctx.test_endpoint {
                 Some(url) => adapter.with_test_endpoint(url.clone()),
@@ -360,7 +386,7 @@ async fn run_ai_feature(
     // not least because it becomes a transcript file name.
     crate::commands::search::validate_repo_id(repo_id)?;
 
-    let mut trace = PipelineTrace::new();
+    let mut trace = PipelineTrace::new_feature();
 
     // (1) permit::acquire — Section 12: "E_AI_DISABLED before any other
     // work." The one gate; `ai::permit::acquire` is also what each adapter
@@ -409,10 +435,10 @@ async fn run_ai_feature(
     // The fail-closed gate: nothing leaves unless every step above ran, in
     // order (`ai::pipeline`'s doc comment explains why this exists even
     // though most of the chain is already type-enforced).
-    trace.ensure_ready_to_send()?;
+    let approval = trace.ensure_ready_to_send()?;
 
     // (6) send.
-    let answer_markdown = complete_with_provider(ctx, provider, prompt).await?;
+    let answer_markdown = complete_with_provider(ctx, provider, prompt, approval).await?;
     trace.record(PipelineStep::Sent);
 
     // (7) verify citations (8.10) — including this crate's two
@@ -496,7 +522,7 @@ mod tests {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::pin::Pin;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::task::{Context, Poll, Waker};
 
     // A minimal single-poll executor — see `ai::anthropic::tests`'s doc
     // comment for the full rationale. `test_ai_key_core` never truly
@@ -504,24 +530,10 @@ mod tests {
     // production `#[tauri::command] async fn` lets Tauri's own runtime
     // drive it for real; this crate's own test suite has no such runtime,
     // hence this hand-rolled equivalent, purely `#[cfg(test)]`.
-    fn noop_raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            noop_raw_waker()
-        }
-        fn no_op(_: *const ()) {}
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-
-    fn noop_waker() -> Waker {
-        // SAFETY: see `ai::anthropic::tests::noop_waker` — identical
-        // invariant, identical vtable shape.
-        unsafe { Waker::from_raw(noop_raw_waker()) }
-    }
-
     fn block_on_never_pending<F: Future>(future: F) -> F::Output {
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
+        // `Waker::noop()` (stable since Rust 1.85) replaces a hand-rolled
+        // no-op vtable that was duplicated verbatim across three modules.
+        let mut cx = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
         loop {
             if let Poll::Ready(value) = Pin::new(&mut future).poll(&mut cx) {
@@ -645,7 +657,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings_path = dir.path().join("settings.json");
         let ai_keys = AiKeyStore::new();
+        let (state, _state_dir) = test_state_with_stub(Vec::new());
         let result = block_on_never_pending(test_ai_key_core(
+            &state,
+            dir.path(),
             settings_path,
             ai_keys,
             "not-a-real-provider",
@@ -659,7 +674,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings_path = dir.path().join("settings.json");
         let ai_keys = AiKeyStore::new();
+        let (state, _state_dir) = test_state_with_stub(Vec::new());
         let result = block_on_never_pending(test_ai_key_core(
+            &state,
+            dir.path(),
             settings_path,
             ai_keys,
             "anthropic",
@@ -842,7 +860,7 @@ mod tests {
         let temp_log = tempfile::tempdir().unwrap();
         let state = AppState {
             supervisor: SidecarSupervisor::new(SidecarConfig {
-                program: stub_sidecar_path(),
+                program: Some(stub_sidecar_path()),
                 args: stub_args,
                 log_path: temp_log
                     .path()
@@ -1144,7 +1162,7 @@ mod tests {
 
         let text = String::from_utf8_lossy(&received_body);
         assert!(
-            !text.contains("REDACTED-AWS-BY-HISTORY-REWRITE"),
+            !text.contains(&crate::privacy::fake_secrets::aws_example_key_id()),
             "a planted secret reached the wire: {text}"
         );
         assert!(text.contains("<redacted>"));

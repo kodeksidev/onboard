@@ -10,7 +10,9 @@
     "apps/*"
   ],
   "scripts": {
-    "verify": "bun run typecheck && bun run lint && bun run contract:check-drift && bun run test",
+    "verify": "bun run verify:js && bun run verify:rust",
+    "verify:js": "bun run typecheck && bun run lint && bun run lint:check-rules-fire && bun run contract:check-drift && bun run docs:check && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run engine:check-globals && bun run criteria:check-drift && bun run ci:check-verify-coverage && bun run test",
+    "verify:rust": "cargo fmt --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all --check && cargo clippy --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --workspace --all-targets --all-features -- -D warnings && cargo build --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" -p onboard-dev-tools --bin onboard_engine_stub && cargo test --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --workspace --no-fail-fast",
     "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
     "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
     "fixture:emit": "bun run --cwd \"packages/contract\" fixture:emit",
@@ -19,19 +21,36 @@
     "typecheck": "bun run --cwd \"packages/contract\" typecheck && bun run --cwd \"packages/engine\" typecheck && bun run --cwd \"apps/desktop\" typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "bun run --cwd \"packages/contract\" test && bun run --cwd \"packages/engine\" test && bun run --cwd \"apps/desktop\" test"
+    "lint:check-rules-fire": "bun run scripts/lint-rules-fire-check.ts",
+    "test": "bun run --cwd \"packages/contract\" test && bun run --cwd \"packages/engine\" test && bun run --cwd \"apps/desktop\" test",
+    "docs:check": "python scripts/docs-check.py",
+    "ci:check-installs": "python scripts/ci-install-check.py",
+    "ci:check-python": "python scripts/ci-python-check.py",
+    "fixtures:check-tracked": "python scripts/fixtures-tracked-check.py",
+    "criteria:map": "python scripts/criteria-map.py",
+    "criteria:check-drift": "python scripts/criteria-map.py --check",
+    "verify:report": "bun run scripts/run-verify-stages.ts verify",
+    "verify:report:js": "bun run scripts/run-verify-stages.ts verify:js",
+    "ci:check-verify-coverage": "python scripts/ci-verify-coverage-check.py",
+    "engine:check-globals": "python scripts/engine-globals-scan.py",
+    "guards:scan": "python scripts/guard-disposition-scan.py",
+    "lossy:scan": "python scripts/lossy-conversion-scan.py",
+    "commit:check": "python scripts/commit-message-check.py",
+    "release:check-assets": "python scripts/release-assets-check.py",
+    "release:plan": "python scripts/release-plan.py"
   },
   "overrides": {
+    "minimatch": ">=10.2.5",
     "brace-expansion": ">=5.0.8",
     "serialize-javascript": ">=7.0.7"
   },
   "devDependencies": {
-    "@eslint/js": "~9.39.0",
+    "@eslint/js": "~10.0.1",
     "@typescript-eslint/eslint-plugin": "~8.65.0",
     "@typescript-eslint/parser": "~8.65.0",
     "@types/node": "~22.20.0",
     "bun-types": "~1.3.14",
-    "eslint": "~9.39.0",
+    "eslint": "~10.8.0",
     "prettier": "~3.9.6",
     "typescript": "~5.7.3",
     "typescript-eslint": "~8.65.0"

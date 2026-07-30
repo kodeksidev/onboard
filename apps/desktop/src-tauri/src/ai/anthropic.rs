@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use crate::ai::endpoint::{self, ResolvedEndpoint};
 use crate::ai::http::{self, ProviderShape, RequestHeaders};
 use crate::ai::permit::{self, EgressPermit};
+use crate::ai::pipeline::{PipelineStep, PipelineTrace, SendApproval, TraceKind};
 use crate::ai::provider::{AiProvider, CompletionRequest, CompletionResponse, TestResult};
 use crate::commands::settings::{load_stored_ai_settings, AiProvider as ProviderKind};
 use crate::error::AppError;
@@ -99,9 +100,14 @@ impl AnthropicProvider {
     /// whatever is currently persisted — so a caller can verify a model id
     /// they have not saved yet without a settings write. Not part of
     /// `AiProvider` (the trait's frozen `test(&self)` takes no arguments).
-    pub async fn test_with_model(&self, model: &str) -> Result<TestResult, AppError> {
+    pub async fn test_with_model(
+        &self,
+        model: &str,
+        trace: &mut PipelineTrace,
+        approval: SendApproval,
+    ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(Some(model))?;
-        run_test(&ctx).await
+        run_test(&ctx, trace, approval).await
     }
 }
 
@@ -113,7 +119,11 @@ impl AnthropicProvider {
 /// rejects with the specific `E_AI_*` code (`{ isOk: true, latencyMs,
 /// modelEcho }` is the ONLY success shape — `isOk` is the TypeScript
 /// literal `true`, not `boolean`), never a generic "false."
-async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
+async fn run_test(
+    ctx: &ResolvedContext,
+    trace: &mut PipelineTrace,
+    approval: SendApproval,
+) -> Result<TestResult, AppError> {
     let headers = build_headers(&ctx.key);
     // The same `PromptSpec` path a real feature takes (Section 12: "Test
     // key" must prove the real chokepoint, not a lighter-weight variant) —
@@ -128,12 +138,18 @@ async fn run_test(ctx: &ResolvedContext) -> Result<TestResult, AppError> {
     );
     http::send(
         &ctx.permit,
+        approval,
+        TraceKind::Connectivity,
         &ctx.endpoint,
         &headers,
         ProviderShape::Anthropic,
         &ctx.model,
         &ping,
     )?;
+    // Recorded HERE, at the call that actually sends, rather than in the
+    // caller: a step recorded next to the thing it attests to cannot drift
+    // away from it.
+    trace.record(PipelineStep::Sent);
     Ok(TestResult { is_ok: true })
 }
 
@@ -185,6 +201,8 @@ impl AiProvider for AnthropicProvider {
         let headers = build_headers(&ctx.key);
         let response = http::send(
             &ctx.permit,
+            req.approval,
+            TraceKind::Feature,
             &ctx.endpoint,
             &headers,
             ProviderShape::Anthropic,
@@ -194,9 +212,13 @@ impl AiProvider for AnthropicProvider {
         parse_completion_response(&response.body)
     }
 
-    async fn test(&self) -> Result<TestResult, AppError> {
+    async fn test(
+        &self,
+        trace: &mut PipelineTrace,
+        approval: SendApproval,
+    ) -> Result<TestResult, AppError> {
         let ctx = self.resolve_context(None)?;
-        run_test(&ctx).await
+        run_test(&ctx, trace, approval).await
     }
 }
 
@@ -210,7 +232,7 @@ mod tests {
     use std::net::TcpListener;
     use std::pin::Pin;
     use std::sync::mpsc;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::task::{Context, Poll, Waker};
 
     // -----------------------------------------------------------------
     // A minimal single-poll executor — see this module's doc comment
@@ -221,28 +243,10 @@ mod tests {
     // first `poll`.
     // -----------------------------------------------------------------
 
-    fn noop_raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            noop_raw_waker()
-        }
-        fn no_op(_: *const ()) {}
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-
-    fn noop_waker() -> Waker {
-        // SAFETY: `noop_raw_waker`'s vtable functions (`clone`/`wake`/
-        // `wake_by_ref`/`drop`) never read or write through the data
-        // pointer — they ignore it entirely and either do nothing or
-        // return a fresh identical `RawWaker`. A null data pointer that is
-        // never dereferenced satisfies `Waker::from_raw`'s safety
-        // contract.
-        unsafe { Waker::from_raw(noop_raw_waker()) }
-    }
-
     fn block_on_never_pending<F: Future>(future: F) -> F::Output {
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
+        // `Waker::noop()` (stable since Rust 1.85) replaces a hand-rolled
+        // no-op vtable that was duplicated verbatim across three modules.
+        let mut cx = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
         loop {
             if let Poll::Ready(value) = Pin::new(&mut future).poll(&mut cx) {
@@ -386,7 +390,7 @@ mod tests {
         let (settings_path, ai_keys, _cleanup) = enable_real_anthropic(dir.path());
         let (base_url, rx) = spawn_capturing_server();
 
-        let planted_secret = "REDACTED-AWS-BY-HISTORY-REWRITE"; // Section 8.9 rule 2 (AWS key)
+        let planted_secret = crate::privacy::fake_secrets::aws_example_key_id(); // Section 8.9 rule 2 (AWS key)
         let redacted_payload = crate::privacy::redact::redact(
             &EngineSnippetsResult {
                 snippets: vec![EngineSnippet {
@@ -408,6 +412,7 @@ mod tests {
         let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
         let result = block_on_never_pending(provider.complete(CompletionRequest {
+            approval: SendApproval::forge_for_test(TraceKind::Feature),
             prompt: crate::ai::prompt::build(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 redacted_payload,
@@ -428,7 +433,7 @@ mod tests {
             "expected <redacted> in the bytes actually sent, got: {received_text}"
         );
         assert!(
-            !received_text.contains(planted_secret),
+            !received_text.contains(planted_secret.as_str()),
             "the planted secret leaked into the bytes actually sent: {received_text}"
         );
 
@@ -456,7 +461,11 @@ mod tests {
 
         let provider = AnthropicProvider::new(settings_path, ai_keys).with_test_endpoint(base_url);
 
-        let result = block_on_never_pending(provider.test());
+        let mut trace = PipelineTrace::new_connectivity();
+        let result = block_on_never_pending(provider.test(
+            &mut trace,
+            SendApproval::forge_for_test(TraceKind::Connectivity),
+        ));
         let received = rx
             .recv_timeout(std::time::Duration::from_secs(15))
             .expect("the local listener never received a request");
@@ -475,6 +484,7 @@ mod tests {
             crate::privacy::redact::redact(&EngineSnippetsResult { snippets: vec![] }, &[])
                 .unwrap();
         let result = block_on_never_pending(provider.complete(CompletionRequest {
+            approval: SendApproval::forge_for_test(TraceKind::Feature),
             prompt: crate::ai::prompt::build(
                 crate::ai::prompt::AiFeature::ProjectSummary,
                 empty_payload,

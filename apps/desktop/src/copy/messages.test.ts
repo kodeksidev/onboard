@@ -70,6 +70,25 @@ describe('Section 10 literal copy', () => {
     );
   });
 
+  test('engine binary missing from the installation', () => {
+    const copy = ERRORS.engineNotStarted('/tmp/onboard/onboard.log');
+    expect(copy.title).toBe('Onboard could not start its analysis engine');
+    expect(copy.description).toBe(
+      'The analysis engine is missing from this installation, so nothing was analyzed. Reinstalling Onboard should restore it. The log is at /tmp/onboard/onboard.log.',
+    );
+  });
+
+  test('the not-started copy never leaks a raw OS error string', () => {
+    // The defect this copy replaced rendered the spawn failure verbatim:
+    // "Failed to start the analysis engine process: The system cannot find
+    // the path specified. (os error 3)". Section 12 puts OS strings in
+    // `detail`, behind the Details disclosure — never in the body a user
+    // reads. Asserting the absence keeps a future edit from reintroducing it.
+    const copy = ERRORS.engineNotStarted('/tmp/onboard/onboard.log');
+    expect(copy.description).not.toMatch(/os error/i);
+    expect(copy.description).not.toMatch(/cannot find the path/i);
+  });
+
   test('search with zero hits', () => {
     const copy = SEARCH_COPY.noResults('foobarbaz');
     expect(copy.title).toBe("Nothing matched 'foobarbaz'");
