@@ -26,6 +26,14 @@ The rest, under their real cause:
 - **none** (settled by CI) — #24, #25, #26
 - **tooling** (needs a tool configured; the machines exist) — #10
 
+> **The Criterion column is the FROZEN SPEC, not the shipped behaviour.**
+> It is parsed verbatim from the build prompt, which is never edited. Where
+> the product has since departed from the spec, the departure is recorded as
+> an AMENDMENT in `docs/DECISIONS.md` and named in the Evidence column — the
+> code is not wrong, the spec is older.
+>
+> Live example, so this is not an abstract caveat: **criteria 13 and 14** show `🔒`/`☁️` prefixes on the mode-indicator strings. **Those emoji no longer ship** — removed 2026-07-31 by product-owner decision. The strings are otherwise byte-identical, and a padlock/cloud SVG renders beside them, `aria-hidden` so the accessible name still equals the text exactly.
+
 | # | Status | Blocker | Evidence | Criterion |
 |---|---|---|---|---|
 | 1 | EXECUTED on 3 OS — run 30522786141 (2026-07-30) | — | verify matrix + the space-in-path job | `bun install && bun run verify` exits 0 on Windows, macOS, and Linux, from a... |
