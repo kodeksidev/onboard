@@ -96,6 +96,23 @@ it found a defect no automated gate could see.
 - [ ] **Windows** — install the `.msi` by double-clicking it. SmartScreen
       appears; the wording and the click path must match `docs/INSTALL.md`
       exactly. Note any divergence as a documentation defect.
+
+      > **DOWNLOAD IT THE WAY A USER WOULD — IN A BROWSER.** SmartScreen keys
+      > off **Mark-of-the-Web**, the `Zone.Identifier` alternate data stream a
+      > browser attaches to a downloaded file. `gh release download`, `curl`,
+      > `Invoke-WebRequest` and a file copied from a share do **not** attach it,
+      > so the installer runs with **no SmartScreen prompt at all** and the
+      > check silently passes by never happening.
+      >
+      > This is not hypothetical: the 2026-07-31 run below fetched the build
+      > with `gh release download` and saw no prompt. **A run that skips MOTW
+      > cannot settle criterion 24** — it produces an absence of evidence that
+      > reads exactly like a pass. Record such a run as "SmartScreen NOT
+      > observed", never as "no SmartScreen issues".
+      >
+      > Verify MOTW is present before trusting a negative result:
+      > `Get-Item .\<file> -Stream Zone.Identifier` — an error means no MOTW and
+      > the SmartScreen half of this run is void.
 - [ ] **Linux** — install the `.deb` with `sudo apt-get install ./<file>.deb`
       (or the `.rpm` with `dnf`). Launch from the desktop menu entry, not from
       a terminal in a checkout — a terminal in the wrong directory can mask
@@ -106,12 +123,30 @@ it found a defect no automated gate could see.
 ## Launch and the static-mode guarantee
 
 - [ ] App launches with no crash and no unhandled native dialog.
+- [ ] **Icon check — read the EXECUTABLE, not the shortcut.** On a machine with
+      a prior install, the Start-menu shortcut, the taskbar and Explorer may
+      keep showing the **old** icon after an upgrade. That is the Windows
+      **icon cache** (`%LOCALAPPDATA%\IconCache.db` / `…\Microsoft\Windows\
+      Explorer\iconcache_*.db`), not the shipped binary. Observed on the
+      2026-07-31 run and **is not a defect** — do not re-report it.
+
+      Confirm against the binary itself: open the install directory and look at
+      `onboard.exe`, or run `ie4uinit.exe -show` (or sign out and back in) to
+      rebuild the cache. Only a wrong icon **on the executable** is a real
+      finding.
 - [ ] Mode indicator reads exactly, byte for byte:
 
-      🔒 Static mode · no network · nothing leaves this machine
+      Static mode · no network · nothing leaves this machine
 
-      Check the middle dot `·` (U+00B7) is not a hyphen, and the lock is the
-      emoji. This is criterion 13 and A6 freezes the string verbatim.
+      Check the middle dot `·` (U+00B7) is not a hyphen, and that there is
+      **no leading emoji** — the string now starts at `Static`. A padlock is
+      drawn beside it as an SVG glyph; that glyph is `aria-hidden` and is NOT
+      part of the string, so a screen reader must announce the text alone.
+
+      This is criterion 13. A6 froze this string WITH a `🔒` prefix; the emoji
+      was removed on 2026-07-31 by product-owner decision (AMENDMENT in
+      `docs/DECISIONS.md`), so the frozen text and the shipped text differ by
+      that prefix and the AMENDMENT is what reconciles them.
 - [ ] With a network monitor running (Little Snitch / `nettop` / Fiddler /
       `ss -tp`), **no outbound connection** is attempted at launch, at folder
       pick, or during a full analysis. Treat any unexplained attempt as a
@@ -151,10 +186,29 @@ This is the sequence CI cannot perform. It is the reason this file exists.
 
 An unrecorded run did not happen. Add a row; do not edit an existing one.
 
+> **SUPERSEDED — the mode-indicator observation in the 2026-07-31 row.**
+>
+> That run observed the indicator reading
+> `🔒 Static mode · no network · nothing leaves this machine` and it was
+> byte-exact **against the build it was run on**. Later the same day the emoji
+> was removed from both indicator strings by product-owner decision, so the
+> string that observation confirms **is no longer the string that ships**.
+>
+> The observation is left in place rather than edited, because it is a true
+> record of a real run and this table's rule is that rows are added, not
+> rewritten. But it is **not current evidence for criterion 13 or 14** and must
+> not be counted as such. The rest of that row — installer branding, analysis,
+> graph, node → file, search — is unaffected and stands.
+>
+> Criteria 13 and 14 need a fresh observation against a build carrying the
+> emoji-free strings. Until that row exists, they rest on the automated
+> byte-exact tests only.
+
 | date | platform | build | performed by | outcome |
 |---|---|---|---|---|
 | 2026-07-29 | Windows 11 (clean Sandbox) | v0.1.0 draft `.msi` | product owner | **FAILED** — engine never started (`os error 3`); mode indicator byte-exact ✓ |
 | 2026-07-29 | Windows + Linux (CI, automated half only) | run 30489773363 | CI | **half (a) PASSED** — see below; half (b) not covered |
+| 2026-07-31 | Windows 11 (desktop with a PRIOR install) | v0.1.0 draft, tag → `68c8f97` | product owner | **half (b) PASSED** — installer showed the Onboard mark (not stock NSIS); folder picked, analysis completed with no `E_ENGINE_NOT_STARTED`; dependency graph rendered; node click opened the file; search returned results and jumped to the hit line; mode indicator byte-exact ✓. **Two caveats below — SmartScreen NOT observed, so this run does not settle criterion 24.** ⚠️ **The indicator observation is SUPERSEDED**, see the note under the table |
 | | Windows | | | |
 | | Linux | | | |
 | | macOS | | | |

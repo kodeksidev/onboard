@@ -95,8 +95,28 @@ EVIDENCE: dict[int, Evidence] = {
     10: Evidence(None, "no-gate", "coverage thresholds are enforced nowhere", blocker="tooling"),
     11: Evidence(None, "not-wired", "wall-clock budgets need a consistent runner; a shared one cannot measure them honestly", blocker="machine"),
     12: Evidence(None, "manual", "10s cold-open needs a real desktop session and a human with a stopwatch", blocker="machine"),
-    13: Evidence(VERIFY, "ci", "UI tests, inside verify"),
-    14: Evidence(VERIFY, "ci", "UI tests, inside verify"),
+    # 13/14: the CRITERION TEXT in the column to the right is parsed from the
+    # frozen spec and still shows the `🔒`/`☁️` prefixes. The shipped strings no
+    # longer carry them — removed 2026-07-31 by product-owner decision
+    # (AMENDMENT in docs/DECISIONS.md). The tests assert the SHIPPED strings,
+    # so a reader comparing this row's evidence to its criterion text will find
+    # a one-prefix difference; that difference is the amendment, not a drift.
+    13: Evidence(
+        VERIFY,
+        "ci",
+        "UI tests, inside verify. DEPARTS FROM A6: the shipped string has no "
+        "`🔒` prefix (2026-07-31, product owner). A padlock renders beside it "
+        "as an aria-hidden SVG, deliberately outside the string so the "
+        "accessible name stays byte-exact",
+    ),
+    14: Evidence(
+        VERIFY,
+        "ci",
+        "UI tests, inside verify. DEPARTS FROM A6: the shipped string has no "
+        "`☁️` prefix (2026-07-31, product owner). Both indicator strings "
+        "changed together — one with an emoji and one without would be worse "
+        "than either",
+    ),
     15: Evidence(RUST_TEST, "ci", "key-never-persisted half only; the 5s flow is manual"),
     16: Evidence(RUST_TEST, "ci", "redaction corpus, in the Rust suite"),
     17: Evidence(RUST_TEST, "ci", "payload caps in Rust; the displayed counts in UI tests"),
@@ -122,7 +142,12 @@ EVIDENCE: dict[int, Evidence] = {
         "all three platforms, docs/SMOKE_CHECKLIST.md, because the E2E bridge "
         "is absent from a release bundle (MODE === 'e2e') and the native "
         "picker is unreachable from WebDriver. Half (b) has no run id by "
-        "construction. macOS needs a Mac for both halves",
+        "construction. NOW A RECORDED OBSERVATION ON WINDOWS (2026-07-31, "
+        "product owner, tag -> 68c8f97): graph rendered, node click opened the "
+        "file, search jumped to the hit line. Linux and macOS remain "
+        "UNOBSERVED for half (b); macOS needs a Mac for both halves. That run "
+        "did NOT observe SmartScreen — it used `gh release download`, which "
+        "attaches no Mark-of-the-Web — so it says nothing about criterion 24",
         blocker="machine",
     ),
     24: Evidence(
@@ -216,7 +241,7 @@ EXECUTED: dict[int, str] = {
     # Half (a) only — installer builds, shell launches, engine resolves and
     # analyses, on Windows and Linux. Half (b), the rendered graph, is the
     # manual checklist and has no run id by construction.
-    23: f"{RELEASE_RUN}, half (a) on Windows + Linux",
+    23: f"{RELEASE_RUN}, half (a) on Windows + Linux; half (b) Windows only (manual, 2026-07-31)",
     27: CI_RUN,
     # 28 was ABSENT while its gate was wired and RED. It is now green and
     # observed: the gate was scoped to commits after it landed (a linter cannot
