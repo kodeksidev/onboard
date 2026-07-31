@@ -21,7 +21,7 @@ describe('picker', () => {
     await expect(description).toBeDisplayed();
 
     // A6: frozen verbatim, byte-exact, and shown whenever AI is off.
-    const modeIndicator = await $('span*=🔒 Static mode · no network · nothing leaves this machine');
+    const modeIndicator = await $('span*=Static mode · no network · nothing leaves this machine');
     await expect(modeIndicator).toBeDisplayed();
 
     const chooseFolderButton = await $('button=Choose folder');

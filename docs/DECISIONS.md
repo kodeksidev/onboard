@@ -2824,6 +2824,59 @@ decided; it only records choices the spec left open.
   preference once something else in the repository depends on the commits being
   reachable.
 
+- **AMENDMENT — the mode-indicator emoji are removed from BOTH strings; A6's
+  frozen text is departed from.**
+
+  ```
+  Authorised-by: product owner (chat), 2026-07-31
+  Departs-from: Assumption A6 — "🔒 Static mode · no network · nothing leaves
+    this machine" and "☁️ AI mode · <provider>/<model> · snippets sent to
+    <provider>"
+  ```
+
+  **Reason.** An emoji in a production UI reads as unfinished, and this build is
+  about to be public.
+
+  **Both strings, not one.** One indicator with an emoji and one without would
+  be worse than either — the pair is what makes the mode legible at a glance, so
+  a later edit restoring the prefix to only one of them is a regression even
+  though each string would individually look fine. That is written into
+  `MODE_INDICATOR`'s comment because the next person to touch this will be
+  looking at one string, not two.
+
+  **The signal moves rather than disappearing.** `ModeIndicator` now renders a
+  padlock or a cloud beside the text. Three things about that are deliberate:
+
+  1. **Inline SVG, not an icon package.** `lucide-react` was proposed on the
+     understanding that it was already a dependency. It is **not** — it is
+     absent from `apps/desktop/package.json` and from `node_modules`, and
+     nothing in `src` rendered an icon or an SVG before this change. Using it
+     would have meant a new runtime dependency, a lockfile change and a new
+     `bun audit` surface on a release branch, for two glyphs. The paths are
+     drawn in the component, so no third-party licence or attribution attaches.
+  2. **The glyph is `aria-hidden` and outside the string.** The indicator's
+     accessible name must remain exactly the frozen text, or a screen reader
+     announces "lock Static mode …" and criteria 13/14 stop meaning what they
+     say. The byte-exact assertions therefore still test one thing.
+  3. **SVG is the platform-consistent choice**, which was the point: an emoji
+     renders differently on every OS and font stack, which is part of why it
+     read as unfinished.
+
+  **What this leaves inconsistent, stated rather than hidden.** The spec under
+  `prompts/` is frozen and is not edited — it has been touched by exactly one
+  commit, the Phase 0 scaffold. `docs/CRITERIA_MAP.md` PARSES criterion text
+  from it, so criteria 13 and 14 still display the emoji-prefixed strings while
+  the code ships without them. That divergence is real and is reconciled here
+  and in those rows' evidence notes, not by rewriting the spec.
+
+  **A recorded observation was invalidated by this.** The 2026-07-31 Windows
+  smoke run confirmed the indicator byte-exact hours before this decision. That
+  row is marked SUPERSEDED in `docs/SMOKE_CHECKLIST.md` rather than edited —
+  the table's rule is that rows are added, not rewritten, and the run genuinely
+  happened. It is no longer current evidence for 13 or 14, which now rest on the
+  automated assertions until a fresh run against an emoji-free build is
+  recorded.
+
 - **INVALIDATES — "the installed layout is asserted by SET EQUALITY on both
   platforms" was false, and criterion 23 half (a) was marked EXECUTED on it.**
 
