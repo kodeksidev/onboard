@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import type { JSX, SVGProps } from 'react';
 import type { AiProviderName } from '@/ipc/ipc';
 import { MODE_INDICATOR } from '@/copy/messages';
 
@@ -31,15 +31,19 @@ export interface ModeIndicatorProps {
  * party licence or attribution attached to them.
  */
 function ModeGlyph({ isEnabled }: { readonly isEnabled: boolean }): JSX.Element {
-  const shared = {
+  // Annotated rather than inferred. Without the annotation `focusable: 'false'`
+  // widens to `string`, which is not assignable to React's
+  // `"auto" | Booleanish` — it typechecks only by accident of inference
+  // otherwise, and the same shape would silently accept a misspelled prop.
+  const shared: SVGProps<SVGSVGElement> = {
     width: 12,
     height: 12,
     viewBox: '0 0 24 24',
     fill: 'none',
     stroke: 'currentColor',
     strokeWidth: 2,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
     'aria-hidden': true,
     focusable: 'false',
     className: 'shrink-0',
