@@ -31,7 +31,7 @@ describe('App (mounted against mock IPC)', () => {
     render(<App />);
     expect(screen.getByRole('heading', { name: 'No repository open' })).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(
-      '🔒 Static mode · no network · nothing leaves this machine',
+      'Static mode · no network · nothing leaves this machine',
     );
   });
 
@@ -51,7 +51,7 @@ describe('App (mounted against mock IPC)', () => {
 
     // Still static mode: choosing and analyzing a repo makes zero network calls.
     expect(screen.getByRole('status')).toHaveTextContent(
-      '🔒 Static mode · no network · nothing leaves this machine',
+      'Static mode · no network · nothing leaves this machine',
     );
   });
 
