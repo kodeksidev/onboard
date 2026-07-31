@@ -12,7 +12,7 @@ import {
 describe('MODE_INDICATOR (A6 — frozen verbatim)', () => {
   test('static string is byte-exact, using the middle dot U+00B7', () => {
     expect(MODE_INDICATOR.static).toBe(
-      '🔒 Static mode · no network · nothing leaves this machine',
+      'Static mode · no network · nothing leaves this machine',
     );
     const middleDotCount = [...MODE_INDICATOR.static].filter((ch) => ch === '·').length;
     expect(middleDotCount).toBe(2);
@@ -22,7 +22,7 @@ describe('MODE_INDICATOR (A6 — frozen verbatim)', () => {
 
   test('AI string interpolates provider and model with the middle dot separator', () => {
     expect(MODE_INDICATOR.ai('anthropic', 'claude-sonnet-4-5')).toBe(
-      '☁️ AI mode · anthropic/claude-sonnet-4-5 · snippets sent to anthropic',
+      'AI mode · anthropic/claude-sonnet-4-5 · snippets sent to anthropic',
     );
   });
 });
