@@ -20,7 +20,7 @@ Static mode is the default state. In it:
   and no update check — those are frozen non-goals, not features postponed.
 - The window shows, verbatim:
 
-  > 🔒 Static mode · no network · nothing leaves this machine
+  > Static mode · no network · nothing leaves this machine
 
 That string is frozen and asserted byte-exactly in the test suite, so it cannot
 drift into a softer claim without a test failing.

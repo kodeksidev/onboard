@@ -32,7 +32,7 @@ a simulator, not a description of what "should" happen.
 ### Launch & static-mode guarantee
 
 - [ ] App launches without a crash or an unhandled native dialog.
-- [ ] Mode indicator reads exactly `🔒 Static mode · no network · nothing
+- [ ] Mode indicator reads exactly `Static mode · no network · nothing
       leaves this machine` on first launch (A6, byte-exact — check the
       middle dot `·` U+00B7, not a hyphen).
 - [ ] With a network monitor (e.g. Little Snitch, or `nettop`) running, no

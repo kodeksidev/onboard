@@ -36,7 +36,7 @@ product — roadmap, graph, module map, search, file viewer — works, and the m
 indicator reads exactly:
 
 ```
-🔒 Static mode · no network · nothing leaves this machine
+Static mode · no network · nothing leaves this machine
 ```
 
 There is no telemetry, no crash reporting, no analytics, no "anonymous usage
@@ -110,7 +110,7 @@ What changes when you do:
 
 - The mode indicator changes to name the provider and model, and states that
   snippets are sent:
-  `☁️ AI mode · <provider>/<model> · snippets sent to <provider>`
+  `AI mode · <provider>/<model> · snippets sent to <provider>`
 - Every AI action shows the **actual** number of files and bytes sent, counted
   from what was sent rather than what was requested.
 - An outbound payload never exceeds 24 files or 98,304 bytes.

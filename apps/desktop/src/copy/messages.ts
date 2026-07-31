@@ -21,11 +21,28 @@ export interface ActionableCopy extends TitledCopy {
   readonly actionLabel: string;
 }
 
-/** A6 — frozen verbatim. Do not reformat, retranslate, or re-punctuate. */
+/**
+ * Frozen verbatim. Do not reformat, retranslate, or re-punctuate.
+ *
+ * DEPARTS FROM A6, which froze these strings WITH a leading emoji (`🔒` and
+ * `☁️`). Authorised-by: product owner (chat), 2026-07-31. An emoji in a
+ * production UI reads as unfinished, and this build is about to be public.
+ *
+ * The signal is not dropped, it moves: `ModeIndicator` renders a lock or cloud
+ * glyph as inline SVG beside the text. That is deliberately NOT part of these
+ * strings — the accessible name of the indicator is the text alone, so the
+ * byte-exact assertions behind criteria 13 and 14 keep testing one thing.
+ *
+ * BOTH strings changed together. One indicator with an emoji and one without
+ * would be worse than either, so a future edit that restores the emoji to only
+ * one of them is a regression even though each string is individually "fine".
+ *
+ * See the AMENDMENT in docs/DECISIONS.md for the full departure record.
+ */
 export const MODE_INDICATOR = {
-  static: '🔒 Static mode · no network · nothing leaves this machine',
+  static: 'Static mode · no network · nothing leaves this machine',
   ai: (provider: string, model: string): string =>
-    `☁️ AI mode · ${provider}/${model} · snippets sent to ${provider}`,
+    `AI mode · ${provider}/${model} · snippets sent to ${provider}`,
 } as const;
 
 export const EMPTY_STATE_NO_REPO: ActionableCopy = {

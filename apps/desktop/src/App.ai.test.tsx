@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 describe('AI mode indicator (criterion 14)', () => {
-  test('reads exactly "☁️ AI mode · <provider>/<model> · snippets sent to <provider>" with the real values', async () => {
+  test('reads exactly "AI mode · <provider>/<model> · snippets sent to <provider>" with the real values', async () => {
     await enableAi();
     render(<App />);
 
@@ -43,7 +43,7 @@ describe('AI mode indicator (criterion 14)', () => {
     // carries its variation selector, and both provider and model come from
     // the settings the backend actually reported.
     expect(screen.getByRole('status').textContent).toBe(
-      '☁️ AI mode · anthropic/claude-opus-4-1 · snippets sent to anthropic',
+      'AI mode · anthropic/claude-opus-4-1 · snippets sent to anthropic',
     );
     expect(screen.getByRole('status').textContent).toBe(MODE_INDICATOR.ai('anthropic', MODEL));
   });
@@ -52,7 +52,7 @@ describe('AI mode indicator (criterion 14)', () => {
     render(<App />);
 
     expect(screen.getByRole('status').textContent).toBe(
-      '🔒 Static mode · no network · nothing leaves this machine',
+      'Static mode · no network · nothing leaves this machine',
     );
   });
 });
@@ -68,7 +68,7 @@ describe('the "Ask AI" tab', () => {
 
     expect(screen.getByRole('heading', { name: 'AI is off' })).toBeInTheDocument();
     expect(screen.getByRole('status').textContent).toBe(
-      '🔒 Static mode · no network · nothing leaves this machine',
+      'Static mode · no network · nothing leaves this machine',
     );
   });
 
