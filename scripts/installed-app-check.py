@@ -7,14 +7,30 @@ repository checkout on the PATH, no bun, no cargo, no `node_modules` — after
 the platform's installer has been applied the way a user would apply it. It
 makes three claims, in increasing strength:
 
-  1. **Layout.** The package installed the files it must ship, asserted by SET
-     EQUALITY against an expected list rather than by "are these present?".
-     Set equality is what catches files that should NOT be there: the v0.1.0
-     packages shipped `onboard_engine_stub` — a fixture-replaying fake engine —
-     beside the real one, and a presence-only check is blind to that by
-     construction. It would also have reported the sidecar's ACTUAL installed
-     location on day one, which is the single fact that would have prevented
-     the resolution bug below.
+  1. **Layout.** The package installed the files it must ship. The STRENGTH OF
+     THIS CLAIM DIFFERS PER PLATFORM, and the difference is the whole of what
+     this paragraph exists to say, because an earlier version of it claimed
+     "set equality on both platforms" and that claim was quoted into a status
+     decision it did not support:
+
+       - **Windows:** set equality, but scoped to `*.exe` in the install root.
+         Non-executables — icons, resources, DLLs — are outside it entirely.
+       - **Linux:** NOT set equality. A two-name banned-list scan over
+         `dpkg -L`. It fails on `onboard_engine_stub` or
+         `check_egress_chokepoint` by name and on nothing else.
+
+     Where it does apply, set equality is what catches files that should NOT be
+     there: the v0.1.0 packages shipped `onboard_engine_stub` — a
+     fixture-replaying fake engine — beside the real one, and a presence-only
+     check is blind to that by construction. It would also have reported the
+     sidecar's ACTUAL installed location on day one, which is the single fact
+     that would have prevented the resolution bug below.
+
+     Real set equality on both platforms is QUEUED, not done — see the work
+     item in `docs/SESSION_HANDOFF.md` and the INVALIDATES entry in
+     `docs/DECISIONS.md`. Deliberately not strengthened in the same change that
+     corrected this text: changing a release gate's strength while cutting a
+     release produces a red nobody can interpret.
 
   2. **The shell starts and resolves its engine.** The v0.1.0 Windows `.msi`
      installed, launched, and then failed on the first user action with
@@ -86,8 +102,8 @@ class Layout:
         # writes one, and an .msi does not — Windows Installer owns uninstall
         # itself. Demanding it failed the first real .msi run, because the
         # expected set had been derived from an NSIS install inspected by
-        # hand. Set equality is still enforced against everything else, so a
-        # stray test binary is still caught.
+        # hand. Set equality is still enforced against every other `*.exe`, so
+        # a stray test binary is still caught.
         self.optional_executables = optional_executables
         self.extra_required = extra_required
 
@@ -145,7 +161,8 @@ def linux_layout() -> Layout:
         ),
         # /usr/bin is shared with the whole system, so a set-equality sweep of
         # it would be meaningless. The shipped-file assertion for the .deb is
-        # done from the package manifest instead (see check_deb_manifest).
+        # done from the package manifest instead — but only as a banned-name
+        # scan, NOT set equality (see check_deb_banned_binaries).
         required_executables=set(),
         extra_required=(Path("/usr/share/applications/Onboard.desktop"),),
     )
@@ -164,14 +181,22 @@ def check_required_paths(layout: Layout) -> list[str]:
     return problems
 
 
-def check_shipped_executables(layout: Layout) -> list[str]:
-    """SET EQUALITY over the shipped executables — not a presence check.
+def check_shipped_exe_set_equality(layout: Layout) -> list[str]:
+    """SET EQUALITY over the shipped `*.exe` FILES ONLY — not the whole layout.
 
-    An unexpected executable is as much a defect as a missing one. Test
-    binaries (`onboard_engine_stub`, `check_egress_chokepoint`) have no
-    business in a user's install: a fake engine sitting beside the real one
-    in a user-writable directory is a substitution target on a product whose
-    whole thesis is that nothing leaves the machine.
+    The scope is in the name because the unqualified name plus an unqualified
+    docstring is what let this be reported as "the installed layout is asserted
+    by set equality". It is not. It globs `*.exe` in the install root, so the
+    set it compares excludes every non-executable the package installs — icons,
+    `resources/grammars/*.wasm`, WebView DLLs. A wrong or extra icon passes here
+    silently, and that is a scope limit, not an oversight to be read past.
+
+    Within that scope the assertion is real: an unexpected executable is as much
+    a defect as a missing one. Test binaries (`onboard_engine_stub`,
+    `check_egress_chokepoint`) have no business in a user's install — a fake
+    engine sitting beside the real one in a user-writable directory is a
+    substitution target on a product whose whole thesis is that nothing leaves
+    the machine.
     """
     if not layout.required_executables:
         return []
@@ -186,8 +211,25 @@ def check_shipped_executables(layout: Layout) -> list[str]:
     return problems
 
 
-def check_deb_manifest() -> list[str]:
-    """Set equality over what the .deb declares it installs."""
+def check_deb_banned_binaries() -> list[str]:
+    """Scans `dpkg -L` for TWO BANNED NAMES. This is NOT set equality.
+
+    Named for what it does, after the previous name (`check_deb_manifest`) and
+    the previous docstring ("Set equality over what the .deb declares it
+    installs") described an assertion this function has never made. The body
+    below is the whole of it: iterate the file list, flag a path whose basename
+    is in `banned`. There is no expected set, so nothing is compared against
+    one, so an unexpected file that is not one of those two names — a stray
+    binary, a wrong icon, a leftover fixture — passes.
+
+    The gap matters more here than on Windows: the .deb ships into shared
+    system directories (`/usr/bin`, `/usr/share/icons/hicolor/...`), so its
+    file list is exactly where a set-equality sweep would pay off.
+
+    Strengthening this is QUEUED — see `docs/SESSION_HANDOFF.md`. Until then
+    the honest reading of a green Linux job is "neither banned test binary
+    shipped", not "the shipped file list is correct".
+    """
     try:
         completed = subprocess.run(
             ["dpkg", "-L", "onboard"], capture_output=True, text=True, timeout=60, check=False
@@ -380,11 +422,14 @@ def main() -> int:
     print(f"  install root: {layout.root}")
 
     problems = check_required_paths(layout)
-    problems += check_shipped_executables(layout) if is_windows else check_deb_manifest()
+    problems += check_shipped_exe_set_equality(layout) if is_windows else check_deb_banned_binaries()
     if problems:
         print("\nFAILED — the installed package's layout is wrong:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 1
-    print(f"  layout OK (set equality): {layout.shell.name}, {layout.sidecar.name}, grammars")
+    # The strength is printed, not just the verdict. "layout OK (set equality)"
+    # was printed on BOTH platforms and was true on neither in the way it read.
+    scope = "set equality over *.exe" if is_windows else "banned-name scan only, NOT set equality"
+    print(f"  layout OK [{scope}]: {layout.shell.name}, {layout.sidecar.name}, grammars")
 
     if args.skip_shell:
         print("  shell launch: SKIPPED by flag")

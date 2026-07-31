@@ -202,6 +202,25 @@ after any CI change and this list follows.
    yet; `SECURITY_AUDIT.md` §6 forward-references it).
 7. The ~28 unread DECISIONS entries, and the DECISIONS.md restructure
    (RECORDS / AMENDMENTS / INVALIDATES / CROSS-DOMAIN).
+8. **Real set equality on the installed layout, both platforms** — the assertion
+   half of the INVALIDATES entry at the bottom of `DECISIONS.md`. The naming and
+   docstrings were corrected when the gap was found; the assertions were not,
+   because strengthening a release gate while cutting a release produces a red
+   nobody can attribute. That reason expires the moment the tag is cut, so this
+   is not a deferral on merit — it is a scheduling constraint, and it is spent.
+
+   What it needs: an expected set for the **non-executable** files too, since
+   `*.exe` (Windows) and two banned names (Linux) leave icons,
+   `resources/grammars/*.wasm` and DLLs asserted by nothing on either platform.
+   Derive the expected set from the bundle rather than hardcoding it — the
+   current Windows list is hardcoded, which is why it needed a hand-fix when the
+   first real `.msi` had no `uninstall.exe`.
+
+   **Non-vacuity, required as everywhere:** show it RED before green — plant an
+   unexpected file in a staged install root and assert the check fails, and drop
+   a required one and assert it fails differently. A set-equality check that
+   compares two empty sets passes, and that is the exact failure mode this
+   repository has now hit twice.
 
 ### Closed this session
 
