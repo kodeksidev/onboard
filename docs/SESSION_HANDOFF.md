@@ -252,6 +252,22 @@ three pass. **Criterion 3 is PROVEN across macOS 14, Windows 2022 and Ubuntu
 
 ## 7. ENVIRONMENT NOTES
 
+- **Binary I/O in tooling specifies latin1 or bytes. Always, by default.**
+  `Encoding.Default` (PowerShell) and any locale-dependent decode is cp1252
+  here, which is LOSSY for `0x80`-`0x9F` — it corrupts binary at IDENTICAL file
+  length, so a size check passes and only a hash reveals it. Use
+  `[System.Text.Encoding]::GetEncoding(28591)` (ISO-8859-1, a 1:1 byte mapping)
+  or `[IO.File]::ReadAllBytes`; in Python, `"rb"` or `encoding="latin1"`, never
+  a bare `open()`. This is the same root cause as the mojibake AMENDMENT in
+  `DECISIONS.md` (which covers TEXT read-modify-write); this line extends it to
+  BINARY reads, after the pattern recurred a fourth time extracting an icon
+  from an `.msi`. It is a default to apply, not an incident to rediscover.
+- Tools that compare BINARY artefacts must state what they can and cannot
+  answer. The scratchpad PE icon-walker byte-compares `RT_ICON` records: valid
+  where the embedder copies verbatim (Tauri's app `.exe`), invalid where it
+  re-encodes (NSIS `setup.exe`) — there, compare by RENDERING. An unscoped
+  checker produced two wrong verdicts on a shipped artefact before the right
+  one. A checker without a stated scope is a claim without a qualifier.
 - `bun` and `cargo` are **not on PATH** in fresh shells. Prefix:
   `$env:PATH = "$env:USERPROFILE\.bun\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"`
 - Python is at `C:\Users\codex\AppData\Local\Programs\Python\Python312\python.exe`.
