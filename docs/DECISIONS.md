@@ -2823,3 +2823,61 @@ decided; it only records choices the spec left open.
   The general shape is worth keeping: a merge strategy is not only a history
   preference once something else in the repository depends on the commits being
   reachable.
+
+- **INVALIDATES — "the installed layout is asserted by SET EQUALITY on both
+  platforms" was false, and criterion 23 half (a) was marked EXECUTED on it.**
+
+  Filed as INVALIDATES rather than AMENDMENT because it does not revise a
+  decision — it **voids a status claim that was acted on**. The product owner
+  marked criterion 23's half (a) EXECUTED partly on an install-jobs report
+  containing that sentence. Neither platform did what it said.
+
+  **What is actually asserted**, read from the code rather than its docstring:
+
+  | Platform | Claimed | Actual |
+  |---|---|---|
+  | Windows | set equality on the installed layout | set equality over `*.exe` in the install root only |
+  | Linux | set equality on the installed layout | two-name banned-list scan over `dpkg -L` |
+
+  On Linux the function was named `check_deb_manifest` and its docstring read
+  *"Set equality over what the .deb declares it installs."* The body iterates
+  the file list and flags a basename in `banned = {"onboard_engine_stub",
+  "check_egress_chokepoint"}`. There is no expected set anywhere in it. On
+  Windows the assertion is real but globs `*.exe`, so icons, `resources/
+  grammars/*.wasm` and DLLs are outside it on **both** platforms.
+
+  **How it propagated, which is the part worth keeping.** The docstring did not
+  sit inertly in a file nobody read. It was the source for a comment in
+  `.github/workflows/release.yml`, and both were the source for a verbal
+  install-jobs report, and that report reached a criterion status. Three
+  restatements, each one dropping the qualifier the layer below never had. This
+  is the same shape as KI-8's catalogue-is-not-a-disposition finding: **a
+  written claim about a guard is not evidence about the guard**, and the further
+  it travels from the code the more authoritative it sounds.
+
+  Found incidentally, while checking whether regenerating the Tauri icon set
+  would break the installed-file assertion. It would not — icons are outside
+  both checks' scope, which is how the gap surfaced at all. Nobody was auditing
+  this.
+
+  **Corrected this change (honesty only):** `check_deb_manifest` renamed to
+  `check_deb_banned_binaries`; `check_shipped_executables` renamed to
+  `check_shipped_exe_set_equality`; both docstrings, the module docstring, the
+  `release.yml` comment, and the runtime `layout OK` line — which printed
+  "(set equality)" on both platforms — now state the per-platform scope.
+
+  **Deliberately NOT corrected this change:** the assertions themselves. Real
+  set equality on both platforms is queued as a work item in
+  `docs/SESSION_HANDOFF.md`. Strengthening a release gate in the same change
+  that cuts a release produces a red that cannot be attributed — is the package
+  wrong, or is the newly-strict check wrong? — and the answer would arrive
+  during a release rather than before one. The honesty fix carries zero such
+  risk, which is why the two are split rather than deferred together.
+
+  **Status consequence.** Criterion 23 half (a) is not re-opened: the claims it
+  actually rests on — the installed shell starts, logs `sidecar resolved:`, and
+  the installed engine analyses a real repo returning symbols=2, edges=1 — were
+  independently observed green on Windows and Linux and are untouched by this.
+  What is withdrawn is the *layout* half of the evidence, which was weaker than
+  reported. The status stands on narrower ground, and the ground is now written
+  down.
