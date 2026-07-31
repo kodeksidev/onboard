@@ -364,10 +364,17 @@ jobs:
           if ($p.ExitCode -ne 0) { Get-Content $log -Tail 60; Write-Error "install failed: $($p.ExitCode)"; exit 1 }
           Write-Host "installed"
 
-      # Asserts the shipped file list by SET EQUALITY, not presence — which is
+      # Asserts the shipped `*.exe` set by SET EQUALITY, not presence — which is
       # what catches `onboard_engine_stub.exe` shipping beside the real engine.
       # It would also have printed the sidecar's real installed location on day
       # one, which is the single fact that would have prevented the bug.
+      #
+      # SCOPE, because the unqualified wording here was quoted as "the installed
+      # layout is asserted by set equality on both platforms" and that is false:
+      # this covers `*.exe` in the install root ONLY, and the Linux job's
+      # equivalent step is a two-name banned-list scan, not set equality at all.
+      # Non-executables — icons, grammars, DLLs — are asserted on neither.
+      # Real set equality is queued; see docs/SESSION_HANDOFF.md.
       - name: Assert the installed app starts, resolves its engine, and analyses
         shell: pwsh
         run: python scripts/installed-app-check.py
