@@ -237,6 +237,100 @@ after any CI change and this list follows.
    compares two empty sets passes, and that is the exact failure mode this
    repository has now hit twice.
 
+   **THE SCHEDULING REASON IS NOW SPENT.** The deferral above was explicitly
+   "not on merit — strengthening a release gate while cutting a release
+   produces a red nobody can attribute", and it said the reason expires the
+   moment the tag is cut. The tag is cut and published. There is no remaining
+   argument for holding this.
+
+   **And here is the concrete instance, observed 2026-08-03.** The clean-runner
+   enumeration of the NSIS install printed:
+
+   ```
+   resources\grammars\.gitkeep
+   ```
+
+   A repository bookkeeping file, shipped to users, past a green gate. Nothing
+   caught it because `check_shipped_exe_set_equality` globs `*.exe` and a
+   `.gitkeep` is not an executable — the assertion did exactly what it says and
+   the scope is where the hole is.
+
+   That is the SECOND time this check's scope has been narrower than it looked,
+   and the two failures are different in a way that matters. The first was a
+   DOCUMENTATION failure: the docstring claimed set equality on both platforms
+   and the code did something weaker, so the claim was wrong while the code was
+   honest (INVALIDATES entry, `DECISIONS.md`). This one is a COVERAGE failure:
+   the docstring is now accurate, everyone knows the scope is `*.exe`, and a
+   file still shipped that nobody wanted — because knowing a gap exists is not
+   the same as the gap being closed. Correcting the prose did not stop the
+   defect the prose was about.
+
+   Fixing `.gitkeep` alone (see item 9) closes one file. Item 8 closes the
+   class.
+
+9. **`resources/grammars/.gitkeep` ships into user installs** — the one-file
+   half of item 8, filed separately because it is a two-line fix and item 8 is
+   not, and bundling them would hold the cheap one behind the expensive one.
+
+   `tauri.conf.json`'s `resources` glob is `resources/grammars/*`, which matches
+   the dotfile.
+
+   **Narrow the glob to `resources/grammars/*.wasm`. Do NOT delete
+   `.gitkeep`** — it is load-bearing, and the obvious-looking fix breaks a
+   fresh checkout:
+
+   ```
+   .gitignore:49  /apps/desktop/src-tauri/resources/grammars/*
+   .gitignore:50  !/apps/desktop/src-tauri/resources/grammars/.gitkeep
+   ```
+
+   The grammars are deliberately untracked and staged at build time by
+   `scripts/stage-sidecar.ts`, so in a clean clone that directory contains
+   `.gitkeep` and nothing else. Remove it and the directory does not exist,
+   which `stage:sidecar` and the Tauri `resources` glob both depend on.
+
+   Recorded this explicitly because the first draft of this item said the
+   opposite — that the grammars were tracked so the placeholder had outlived
+   its purpose. `git ls-files` on that directory returns exactly one path, and
+   it is `.gitkeep`. The whole class of defect this file keeps recording is a
+   claim that was never checked, so: check it.
+
+   Narrowing the glob also fixes the class rather than the instance — anything
+   non-grammar that lands in that directory stops reaching users by
+   construction.
+
+   **Do not treat this as closing item 8.** A green run after this fix proves
+   `.gitkeep` is gone and proves nothing about icons or DLLs, which remain
+   asserted by nothing.
+
+10. **`RELEASE_NOTES` overstates the human checklist's platform coverage** — for
+    the NEXT cut, deliberately not now.
+
+    The notes say the rendered interface is verified by a human checklist. True,
+    and a reader will assume both published platforms. It is Windows only:
+    criterion 23 half (b) has a recorded observation on Windows (2026-08-03) and
+    **none on Linux** — nobody has installed the `.deb` and driven the installed
+    app to a rendered graph. CI proves the Linux shell starts, resolves its
+    engine and analyses; it does not start a window.
+
+    One line naming Windows as observed and Linux as unobserved.
+
+    **DO NOT edit `docs/RELEASE_NOTES_v0.1.0.md` to fix this.** The published
+    body must stay byte-identical to the notes file at the tag — that identity
+    is what `release-body-check.py` asserts, and editing the file on `main`
+    after the tag breaks the property the check exists to hold. This is a
+    next-cut edit, made in the same change that bumps the version.
+
+    The better close is the observation itself: run the Linux half of
+    `SMOKE_CHECKLIST.md` on a machine with a display, and the line becomes
+    "observed on both" instead of a caveat.
+
+11. **Criterion 14 wants a human observation** — the AI-mode indicator string
+    renders only with a key configured, and the 2026-08-03 run had none. It
+    stays CI-backed until someone captures it. Cheap to close on the next run
+    with a key; recorded so the shape-similarity with #13 does not lead someone
+    to assume one run settled both.
+
 ### Closed this session
 
 - The ESLint 10 / brace-expansion decision, with all six repo rules proven to
