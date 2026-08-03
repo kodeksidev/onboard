@@ -109,9 +109,16 @@ class Layout:
 
 
 def windows_layout() -> Layout:
-    # WiX (.msi) installs per-machine under Program Files; NSIS installs
-    # per-user under LOCALAPPDATA. Accept whichever is present so the same
-    # check serves both bundles.
+    # NSIS installs per-user under LOCALAPPDATA, which is where the shipped
+    # artefact lands as of 2026-08-03 — the `.msi` was dropped and `setup.exe`
+    # is the only Windows format published (AMENDMENT, docs/DECISIONS.md).
+    #
+    # The Program Files candidates are KEPT rather than deleted. They are not
+    # dead: a developer with a v0.1.0 `.msi` still installed is a real machine
+    # this script may be pointed at, and a per-machine path turning up is
+    # information — `release.yml` asserts separately that a FRESH install is
+    # per-user, so an old install found here cannot be mistaken for a passing
+    # regression.
     candidates = [
         Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Onboard",
         Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Onboard",
@@ -130,13 +137,21 @@ def windows_layout() -> Layout:
         ),
         # Tauri strips the -<target-triple> suffix from an externalBin and
         # places it NEXT TO the shell — not in a `binaries/` subdirectory.
-        # Confirmed against the real .msi's own file table (`msiexec /a`):
-        #   PFiles\Onboard\onboard.exe
-        #   PFiles\Onboard\onboard-engine.exe
-        #   PFiles\Onboard\resources\grammars\*.wasm
+        # First confirmed against the .msi's own file table (`msiexec /a`),
+        # and now enumerated directly from the NSIS install root by
+        # `release.yml`, which is the layout users actually get:
+        #   %LOCALAPPDATA%\Onboard\onboard.exe
+        #   %LOCALAPPDATA%\Onboard\onboard-engine.exe
+        #   %LOCALAPPDATA%\Onboard\resources\grammars\*.wasm
         # That is the whole content of the resolution bug, asserted rather
         # than assumed.
         required_executables={"onboard.exe", "onboard-engine.exe"},
+        # NSIS writes an uninstaller; the .msi did not, because Windows
+        # Installer owns uninstall itself. Kept OPTIONAL rather than promoted
+        # to required now that only NSIS ships: demanding it would make this
+        # script fail against a machine still carrying a v0.1.0 .msi install,
+        # and the set-equality assertion below already catches a STRAY exe,
+        # which is the defect this scope exists for.
         optional_executables={"uninstall.exe"},
     )
 
@@ -418,7 +433,8 @@ def main() -> int:
 
     is_windows = platform.system() == "Windows"
     layout = windows_layout() if is_windows else linux_layout()
-    print(f"release:check-installed — against the app installed from the {'.msi' if is_windows else '.deb'}")
+    installer = "setup.exe (NSIS)" if is_windows else ".deb"
+    print(f"release:check-installed — against the app installed from the {installer}")
     print(f"  install root: {layout.root}")
 
     problems = check_required_paths(layout)
