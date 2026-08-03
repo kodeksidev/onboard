@@ -26,19 +26,39 @@ Get-FileHash .\Onboard_0.1.0_x64-setup.exe -Algorithm SHA256
 
 ## Windows — SmartScreen
 
-Artefacts: `Onboard_0.1.0_x64-setup.exe` (NSIS) or `Onboard_0.1.0_x64_en-US.msi`.
+Artefact: `Onboard_0.1.0_x64-setup.exe`. One file, deliberately.
+
+Until 2026-08-03 there was also an `.msi`. It did the same job and asked you to
+choose between two files whose difference you could not see, so it was dropped —
+see the amendment in [DECISIONS.md](DECISIONS.md). The one that stayed is the one
+that **installs without administrator rights**: Onboard installs per-user into
+`%LOCALAPPDATA%\Onboard` and raises no UAC prompt, which matters if you are on a
+work machine you do not administer. The `.msi` installed to `Program Files` and
+required elevation.
 
 Because the installer is unsigned and has no reputation history, Microsoft
 Defender SmartScreen blocks it on first run.
 
-1. Double-click the installer. A blue box appears:
-   **"Windows protected your PC"** — *"Microsoft Defender SmartScreen prevented
-   an unrecognised app from starting."*
+1. Double-click the installer. A blue box appears, headed
+   **"Windows protected your PC"**, reading:
+
+   > Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+   > Running this app might put your PC at risk.
+
+   Two controls are offered: **More info** and **Don't run**. **Don't run** is
+   the focused default, so pressing Enter or Space dismisses the installer.
 2. Click **More info**. This is the step most people miss; the link is plain
    text under the message, not a button.
 3. The publisher line will read **Unknown publisher**. That is expected for an
    unsigned build — it is exactly what A3 means in practice.
 4. Click **Run anyway**.
+
+> **Steps 3 and 4 have not been observed against this build** — they are
+> recorded as UNOBSERVED (windows-smartscreen-stage-2) in
+> `observed-dialogs.json`. The wording is what Windows shows for an unsigned
+> executable generally, not something anyone has seen here. Step 1 **has** been
+> observed, and its strings are quoted verbatim from that record. If you are the
+> first person past step 2, the second screen's exact wording is worth reporting.
 
 If **Run anyway** is absent, SmartScreen is in "Block" rather than "Warn" mode,
 which is set by policy — usually a managed work machine. Do not try to disable
@@ -50,8 +70,19 @@ you can run it, choose **Keep** in the browser's download list.
 
 ### Removing it
 
-Settings → Apps → Installed apps → **Onboard** → Uninstall. The MSI can also be
-removed with `msiexec /x Onboard_0.1.0_x64_en-US.msi`.
+Settings → Apps → Installed apps → **Onboard** → Uninstall, or run
+`%LOCALAPPDATA%\Onboard\uninstall.exe` directly. Because the install is per-user,
+the entry appears only for the account that installed it.
+
+Onboard leaves data in **two** places, and uninstalling removes neither:
+
+- `%APPDATA%\dev.onboard.app\onboard\cache\` — the analysis cache (a SQLite
+  database per repository you opened).
+- `%LOCALAPPDATA%\dev.onboard.app\` — logs, and the WebView2 profile.
+
+Delete both to remove everything. Any API key you stored is in **Windows
+Credential Manager**, under the service `dev.onboard.app`, and is likewise not
+removed by uninstalling — delete it there if you want it gone.
 
 ---
 
@@ -77,6 +108,12 @@ The build is neither signed nor notarized, so Gatekeeper refuses it. On recent
 macOS the message is **"Onboard is damaged and can't be opened. You should move
 it to the Bin."** That wording is misleading: the app is not damaged. macOS says
 this when a quarantined app has no valid signature.
+
+> That wording, and every macOS step below it, is general knowledge of
+> Gatekeeper rather than something anyone has seen here — recorded as
+> UNOBSERVED (macos-gatekeeper-damaged) in `observed-dialogs.json`. Nothing on
+> this half of the page is evidence until `MACOS_SMOKE.md` is signed off on real
+> hardware, which is the same reason there is no macOS download.
 
 1. Open the `.dmg` and drag **Onboard** to your Applications folder.
 2. Open **System Settings → Privacy & Security**.

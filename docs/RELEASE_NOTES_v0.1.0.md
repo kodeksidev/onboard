@@ -33,10 +33,16 @@ from release builds by design and the native folder picker cannot be automated.
 
 | file | platform |
 |---|---|
-| `Onboard_0.1.0_x64_en-US.msi` | Windows (installer) |
-| `Onboard_0.1.0_x64-setup.exe` | Windows (NSIS) |
+| `Onboard_0.1.0_x64-setup.exe` | Windows |
 | `Onboard_0.1.0_amd64.deb` | Debian / Ubuntu |
 | `Onboard-0.1.0-1.x86_64.rpm` | Fedora / RHEL |
+
+**One Windows installer, and it needs no administrator rights.** Onboard
+installs per-user into `%LOCALAPPDATA%\Onboard` with no UAC prompt, which
+matters if you are on a work machine you do not administer. An `.msi` was
+built for earlier drafts and is not published: it did the same job, installed
+per-machine into `Program Files`, required elevation, and asked you to choose
+between two files whose difference you could not see.
 
 **These installers are unsigned.** Windows SmartScreen will object and macOS
 Gatekeeper would too. The exact click path for each is in

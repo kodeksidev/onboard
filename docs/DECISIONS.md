@@ -2934,3 +2934,115 @@ decided; it only records choices the spec left open.
   What is withdrawn is the *layout* half of the evidence, which was weaker than
   reported. The status stands on narrower ground, and the ground is now written
   down.
+
+- **AMENDMENT — Windows ships `setup.exe` only; the `.msi` is dropped.**
+  Authorised-by: product owner (chat), 2026-08-03
+  Departs-from: Section 13 #23 — "`.exe` + `.msi`"
+
+  Two departures again, and again with different causes. Only the first is a
+  format change; the second is the reason it went this way rather than the
+  other way.
+
+  **The `.msi` is NOT shipped.** Windows carried two installers doing one job,
+  each with its own dialog artwork needing its own branding, and the choice
+  between them was presented to users as two filenames whose difference they
+  could not see. One format removes a surface instead of patching one.
+
+  **NSIS was kept over WiX for a CAPABILITY, not for artwork.** This is the
+  part worth reading, because the decision was very nearly made the other way
+  on a premise that turned out to be false:
+
+  | | NSIS `setup.exe` | WiX `.msi` |
+  |---|---|---|
+  | install mode | `currentUser` -> `%LOCALAPPDATA%\Onboard` | `perMachine` -> `C:\Program Files\Onboard` |
+  | elevation | none | UAC required |
+  | uninstall registry hive | HKCU | HKLM |
+
+  Onboard is a per-user application — the API key is keychain-scoped to one
+  account, the cache is per-user — and its users run it against proprietary
+  code, frequently on managed laptops where local administrator rights are not
+  granted. On such a machine the `.msi` is not "less convenient", it is
+  **uninstallable**. `WixConfig` exposes no install-scope key, so an MSI-only
+  Windows would have been an admin-only Windows permanently, short of a
+  hand-written `.wxs` template.
+
+  **The false premise, recorded because it is the more useful half.** The
+  proposal was to keep the `.msi` on the grounds that it was "correctly branded
+  already, and needs no new image assets". It was not. `WixConfig.bannerPath`
+  and `WixConfig.dialogImagePath` were both unset, so the generated `main.wxs`
+  contained no `WixVariable` override and the MSI's welcome and exit dialogs
+  rendered WiX's stock artwork — a dark panel with a maroon CD-disc motif,
+  extracted from `WixUIExtension.dll`'s embedded `ui.wixlib` and rendered to
+  confirm, because **nobody had ever seen those screens**. Dropping NSIS would
+  have traded a default that had been noticed for a default that had not.
+
+  That is the third instance of one failure in this area: a surface declared
+  complete from a search that found what it was looking for and stopped. First
+  "no separate installer branding asset exists" (`installerIcon` did). Then
+  "`installerIcon` is fixed, the surface is closed" (`headerImage` and
+  `sidebarImage` were not). Then "the `.msi` is correctly branded" (its two
+  image keys were at defaults). The correction is procedural, not factual:
+  enumerate from the bundler's own option list — `NsisConfig`, `WixConfig`,
+  `WindowsConfig`, `BundleConfig` — and read the GENERATED `installer.nsi` and
+  `main.wxs` to see what each option resolved to. A grep is not an enumeration.
+
+  **The named cost, deferred rather than lost.** The `.msi` was the
+  enterprise-deployable format: Group Policy, Intune, SCCM, `msiexec /qn`, and
+  transforms. Nothing NSIS offers replaces that for an administrator pushing
+  Onboard to a fleet. Recorded in `docs/V2_BACKLOG.md` under "Managed
+  deployment", with the constraint that put it there, so it is a scope boundary
+  rather than a thing that quietly stopped existing.
+
+  **What changed in the gate, and the order it changed in.** `installed-windows`
+  drove the `.msi` — the artefact nobody ran interactively — while every manual
+  Windows observation on record was made against `setup.exe`. So CI gated the
+  format users did not execute, and the format they did execute was ungated.
+  The job was repointed at `setup.exe` and **observed green before** the `.msi`
+  was removed, deliberately: there is no commit on this branch where the Windows
+  install path has no gate. Enumeration moved after the install as a result —
+  `msiexec /a` could read a file table without installing, and NSIS has no
+  equivalent, because an NSIS installer is a program rather than a manifest.
+
+  **What was NOT done, and is a choice rather than an omission.** The installer
+  artwork places the existing mark on a white field at the two sizes NSIS asks
+  for (`scripts/make-installer-art.py`). There is no wordmark, no typography, no
+  illustration. Anything beyond "the mark on a field" is design work for a
+  designer, and a default we chose is fine where a default we did not notice is
+  not — which is the whole subject of this entry.
+
+  **`bundle.upgradeCode` becomes moot, confirmed rather than assumed.** It is a
+  `WixConfig` field and has no NSIS equivalent; NSIS derives its uninstall
+  registry key from `PRODUCTNAME` alone (`!define UNINSTKEY
+  "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"`), so the
+  `publisher` change below does not move it. What DOES move is `MANUPRODUCTKEY`
+  (`Software\<MANUFACTURER>\Onboard`), which holds the installer-language
+  preference and shortcut bookkeeping — those reset once, and upgrade detection
+  is unaffected.
+
+  **Consequence for criterion 23:** its Windows text is now `.exe` only. The
+  `.msi` returns to scope only through the V2_BACKLOG item, at which point this
+  amendment is superseded rather than deleted.
+
+- **AMENDMENT — the installer's empty metadata is filled in; "onboard" in
+  Add/Remove Programs was a default nobody chose.**
+  Authorised-by: product owner (chat), 2026-08-03
+  Departs-from: nothing in the spec — these fields were never specified
+
+  Filed as an amendment anyway, because it changes strings a user reads.
+  Enumerating `BundleConfig` for the entry above turned up four keys that were
+  unset and reaching a user-visible Windows surface:
+
+  | key | was | now |
+  |---|---|---|
+  | `publisher` | derived from the identifier -> `onboard` | `Eris Uruqi` |
+  | `homepage` | empty -> ARP `HelpLink` and `URLInfoAbout` blank | the repository URL |
+  | `copyright` | empty -> the exe's VERSIONINFO `LegalCopyright` blank | `Copyright (c) 2026 Onboard contributors` |
+  | `licenseFile` | empty -> the installer showed no licence page | the repository's MIT `LICENSE` |
+
+  `publisher` and `copyright` deliberately DISAGREE, and it is not an
+  oversight. They answer different questions: who ships the binary, and who
+  holds the copyright. The second is already answered by `LICENSE`, so
+  `copyright` quotes that file verbatim rather than inventing a second answer
+  that could drift from it. `publisher` is the individual, which is also the
+  string an individually-issued code-signing certificate would carry, so
+  `SIGNING.md` will not have to change it.
