@@ -22,6 +22,8 @@ import json
 import sys
 from pathlib import Path
 
+from release_notes_table import TableError, download_filenames
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FORMATS = REPO_ROOT / "release-formats.json"
 
@@ -46,6 +48,34 @@ def held_extensions() -> set[str]:
         if not entry["publish"]
         for ext in entry["extensions"]  # type: ignore[attr-defined]
     }
+
+
+def check_notes_table(assets: list[Path]) -> list[str]:
+    """SET EQUALITY on FILENAMES between the Downloads table and the real assets.
+
+    `release-notes-check.py` already compares that table's EXTENSIONS to
+    `release-formats.json`, which is all that can be known before anything is
+    built. This is the other half and it is not redundant: an extension-level
+    check passes a row reading `Onboard_0.1.0_x64_en-US.exe` when the artefact
+    is really `Onboard_0.1.0_x64-setup.exe`. Same extension, right count, and a
+    download link to a file that does not exist.
+
+    Here the actual staged filenames are in hand, so the comparison is exact.
+    This is the last point before a release page exists where the two can be
+    made to agree.
+    """
+    try:
+        listed = download_filenames()
+    except TableError as error:
+        return [str(error)]
+
+    staged = {path.name for path in assets}
+    problems: list[str] = []
+    for name in sorted(set(listed) - staged):
+        problems.append(f"the Downloads table offers {name}, which is NOT among the staged assets")
+    for name in sorted(staged - set(listed)):
+        problems.append(f"{name} is staged for publication and has NO row in the Downloads table")
+    return problems
 
 
 def self_test() -> str | None:
@@ -121,6 +151,24 @@ def main() -> int:
         return 1
 
     print(f"\nstaged set equals expected set: {', '.join(sorted(expected))}")
+
+    # Only after the extension-level verdict. A missing or unknown FORMAT is a
+    # build problem; a table that disagrees is a documentation problem, and
+    # reporting the second while the first is outstanding buries the cause.
+    mismatched = check_notes_table(assets)
+    if mismatched:
+        print(
+            "\nFAILED — the release notes' Downloads table does not match what is "
+            "being published:\n  "
+            + "\n  ".join(mismatched)
+            + "\n\nThe table IS the release body (`publish` sends it as `body_path`), so "
+            "this is what a reader sees and clicks. An extension check cannot catch a "
+            "wrong filename; only the real assets can.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"notes' Downloads table names exactly those {len(assets)} asset(s)")
     return 0
 
 
