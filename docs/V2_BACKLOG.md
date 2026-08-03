@@ -201,3 +201,53 @@ on a surface this project has already failed to enumerate three times.
 default for this product. This item exists so that the day someone asks "can we
 deploy Onboard across the company", the answer is a scope boundary with a known
 cost, not a rediscovery.
+
+---
+
+## Intra-file structure — the graph's unit becomes the symbol, not the file
+
+**Deferred by:** Section 3 non-goal 7 — "Call-graph analysis, type inference,
+dead-code proof, cross-file symbol resolution beyond import edges."
+
+**The observation that produced this item, 2026-08-03.** A user pointed Onboard
+at a single 20,000-line file rather than a repository. The result: a one-node
+dependency graph, an empty module map, a one-step roadmap — while the symbol
+outline, search and external dependencies all worked normally.
+
+**That is correct behaviour, not a defect, and the distinction matters for how
+this is picked up.** Onboard's graph is a FILE-to-FILE graph: `FileNode` is a
+path, `ImportEdge` runs `fromPath` to `toPath`. One file means one node and no
+edges, because there is no second file to point at. Nothing is failing; the
+input has no structure of the kind the graph displays. Do not "fix" this by
+making the graph tolerant of small inputs — the unit is wrong for the input,
+and only changing the unit changes the answer.
+
+**What v2 would actually build.** The graph's node becomes a SYMBOL rather than
+a file, with edges derived from references between symbols within a file — the
+20,000-line file becomes a real graph of its own functions and types.
+
+**What it costs, honestly.** This is call-graph analysis. Resolving "this
+identifier refers to that declaration" is exactly what non-goal 7 excludes from
+v1, and the exclusion is not arbitrary: it needs scope and binding resolution
+per language, which is where a tree-sitter-based engine stops being cheap. It
+is a significant piece of work, not a display change.
+
+**It is also a BREAKING CONTRACT CHANGE.** `FileNode` and `ImportEdge` both
+change shape — a node gains a symbol identity and a within-file location, an
+edge gains a reference kind that is not an import. That bumps
+`SCHEMA_VERSION` (`packages/contract/src/analysis-result.ts`, currently `1`) and
+every cache written by the current engine becomes unreadable. Budget the
+migration, not just the analysis.
+
+### A smaller, separate question that does NOT need the v2 feature
+
+**A single-file input is not an error state today, so the empty panels read as a
+failure.** The user sees a blank module map and a one-step roadmap and cannot
+tell "Onboard has nothing to show for this input" from "Onboard broke". No
+call-graph work is required to fix that — it is a copy and empty-state question:
+whether those panels should say something like *"this repository has one file;
+the structure view is the symbol outline"* and point at the outline that already
+works.
+
+Filed here so it is not lost, but it belongs with the Section 10 empty states
+rather than with this feature, and it should not wait for it.
