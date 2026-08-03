@@ -1,0 +1,84 @@
+{
+  "$comment": [
+    "THE record of what an OS security dialog actually said, and who saw it.",
+    "",
+    "docs/INSTALL.md exists to walk a user past dialogs that accuse the app of",
+    "being dangerous, and it opens by telling that user to STOP if a step does",
+    "not match what they see. That instruction gives every quoted string in it",
+    "the weight of an assertion — and one of them was wrong. INSTALL.md quoted",
+    "SmartScreen as saying `unrecognised`; Windows says `unrecognized`. It also",
+    "omitted the second sentence entirely and never named `Don't run`, which is",
+    "the focused default control. A reader following the doc's own rule would",
+    "have aborted at a correct screen.",
+    "",
+    "Prose cannot be checked, so the strings live here and the prose is checked",
+    "against them by scripts/dialog-strings-check.py.",
+    "",
+    "WHAT THIS DOES NOT DO, stated because the gap is the whole point of the",
+    "file. It cannot verify these strings against Windows or macOS — there is",
+    "no machine-readable source for them. It verifies that INSTALL.md agrees",
+    "with a DATED HUMAN OBSERVATION. All the authority is in `observedBy` and",
+    "`observedOn`; the check only stops the doc drifting away from the record.",
+    "An entry with `observed: false` carries no strings at all, so a dialog",
+    "nobody has seen cannot be quoted here and then propagated into the doc as",
+    "though it had been.",
+    "",
+    "ADDING AN OBSERVATION: paste the strings exactly as shown, including",
+    "punctuation and capitalisation, set `observed` to true, and name yourself",
+    "and the date. Then run `bun run docs:check-dialogs` — it will fail until",
+    "INSTALL.md quotes them."
+  ],
+  "dialogs": [
+    {
+      "id": "windows-smartscreen-stage-1",
+      "platform": "windows",
+      "trigger": "double-clicking a downloaded, unsigned Onboard_0.1.0_x64-setup.exe carrying Mark-of-the-Web",
+      "documentedIn": "docs/INSTALL.md",
+      "observed": true,
+      "observedBy": "product owner",
+      "observedOn": "2026-08-03",
+      "observedAgainst": "Onboard_0.1.0_x64-setup.exe (NSIS)",
+      "note": [
+        "Mark-of-the-Web is confirmed present by the dialog appearing at all.",
+        "An earlier Windows smoke run on 2026-07-31 used `gh release download`,",
+        "which attaches no MOTW, and therefore said nothing about SmartScreen."
+      ],
+      "strings": [
+        "Windows protected your PC",
+        "Microsoft Defender SmartScreen prevented an unrecognized app from starting.",
+        "Running this app might put your PC at risk.",
+        "More info",
+        "Don't run"
+      ]
+    },
+    {
+      "id": "windows-smartscreen-stage-2",
+      "platform": "windows",
+      "trigger": "clicking More info on the stage-1 dialog",
+      "documentedIn": "docs/INSTALL.md",
+      "observed": false,
+      "note": [
+        "INSTALL.md steps 3 and 4 describe this screen — the publisher line and",
+        "the Run anyway button — from general knowledge of unsigned Windows",
+        "executables, NOT from having seen it on this build. Criterion 24 needs",
+        "both halves and has one. Until someone records the exact strings here,",
+        "INSTALL.md must keep saying so."
+      ],
+      "strings": []
+    },
+    {
+      "id": "macos-gatekeeper-damaged",
+      "platform": "macos",
+      "trigger": "launching an unsigned, un-notarized Onboard.app from an unpublished .dmg",
+      "documentedIn": "docs/INSTALL.md",
+      "observed": false,
+      "note": [
+        "No macOS build has ever been executed on a Mac (docs/MACOS_SMOKE.md),",
+        "so nothing on the macOS half of INSTALL.md is an observation. The",
+        "`damaged and can't be opened` wording there is general knowledge of",
+        "Gatekeeper and is marked as such in the doc."
+      ],
+      "strings": []
+    }
+  ]
+}
