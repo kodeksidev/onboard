@@ -26,6 +26,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Eris Uruqi",
+    "homepage": "https://github.com/uruqierisi/onboard",
+    "copyright": "Copyright (c) 2026 Onboard contributors",
+    "licenseFile": "../../../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,7 +41,9 @@
     "resources": ["resources/grammars/*"],
     "windows": {
       "nsis": {
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "sidebarImage": "installer/nsis-sidebar.bmp",
+        "headerImage": "installer/nsis-header.bmp"
       }
     }
   }

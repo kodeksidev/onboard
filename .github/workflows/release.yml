@@ -316,7 +316,14 @@ jobs:
     # checkout on the PATH, so the dev fallback that masked the bug on every
     # developer machine cannot resolve. Same reasoning that moved #23 from
     # machine-blocked to partially proven on Linux.
-    name: installed .msi starts, resolves its engine, and analyses (clean runner)
+    # WHICH ARTEFACT THIS DRIVES, and why it changed. Until 2026-08-03 this job
+    # installed the `.msi`, and that was the wrong target: the `.msi` is the
+    # artefact NOBODY runs interactively, while `setup.exe` is the one the
+    # product owner installs, the one every manual smoke observation was made
+    # against, and — from this change on — the only Windows artefact published.
+    # A gate pointed at the format users do not execute is a gate whose green
+    # answers a question nobody asked.
+    name: installed setup.exe starts, resolves its engine, and analyses (clean runner)
     needs: bundle
     runs-on: windows-2022
     steps:
@@ -334,35 +341,75 @@ jobs:
           name: installers-windows-2022
           path: installers
 
-      # Reads the .msi's own file table WITHOUT installing it, by doing an
-      # administrative install (an extract, not a real install) into a temp
-      # directory. This closes the NSIS-proven / MSI-inferred gap with
-      # evidence: the diagnosis of the resolution bug was made against an
-      # NSIS install, and inferred for the .msi. Now it is neither inferred
-      # nor trusted — it is enumerated.
-      - name: Enumerate what the .msi actually contains
+      # `/S` is NSIS's silent switch. Deliberately alone:
+      #
+      #   - NOT `/NS`, which suppresses shortcut creation. The Start Menu and
+      #     desktop shortcuts are user-visible surfaces; a gate that skipped
+      #     them would install something no user installs.
+      #   - NOT `/R`, which runs the app afterwards. `installer.nsi` honours
+      #     `/R` only in silent and passive mode, so passing it here would
+      #     launch a second shell underneath the one the check starts itself,
+      #     and the log assertion would be reading an unknown process's output.
+      #   - NOT `/D=`, so the installer chooses its own default. That default
+      #     IS the claim under test: `installMode` is `currentUser`, so this
+      #     must land in %LOCALAPPDATA%\Onboard with no elevation. Forcing a
+      #     directory would hide a regression to perMachine.
+      #
+      # `Start-Process -Wait` because NSIS returns control immediately
+      # otherwise, and the next step would enumerate a half-written directory.
+      - name: Install setup.exe the way a user would (silently)
         shell: pwsh
         run: |
-          $msi = Get-ChildItem installers -Filter *.msi -Recurse | Select-Object -First 1
-          if (-not $msi) { Write-Error "no .msi in the downloaded artifact"; exit 1 }
-          Write-Host "administrative install of $($msi.FullName)"
-          $extract = Join-Path $env:RUNNER_TEMP "msi-extract"
-          $log = Join-Path $env:RUNNER_TEMP "msi-admin.log"
-          $p = Start-Process msiexec -ArgumentList @("/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$extract`"", "/l*v", "`"$log`"") -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; Write-Error "msiexec /a failed: $($p.ExitCode)"; exit 1 }
-          Write-Host "=== files inside the .msi ==="
-          Get-ChildItem -Recurse -File $extract |
-            ForEach-Object { $_.FullName.Substring($extract.Length).TrimStart('\') } |
+          $setup = Get-ChildItem installers -Filter *-setup.exe -Recurse | Select-Object -First 1
+          if (-not $setup) { Write-Error "no *-setup.exe in the downloaded artifact"; exit 1 }
+          Write-Host "installing $($setup.FullName)"
+          $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "install failed: $($p.ExitCode)"; exit 1 }
+          Write-Host "installed, exit 0"
+
+      # Enumeration moved AFTER the install, and that is a real change in what
+      # is proven. The `.msi` could be read without installing (`msiexec /a`
+      # extracts the file table), so the old job compared what the package
+      # DECLARED against what it did. NSIS has no equivalent — an NSIS
+      # installer is a program, not a manifest, and the only way to learn what
+      # it writes is to let it write.
+      #
+      # Stated rather than glossed, because the two are not the same claim.
+      # What is lost: the ability to see a declared-vs-actual divergence. What
+      # is gained: this enumerates the bytes a user ends up with, which is the
+      # claim criterion 23 is actually about.
+      - name: Enumerate what actually landed in the install root
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:LOCALAPPDATA 'Onboard'
+          if (-not (Test-Path $root)) {
+            Write-Error "nothing at $root — a currentUser install did not land where it must"
+            exit 1
+          }
+          Write-Host "=== files under $root ==="
+          Get-ChildItem -Recurse -File $root |
+            ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\') } |
             Sort-Object
 
-      - name: Install the .msi the way a user would
+      # The per-user install is itself an assertion now, not an incidental. It
+      # is the single capability that decided the format question on
+      # 2026-08-03 (see the AMENDMENT in docs/DECISIONS.md), so a silent
+      # regression to perMachine — a stray `installMode` edit, a Tauri default
+      # change — must fail here rather than be discovered by a user without
+      # local administrator rights who cannot install at all.
+      - name: Assert the install is per-user, not per-machine
         shell: pwsh
         run: |
-          $msi = Get-ChildItem installers -Filter *.msi -Recurse | Select-Object -First 1
-          $log = Join-Path $env:RUNNER_TEMP "msi-install.log"
-          $p = Start-Process msiexec -ArgumentList @("/i", "`"$($msi.FullName)`"", "/qn", "/norestart", "/l*v", "`"$log`"") -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 60; Write-Error "install failed: $($p.ExitCode)"; exit 1 }
-          Write-Host "installed"
+          $perUser = Join-Path $env:LOCALAPPDATA 'Onboard\onboard.exe'
+          $perMachine = Join-Path $env:ProgramFiles 'Onboard\onboard.exe'
+          if (-not (Test-Path $perUser)) { Write-Error "not installed per-user: $perUser is missing"; exit 1 }
+          if (Test-Path $perMachine) { Write-Error "installed PER-MACHINE at $perMachine — installMode regressed"; exit 1 }
+          $key = Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' |
+            ForEach-Object { Get-ItemProperty $_.PSPath } |
+            Where-Object { $_.DisplayName -eq 'Onboard' }
+          if (-not $key) { Write-Error "no HKCU uninstall entry — Add/Remove Programs would not list Onboard"; exit 1 }
+          Write-Host "per-user OK: $perUser"
+          Write-Host "  Add/Remove Programs -> Publisher='$($key.Publisher)' Version='$($key.DisplayVersion)'"
 
       # Asserts the shipped `*.exe` set by SET EQUALITY, not presence — which is
       # what catches `onboard_engine_stub.exe` shipping beside the real engine.

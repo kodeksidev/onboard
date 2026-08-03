@@ -67,6 +67,15 @@ The `.msi`'s own file table, read with `msiexec /a` before installing, is
 executables, the sidecar beside the shell with no `binaries/` subdirectory,
 and no test binaries.
 
+**That Windows row is now historical.** The `.msi` was dropped on 2026-08-03 and
+the job was repointed at `setup.exe` (AMENDMENT, `docs/DECISIONS.md`). The
+evidence above still stands for what it claimed at the time, and is kept rather
+than deleted because the resolution bug it caught was diagnosed against that
+layout. The current job installs `setup.exe` silently, enumerates
+`%LOCALAPPDATA%\Onboard` after the fact — NSIS has no read-without-installing
+equivalent to `msiexec /a` — and additionally asserts the install is per-user
+and that Add/Remove Programs lists it.
+
 **So the boxes below that CI already covers are: install, launch, and that the
 engine resolves and parses.** What remains genuinely manual is everything from
 the folder pick onward — the picker, the rendered graph, node → file, search,
@@ -93,9 +102,44 @@ it found a defect no automated gate could see.
 
 ## Install (per platform)
 
-- [ ] **Windows** — install the `.msi` by double-clicking it. SmartScreen
-      appears; the wording and the click path must match `docs/INSTALL.md`
-      exactly. Note any divergence as a documentation defect.
+- [ ] **CLEAR ANY PRIOR INSTALL FIRST (Windows).** Uninstall, then check
+      `%LOCALAPPDATA%\Onboard` is gone and delete it if not. NSIS's uninstaller
+      removes only files it wrote, so anything a previous build or a manual copy
+      left behind survives and shows up in the next run's enumeration. This is
+      not hypothetical: on 2026-08-03 that directory held `onboard_engine_stub.exe`
+      and `check_egress_chokepoint.exe` — both on the banned list — from an
+      install predating the build under test. **A leftover reads exactly like a
+      shipping defect**, and chasing one costs more than the thirty seconds this
+      box takes.
+
+- [ ] **Windows** — install `Onboard_0.1.0_x64-setup.exe` by double-clicking it.
+      There is no `.msi` as of 2026-08-03 (AMENDMENT, `docs/DECISIONS.md`).
+      SmartScreen appears; the wording and the click path must match
+      `docs/INSTALL.md` exactly. Note any divergence as a documentation defect.
+
+- [ ] **Windows — the installer's own pages.** Nothing automated can see an
+      assembled installer dialog, so this is the only place these are checked.
+      The welcome page must show **the Onboard mark on a white sidebar** — not
+      NSIS's blue arrow with a computer in a box, which is what shipped through
+      v0.1.0. Then: a licence page carrying the MIT text; the Onboard mark in the
+      header strip of the pages after it; and the installer's own title-bar icon
+      is ours.
+
+- [ ] **Windows — no UAC prompt.** The installer must NOT ask for administrator
+      rights, and must land in `%LOCALAPPDATA%\Onboard`, not `Program Files`.
+      This is the capability the whole format decision turned on; a prompt here
+      means `installMode` regressed and users without local admin cannot install.
+
+- [ ] **Windows — Add/Remove Programs.** Settings → Apps → Installed apps must
+      list **Onboard**, publisher **Eris Uruqi** (not `onboard`), with the
+      Onboard icon and version 0.1.0.
+
+- [ ] **Windows — SmartScreen's SECOND screen.** After clicking **More info**,
+      record the exact strings. They are marked `observed: false` in
+      `observed-dialogs.json` and criterion 24 needs both halves. Paste what you
+      see into that file, set `observed` to true, name yourself and the date, and
+      `bun run docs:check-dialogs` will then fail until `docs/INSTALL.md` quotes
+      them verbatim.
 
       > **DOWNLOAD IT THE WAY A USER WOULD — IN A BROWSER.** SmartScreen keys
       > off **Mark-of-the-Web**, the `Zone.Identifier` alternate data stream a
