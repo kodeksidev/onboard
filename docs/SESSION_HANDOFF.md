@@ -61,20 +61,23 @@ Then, if green:
 
 ### Waiting on the owner
 
-- **RESOLVED 2026-08-03, partly.** SmartScreen's FIRST dialog was observed
-  against a browser-downloaded `setup.exe` and did NOT match `docs/INSTALL.md`:
-  the doc quoted `unrecognised` where Windows says `unrecognized`, omitted
-  `Running this app might put your PC at risk.`, and never named `Don't run`.
-  Fixed, and the strings now live in `observed-dialogs.json` with
-  `docs:check-dialogs` asserting the doc quotes them verbatim. **Still owed:**
-  SmartScreen's SECOND screen (publisher line, Run anyway), which criterion 24
-  needs, and the installer's own welcome page — no automated check can see an
-  assembled dialog. Both are boxes in `docs/SMOKE_CHECKLIST.md`.
+- **RESOLVED 2026-08-03.** Full smoke run on Windows against a browser download
+  with Mark-of-the-Web, prior install cleared first. Both SmartScreen screens
+  observed, all 11 strings recorded in `observed-dialogs.json`, INSTALL.md
+  corrected to quote them (it had said `unrecognised` for `unrecognized`,
+  omitted a whole sentence, and never named `Don't run`). Welcome page carried
+  the Onboard mark. Walkthrough completed end to end. **Criterion 24's
+  SmartScreen half is closed; criterion 23 half (b) is a recorded observation
+  on Windows.**
 
-- The `.msi` is gone (AMENDMENT, 2026-08-03), so the Sandbox check is now
-  against `setup.exe`. Clear `%LOCALAPPDATA%\Onboard` before running it —
-  leftovers from a prior install survive NSIS's uninstaller and read exactly
-  like a shipping defect.
+- **Still owed on this front, and it needs no decision — only a Linux
+  machine.** Half (b) has never been observed on Linux: nobody has installed
+  the `.deb` and driven the installed app to a rendered graph. Windows has it,
+  Linux does not, and Linux artefacts are published. macOS needs a Mac for both
+  halves.
+
+- **Gatekeeper strings remain UNOBSERVED** and cannot be recorded without a
+  Mac. They are marked as such and INSTALL.md is required to say so by name.
 
 ---
 
