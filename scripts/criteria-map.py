@@ -107,7 +107,10 @@ EVIDENCE: dict[int, Evidence] = {
         "UI tests, inside verify. DEPARTS FROM A6: the shipped string has no "
         "`🔒` prefix (2026-07-31, product owner). A padlock renders beside it "
         "as an aria-hidden SVG, deliberately outside the string so the "
-        "accessible name stays byte-exact",
+        "accessible name stays byte-exact. ALSO OBSERVED IN THE INSTALLED "
+        "BUILD (2026-08-03, product owner) — a stronger claim than the UI "
+        "test, which asserts what the component renders rather than what the "
+        "shipped binary shows",
     ),
     14: Evidence(
         VERIFY,
@@ -115,7 +118,12 @@ EVIDENCE: dict[int, Evidence] = {
         "UI tests, inside verify. DEPARTS FROM A6: the shipped string has no "
         "`☁️` prefix (2026-07-31, product owner). Both indicator strings "
         "changed together — one with an emoji and one without would be worse "
-        "than either",
+        "than either. NO HUMAN OBSERVATION, unlike #13: the AI-mode string "
+        "only renders with a key configured, and the 2026-08-03 smoke run had "
+        "none, so it captured the static string alone. Recorded because the "
+        "two criteria are otherwise identical in shape and it would be easy to "
+        "assume one run settled both — it did not. Queued for the next run "
+        "with a key",
     ),
     15: Evidence(RUST_TEST, "ci", "key-never-persisted half only; the 5s flow is manual"),
     16: Evidence(RUST_TEST, "ci", "redaction corpus, in the Rust suite"),
