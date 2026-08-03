@@ -56,15 +56,37 @@
       "platform": "windows",
       "trigger": "clicking More info on the stage-1 dialog",
       "documentedIn": "docs/INSTALL.md",
-      "observed": false,
+      "observed": true,
+      "observedBy": "product owner",
+      "observedOn": "2026-08-03",
+      "observedAgainst": "Onboard_0.1.0_x64-setup.exe (NSIS), browser-downloaded with Mark-of-the-Web",
       "note": [
-        "INSTALL.md steps 3 and 4 describe this screen — the publisher line and",
-        "the Run anyway button — from general knowledge of unsigned Windows",
-        "executables, NOT from having seen it on this build. Criterion 24 needs",
-        "both halves and has one. Until someone records the exact strings here,",
-        "INSTALL.md must keep saying so."
+        "The dialog EXPANDS rather than replacing: the stage-1 title and body",
+        "stay on screen and an App/Publisher block plus a `Run anyway` button",
+        "appear below them. Both are asserted here so the doc cannot quote one",
+        "half correctly and drop the other.",
+        "",
+        "`Unknown publisher` appears even though bundle.publisher is now set to",
+        "a real name. That is correct and not a regression: SmartScreen reads",
+        "the AUTHENTICODE SIGNATURE, and v1 signs nothing (A3). The publisher",
+        "metadata reaches Add/Remove Programs, which is a different surface.",
+        "INSTALL.md says so, because someone who just set that field will",
+        "otherwise read this screen as the setting having failed.",
+        "",
+        "NOT asserted, deliberately: the App line read",
+        "`Onboard_0.1.0_x64-setup (2).exe` in this observation. The ` (2)` is",
+        "the browser's duplicate-download suffix, not our filename. Quoting it",
+        "would bake one machine's download history into a document every reader",
+        "is told to compare against their own screen."
       ],
-      "strings": []
+      "strings": [
+        "Windows protected your PC",
+        "Microsoft Defender SmartScreen prevented an unrecognized app from starting.",
+        "Running this app might put your PC at risk.",
+        "Unknown publisher",
+        "Run anyway",
+        "Don't run"
+      ]
     },
     {
       "id": "macos-gatekeeper-damaged",

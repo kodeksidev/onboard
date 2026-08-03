@@ -253,6 +253,18 @@ An unrecorded run did not happen. Add a row; do not edit an existing one.
 | 2026-07-29 | Windows 11 (clean Sandbox) | v0.1.0 draft `.msi` | product owner | **FAILED** — engine never started (`os error 3`); mode indicator byte-exact ✓ |
 | 2026-07-29 | Windows + Linux (CI, automated half only) | run 30489773363 | CI | **half (a) PASSED** — see below; half (b) not covered |
 | 2026-07-31 | Windows 11 (desktop with a PRIOR install) | v0.1.0 draft, tag → `68c8f97` | product owner | **half (b) PASSED** — installer showed the Onboard mark (not stock NSIS); folder picked, analysis completed with no `E_ENGINE_NOT_STARTED`; dependency graph rendered; node click opened the file; search returned results and jumped to the hit line; mode indicator byte-exact ✓. **Two caveats below — SmartScreen NOT observed, so this run does not settle criterion 24.** ⚠️ **The indicator observation is SUPERSEDED**, see the note under the table |
-| | Windows | | | |
+| 2026-08-03 | Windows 11 (prior install cleared first) | v0.1.0 draft, tag → `3178bea`, **browser download with MOTW** | product owner | **PASSED, and it closes criterion 24.** SmartScreen observed on BOTH screens, strings recorded verbatim in `observed-dialogs.json`. Welcome page showed the Onboard mark, not stock NSIS art; installer title-bar icon correct. Folder picked, analysis completed, roadmap and graph rendered, node click opened the file, search jumped to the hit line. Mode indicator byte-exact with no emoji, padlock as an SVG glyph |
 | | Linux | | | |
 | | macOS | | | |
+
+**Correction to the 2026-07-31 row, made when the surface was finally
+enumerated.** That row reads "installer showed the Onboard mark (not stock
+NSIS)". On that build only `installerIcon` was ours; `sidebarImage` and
+`headerImage` were unset, so the welcome page carried NSIS's stock `win.bmp` —
+the blue arrow with a computer in a box. What was observed was almost certainly
+the installer's TITLE-BAR icon, which `installerIcon` does control. The row is
+left standing with this note rather than rewritten, because the mistake is the
+useful part: "the installer showed our mark" is true of one surface and false of
+another, and a single sentence covering both is how the branding gap survived
+two rounds of being declared closed. The 2026-08-03 row above is the first
+observation where the welcome page itself was ours.
