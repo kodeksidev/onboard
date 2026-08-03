@@ -24,7 +24,17 @@
     "has been executed on a Mac — see docs/INSTALL.md.",
     "",
     "`.AppImage` is absent deliberately: it does not build (KNOWN_ISSUES KI-9),",
-    "and the substitution is recorded as an amendment in docs/DECISIONS.md."
+    "and the substitution is recorded as an amendment in docs/DECISIONS.md.",
+    "",
+    "`.msi` is absent deliberately as of 2026-08-03. Windows shipped TWO",
+    "installers doing one job, and neither was branded — the .msi's WiX",
+    "dialogs carried stock CD-disc artwork nobody had ever looked at. NSIS",
+    "was kept over WiX for a capability, not for artwork: NSIS installs",
+    "per-user to %LOCALAPPDATA% with no UAC, WiX installs per-machine to",
+    "Program Files and Tauri exposes no key to change that. A developer on a",
+    "managed laptop without local administrator rights can install one of",
+    "them. AMENDMENT in docs/DECISIONS.md; the enterprise-deployment path the",
+    "MSI carried is recorded in docs/V2_BACKLOG.md rather than dropped."
   ],
   "platforms": [
     {
@@ -36,8 +46,8 @@
     {
       "os": "windows-2022",
       "publish": true,
-      "bundles": ["nsis", "msi"],
-      "extensions": [".exe", ".msi"]
+      "bundles": ["nsis"],
+      "extensions": [".exe"]
     },
     {
       "os": "macos-14",
