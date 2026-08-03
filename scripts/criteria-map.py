@@ -128,16 +128,25 @@ EVIDENCE: dict[int, Evidence] = {
     23: Evidence(
         "installed-app-check",
         "ci",
+        "WINDOWS SHIPS `.exe` ONLY as of 2026-08-03 — the `.msi` was dropped "
+        "(AMENDMENT, docs/DECISIONS.md), so this criterion's text no longer "
+        "matches Section 13's `.exe` + `.msi`. NSIS was kept for a capability: "
+        "it installs per-user with no UAC, WiX installs per-machine and Tauri "
+        "exposes no install-scope key, so an MSI-only Windows would be "
+        "admin-only permanently. "
         "TWO HALVES, verified differently. (a) Installer builds, the SHELL "
         "launches, and it resolves its engine — CI, via `installed` and "
         "`installed-windows`, which `publish` depends on (the gap that let "
-        "v0.1.0 ship a .msi failing on first use). Now OBSERVED GREEN on "
-        "Windows and Linux: the installed shell logged `sidecar resolved: "
-        "C:\\Program Files\\Onboard\\onboard-engine.exe` and "
-        "`/usr/bin/onboard-engine`, and the installed engine analysed a real "
-        "repo (symbols=2, edges=1) — substance, not just a clean exit. The "
-        "Linux job previously drove the ENGINE directly and never started the "
-        "shell, so the resolution bug was latent there too rather than caught. "
+        "v0.1.0 ship a .msi failing on first use). OBSERVED GREEN on Windows "
+        "and Linux: the installed shell logged `sidecar resolved:` and the "
+        "installed engine analysed a real repo (symbols=2, edges=1) — "
+        "substance, not just a clean exit. The Linux job previously drove the "
+        "ENGINE directly and never started the shell, so the resolution bug "
+        "was latent there too rather than caught. NOTE THE ARTEFACT CHANGE: "
+        "the run recorded below installed the `.msi`; `installed-windows` now "
+        "installs `setup.exe`, was observed green on that artefact before the "
+        "`.msi` was removed, and additionally asserts the install is per-user "
+        "and listed in Add/Remove Programs. "
         "(b) Installed app RENDERS A GRAPH from a picked folder — MANUAL on "
         "all three platforms, docs/SMOKE_CHECKLIST.md, because the E2E bridge "
         "is absent from a release bundle (MODE === 'e2e') and the native "
@@ -153,7 +162,21 @@ EVIDENCE: dict[int, Evidence] = {
     24: Evidence(
         None,
         "artifact",
-        "INSTALL.md names both bypass paths; SIGNING.md names the signing path",
+        "INSTALL.md names both bypass paths; SIGNING.md names the signing path. "
+        "STRONGER THAN ARTIFACT-CHECKED ON ONE HALF as of 2026-08-03, and no "
+        "stronger on the rest. SmartScreen's FIRST dialog was observed against "
+        "a browser-downloaded setup.exe carrying Mark-of-the-Web, its exact "
+        "strings recorded in observed-dialogs.json, and `docs:check-dialogs` "
+        "now fails if INSTALL.md stops quoting them verbatim — which caught a "
+        "real defect: the doc said `unrecognised` where Windows says "
+        "`unrecognized`, omitted `Running this app might put your PC at risk.`, "
+        "and never named `Don't run`, the focused default. In a document whose "
+        "own rule is to STOP when a step does not match, a misquote aborts a "
+        "correct install. STILL UNOBSERVED: SmartScreen's second screen (the "
+        "publisher line and Run anyway), and every macOS/Gatekeeper string, "
+        "which needs a Mac. Both carry no strings in the record and INSTALL.md "
+        "is required to say so by name, so a reconstruction cannot be mistaken "
+        "for an observation. The criterion needs both halves and has one",
         requires=(
             ("docs/INSTALL.md", ("Gatekeeper", "SmartScreen", "unsigned")),
             ("docs/SIGNING.md", ("notariz", "out of scope")),

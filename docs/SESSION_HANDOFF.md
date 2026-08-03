@@ -61,8 +61,20 @@ Then, if green:
 
 ### Waiting on the owner
 
-- Running the **Windows Sandbox** check on the draft release's `.msi`, including
-  whether SmartScreen's wording matches `docs/INSTALL.md`.
+- **RESOLVED 2026-08-03, partly.** SmartScreen's FIRST dialog was observed
+  against a browser-downloaded `setup.exe` and did NOT match `docs/INSTALL.md`:
+  the doc quoted `unrecognised` where Windows says `unrecognized`, omitted
+  `Running this app might put your PC at risk.`, and never named `Don't run`.
+  Fixed, and the strings now live in `observed-dialogs.json` with
+  `docs:check-dialogs` asserting the doc quotes them verbatim. **Still owed:**
+  SmartScreen's SECOND screen (publisher line, Run anyway), which criterion 24
+  needs, and the installer's own welcome page — no automated check can see an
+  assembled dialog. Both are boxes in `docs/SMOKE_CHECKLIST.md`.
+
+- The `.msi` is gone (AMENDMENT, 2026-08-03), so the Sandbox check is now
+  against `setup.exe`. Clear `%LOCALAPPDATA%\Onboard` before running it —
+  leftovers from a prior install survive NSIS's uninstaller and read exactly
+  like a shipping defect.
 
 ---
 
