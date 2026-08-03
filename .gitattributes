@@ -40,3 +40,7 @@ packages/engine/test/__snapshots__/** -text
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+
+# Installer artwork. NSIS reads these as raw BMP; any transformation corrupts
+# them, and the corruption only shows up as a broken installer page.
+*.bmp   binary
