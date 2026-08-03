@@ -152,3 +152,52 @@ Three reasons that justification was rejected:
 **If it lands**, it goes through the same capability checks as every other
 provenance source and amends Section 12 explicitly, rather than arriving as a
 convenience.
+
+---
+
+## Managed deployment on Windows — MSI, Group Policy, Intune, SCCM
+
+**Deferred by:** the AMENDMENT dated 2026-08-03 in `docs/DECISIONS.md`, which
+dropped the `.msi` and left `setup.exe` as the only published Windows artefact.
+
+**This is a capability that was removed, not one that was never built** — which
+is why it is written down here rather than left implicit. Until 2026-08-03 a
+Windows administrator could push Onboard to a fleet: `msiexec /i /qn`, a Group
+Policy software-installation object, an Intune line-of-business app, an SCCM
+package, an MST transform to preset an install directory. All of that is a
+property of the MSI format, and none of it survives in NSIS. `setup.exe /S`
+installs silently, and that is genuinely all it offers an administrator — no
+declarative file table, no rollback, no per-machine scope, no transforms.
+
+**The trade that was made, so v2 can re-examine it rather than re-derive it.**
+The MSI installs `perMachine` into `Program Files` and requires elevation;
+Tauri's `WixConfig` exposes no install-scope key, so that is not tunable. The
+NSIS installer installs `currentUser` into `%LOCALAPPDATA%` and requires none.
+Onboard's audience is developers reading proprietary code, often on managed
+laptops with no local administrator rights, and for them the two formats are
+not "one is nicer" — the MSI is uninstallable and the NSIS one works. Given one
+format, the individual-without-admin case beat the administrator-with-a-fleet
+case. Given two, both are served, and the cost is two sets of installer artwork
+on a surface this project has already failed to enumerate three times.
+
+**When v2 picks this up**, the shape is known and cheap:
+
+- `release-formats.json` is the single table; adding `"msi"` to the Windows
+  entry's `bundles` and `".msi"` to its `extensions` regenerates the build
+  matrix, the upload glob and the asset check together.
+- `WixConfig.bannerPath` (493x58) and `WixConfig.dialogImagePath` (493x312)
+  must be set in the same change. Unset, they render WiX's stock CD-disc
+  artwork — this is exactly what shipped unnoticed through v0.1.0, and the
+  amendment above exists partly because nobody had looked at those screens.
+- `bundle.upgradeCode` should be PINNED before the first MSI ships. Unset,
+  Tauri derives a UUIDv5 from `<productName>.exe.app.x64`, so renaming the
+  product would orphan every installed copy.
+- `installed-windows` would need to cover both formats rather than swap
+  between them. Its current form asserts the install is per-user; an MSI would
+  need its own job asserting the per-machine layout, not a relaxation of that
+  assertion.
+
+**Do not take this as a defect.** A single per-user installer is the right
+default for this product. This item exists so that the day someone asks "can we
+deploy Onboard across the company", the answer is a scope boundary with a known
+cost, not a rediscovery.

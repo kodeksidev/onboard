@@ -54,7 +54,11 @@ it on macOS, Windows and Ubuntu on every push.
 
 **Windows and Linux only in the first release. macOS is built but not
 published.** Linux ships as `.deb` and `.rpm`; the `.AppImage` does not build
-(KNOWN_ISSUES KI-9).
+(KNOWN_ISSUES KI-9). Windows ships one file, `Onboard_0.1.0_x64-setup.exe`,
+which installs **per-user with no administrator rights** — it lands in
+`%LOCALAPPDATA%\Onboard` and raises no UAC prompt, so a locked-down work laptop
+is not a blocker. An `.msi` was dropped for that reason; see the amendment in
+[docs/DECISIONS.md](docs/DECISIONS.md).
 
 The macOS build compiles and its artefact is verified for format and
 architecture, but **no macOS build has ever been executed on a Mac** — the
@@ -88,8 +92,13 @@ plain terms because "criterion 11 is CI-blocked" tells you nothing:
   not, because the test harness races itself on fixed ports. Component and engine
   coverage is good; whole-app coverage is manual.
 - **The installers are unsigned, and the macOS one is unpublished.** See above.
-  Nothing about installation is automatically verified on any platform — the
-  build produces installers, and no gate installs one and launches it.
+  Installation *is* gated on Windows and Linux — a clean runner installs the
+  real artefact, starts the app, and makes the installed engine analyse a
+  repository, and no release is published if that fails. What is **not** gated
+  is anything a human has to look at: the installer's own dialogs, the
+  SmartScreen prompt, and the app rendering a graph from a folder you picked.
+  Those are manual, in `docs/SMOKE_CHECKLIST.md`. macOS has neither, because
+  nothing has ever run on a Mac.
 
 None of these is a known defect. They are things nobody has proven, stated as
 such. [docs/CRITERIA_MAP.md](docs/CRITERIA_MAP.md) is generated from what CI
