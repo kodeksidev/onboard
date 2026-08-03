@@ -23,25 +23,71 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
+from release_notes_table import TableError, download_filenames, shipped_version
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TAURI_CONF = REPO_ROOT / "apps" / "desktop" / "src-tauri" / "tauri.conf.json"
+FORMATS = REPO_ROOT / "release-formats.json"
 
 # A body this short is a stub, not release notes. The number is a floor chosen
 # to catch an empty or placeholder file, not to judge prose.
 MIN_BODY_CHARS = 400
 
 
-def shipped_version() -> str:
-    """The version the bundler stamps onto the artefacts."""
-    config = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
-    version = config.get("version")
-    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise SystemExit(f"tauri.conf.json has no usable version: {version!r}")
-    return version
+def expected_extensions() -> set[str]:
+    """Extensions a release publishes, from the one table that decides that.
+
+    Read here rather than imported from `release-assets-check.py` because that
+    script is hyphenated and invoked, not importable. The duplication is one
+    dictionary comprehension over the same file; what must not diverge is the
+    SOURCE, and both read `release-formats.json`.
+    """
+    platforms = json.loads(FORMATS.read_text(encoding="utf-8"))["platforms"]
+    return {ext.lower() for entry in platforms if entry["publish"] for ext in entry["extensions"]}
+
+
+def check_downloads_table() -> list[str]:
+    """SET EQUALITY, both directions, between the table and the published formats.
+
+    `release-formats.json` drives the bundle matrix, the upload glob and
+    `release-assets-check.py`. It does NOT drive the markdown table a reader of
+    the release page actually clicks, so that table was a fourth decider kept in
+    step by memory — and memory lost when the `.msi` was dropped and the table
+    still listed four downloads for three assets.
+
+    SCOPE: this compares EXTENSIONS, because that is all `release-formats.json`
+    knows; concrete filenames come from the bundler's own naming and exist only
+    once artefacts are built. A row with the right extension and a wrong
+    filename passes here and is caught by `release-assets-check.py`, which
+    compares real names against real assets. Neither check is the whole claim.
+    """
+    try:
+        names = download_filenames()
+    except TableError as error:
+        return [str(error)]
+
+    expected = expected_extensions()
+    listed = {Path(name).suffix.lower() for name in names}
+
+    problems: list[str] = []
+    for extension in sorted(listed - expected):
+        offenders = [n for n in names if Path(n).suffix.lower() == extension]
+        problems.append(
+            f"the Downloads table offers {extension} ({', '.join(offenders)}) and no "
+            "platform publishes it — a reader would click a download that is not there"
+        )
+    for extension in sorted(expected - listed):
+        problems.append(
+            f"{extension} is published but has no row in the Downloads table — "
+            "a shipped artefact nobody reading the release page knows exists"
+        )
+    if not problems:
+        print(f"  downloads table: {len(names)} row(s), extensions equal the published set")
+        for name in names:
+            print(f"    {name}")
+    return problems
 
 
 def main() -> int:
@@ -93,6 +139,19 @@ def main() -> int:
         print(f"  tag {args.tag} matches the stamped version")
 
     print(f"  body: {notes.relative_to(REPO_ROOT).as_posix()} ({len(body)} characters)")
+
+    problems = check_downloads_table()
+    if problems:
+        print(
+            "\nFAILED — the Downloads table and release-formats.json disagree:\n  "
+            + "\n  ".join(problems)
+            + "\n\nrelease-formats.json drives the build matrix, the upload glob and the "
+            "asset check. It does not drive this table, so the table is the one place "
+            "that can quietly describe a release nobody is building.",
+            file=sys.stderr,
+        )
+        return 1
+
     return 0
 
 

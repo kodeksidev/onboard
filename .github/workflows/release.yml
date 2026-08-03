@@ -39,6 +39,18 @@ on:
       - 'scripts/sidecar-received-check.py'
       - 'packages/engine/scripts/build-sidecar.ts'
       - 'scripts/stage-sidecar.ts'
+      # Everything that decides WHAT A RELEASE CONTAINS or SAYS. These were
+      # absent, and the absence had teeth: `release-formats.json` is the single
+      # table driving the matrix, the upload glob and the asset check, and a
+      # pull request editing it ran none of them. Nor did editing the release
+      # notes, whose Downloads table is the body a reader actually clicks —
+      # which is how that table came to list four downloads for three assets.
+      - 'release-formats.json'
+      - 'docs/RELEASE_NOTES_v*.md'
+      - 'scripts/release-notes-check.py'
+      - 'scripts/release-body-check.py'
+      - 'scripts/release_notes_table.py'
+      - 'scripts/release-plan.py'
   workflow_dispatch:
     inputs:
       dry_run:
