@@ -49,16 +49,28 @@ Defender SmartScreen blocks it on first run.
    the focused default, so pressing Enter or Space dismisses the installer.
 2. Click **More info**. This is the step most people miss; the link is plain
    text under the message, not a button.
-3. The publisher line will read **Unknown publisher**. That is expected for an
-   unsigned build — it is exactly what A3 means in practice.
+3. The dialog **expands** — the title and message above stay put — and adds:
+
+   > App: Onboard_0.1.0_x64-setup.exe
+   > Publisher: **Unknown publisher**
+
+   A **Run anyway** button appears next to **Don't run**.
+
+   If your browser saved the file as `Onboard_0.1.0_x64-setup (1).exe` or
+   similar, the App line shows that name. The suffix is your browser
+   de-duplicating a repeat download, not a different file.
 4. Click **Run anyway**.
 
-> **Steps 3 and 4 have not been observed against this build** — they are
-> recorded as UNOBSERVED (windows-smartscreen-stage-2) in
-> `observed-dialogs.json`. The wording is what Windows shows for an unsigned
-> executable generally, not something anyone has seen here. Step 1 **has** been
-> observed, and its strings are quoted verbatim from that record. If you are the
-> first person past step 2, the second screen's exact wording is worth reporting.
+> **"Unknown publisher" is correct here, and is not a configuration mistake.**
+> Onboard does set a publisher, and you can see it afterwards in Settings →
+> Apps → Installed apps. SmartScreen does not read that: it reads the
+> **Authenticode signature**, and v1 signs nothing (A3). An unsigned build says
+> "Unknown publisher" no matter what metadata it carries. The only thing that
+> changes this line is code signing — see [SIGNING.md](SIGNING.md).
+
+Both screens above were observed on 2026-08-03 against a browser-downloaded
+build, and their exact strings are recorded in `observed-dialogs.json`. A check
+fails the build if this page stops quoting them.
 
 If **Run anyway** is absent, SmartScreen is in "Block" rather than "Warn" mode,
 which is set by policy — usually a managed work machine. Do not try to disable

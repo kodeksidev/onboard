@@ -151,32 +151,40 @@ EVIDENCE: dict[int, Evidence] = {
         "all three platforms, docs/SMOKE_CHECKLIST.md, because the E2E bridge "
         "is absent from a release bundle (MODE === 'e2e') and the native "
         "picker is unreachable from WebDriver. Half (b) has no run id by "
-        "construction. NOW A RECORDED OBSERVATION ON WINDOWS (2026-07-31, "
-        "product owner, tag -> 68c8f97): graph rendered, node click opened the "
-        "file, search jumped to the hit line. Linux and macOS remain "
-        "UNOBSERVED for half (b); macOS needs a Mac for both halves. That run "
-        "did NOT observe SmartScreen — it used `gh release download`, which "
-        "attaches no Mark-of-the-Web — so it says nothing about criterion 24",
+        "construction. RE-OBSERVED ON WINDOWS AGAINST THE SHIPPING BUILD "
+        "(2026-08-03, product owner, tag -> 3178bea, browser download with "
+        "Mark-of-the-Web): folder picked, analysis completed, roadmap and graph "
+        "rendered, node click opened the file, search jumped to the hit line, "
+        "and the installer's own welcome page carried the Onboard mark rather "
+        "than stock NSIS art. This supersedes the 2026-07-31 observation, which "
+        "used `gh release download` (no MOTW, so it said nothing about "
+        "criterion 24) and predated both the branding and the format change. "
+        "Linux and macOS remain UNOBSERVED for half (b); macOS needs a Mac for "
+        "both halves",
         blocker="machine",
     ),
     24: Evidence(
         None,
         "artifact",
         "INSTALL.md names both bypass paths; SIGNING.md names the signing path. "
-        "STRONGER THAN ARTIFACT-CHECKED ON ONE HALF as of 2026-08-03, and no "
-        "stronger on the rest. SmartScreen's FIRST dialog was observed against "
-        "a browser-downloaded setup.exe carrying Mark-of-the-Web, its exact "
-        "strings recorded in observed-dialogs.json, and `docs:check-dialogs` "
-        "now fails if INSTALL.md stops quoting them verbatim — which caught a "
-        "real defect: the doc said `unrecognised` where Windows says "
+        "THE SMARTSCREEN HALF IS CLOSED as of 2026-08-03: BOTH dialogs were "
+        "observed by the product owner against a browser-downloaded setup.exe "
+        "carrying Mark-of-the-Web, and all 11 strings are recorded in "
+        "observed-dialogs.json with `docs:check-dialogs` failing the build if "
+        "INSTALL.md stops quoting any of them verbatim. That check caught a real "
+        "defect on its first run: the doc said `unrecognised` where Windows says "
         "`unrecognized`, omitted `Running this app might put your PC at risk.`, "
-        "and never named `Don't run`, the focused default. In a document whose "
-        "own rule is to STOP when a step does not match, a misquote aborts a "
-        "correct install. STILL UNOBSERVED: SmartScreen's second screen (the "
-        "publisher line and Run anyway), and every macOS/Gatekeeper string, "
-        "which needs a Mac. Both carry no strings in the record and INSTALL.md "
-        "is required to say so by name, so a reconstruction cannot be mistaken "
-        "for an observation. The criterion needs both halves and has one",
+        "and never named `Don't run`, the focused default — in a document whose "
+        "own rule is to STOP when a step does not match, so a misquote aborts a "
+        "correct install. The second screen also settled a question the first "
+        "raised: `Unknown publisher` appears even with bundle.publisher set, "
+        "because SmartScreen reads the Authenticode signature and v1 signs "
+        "nothing, and INSTALL.md now says so rather than leaving a reader to "
+        "conclude the setting failed. THE GATEKEEPER HALF IS UNOBSERVED and "
+        "needs a Mac: it carries no strings in the record and INSTALL.md is "
+        "required to name it UNOBSERVED, so a reconstruction cannot be mistaken "
+        "for an observation. The criterion's TEXT names both, so it is complete "
+        "only for the platform that ships",
         requires=(
             ("docs/INSTALL.md", ("Gatekeeper", "SmartScreen", "unsigned")),
             ("docs/SIGNING.md", ("notariz", "out of scope")),
