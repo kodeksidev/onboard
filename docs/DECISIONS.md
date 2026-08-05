@@ -3238,3 +3238,49 @@ decided; it only records choices the spec left open.
   specifier `.numerictypes` twice on one line — but it is unreachable while
   nothing writes the table. The doc comments actively invite someone to wire it
   up; whoever does must fix the key first.
+
+- **v0.1.1 — a named failure mode: A CONTROL THAT EXISTS, IS CORRECT, AND
+  NEVER REACHES THE THING IT GOVERNS.** Two instances now, in unrelated
+  subsystems, which is what makes it worth naming rather than filing twice:
+  - `graphHasFail` was computed correctly and then dropped before it reached
+    `process.exitCode`, so a failing gate reported success.
+  - `CREATE_NO_WINDOW` was set correctly by `tauri-plugin-shell` on a command
+    object that is never spawned — `lib.rs` takes only `.get_program()` from
+    it — so the console it was meant to suppress appeared anyway.
+  In both, reviewing the control in isolation finds nothing wrong: the flag IS
+  set, the variable IS computed. The defect is entirely in the wiring between
+  the control and its effect, which is exactly the part a reader's eye skips
+  because the interesting logic is elsewhere. **The check is not "is this
+  configured correctly" but "does this configuration reach the thing it
+  governs" — trace it forward to the effect, or assert the effect.** Where the
+  effect is observable only by a human (a window on screen), that assertion
+  belongs in `docs/SMOKE_CHECKLIST.md`, not in a unit test that can only
+  re-confirm the control was set.
+
+- **v0.1.1 — a denylist that false-positives on prose is behaving correctly;
+  reword the prose, do not widen the allowlist.** `check_egress_chokepoint`
+  failed on `sidecar/spawn.rs` after a DOC COMMENT there mentioned the
+  fully-qualified `std` process-command type by name. The check scans for
+  literal strings and cannot distinguish code from comments. The fix was to
+  reword the comment (and say in it why it is worded that way), not to add a
+  second reviewed-door entry for that file. Precedent, deliberately: every
+  widening of an egress allowlist is permanent and is exactly how a real door
+  gets added unnoticed later, whereas a false positive on prose costs one
+  rewording and leaves the guarantee intact. The check erring toward
+  over-strictness is the safe direction for it to err in.
+
+- **v0.1.1 — the cache-invalidation version branch, exercised against a real
+  prior-version cache for the first time.** Section 6.1 drops and recreates the
+  cache when `engineVersion` differs, and v0.1.1 moves it, so every existing
+  user's first analysis after updating is a cold run. That branch had almost
+  certainly never run against a genuine v0.1.0 cache before — only against
+  caches this project's own tests had just written. Confirmed rather than
+  assumed, on a COPY of the real `0a8ae594cf7aa21c.sqlite` written by the
+  installed v0.1.0 (the original left untouched): before,
+  `engineVersion=0.1.0+2b1824d77312` with `file_cache`: 111, `symbol`: 355;
+  after pointing the v0.1.1 engine at it, `engineVersion=0.1.1+299bd25dd084`
+  with `file_cache`: 308, `symbol`: 1772. Recreated, not migrated — the old
+  rows do not survive and no warm hit is served. Distinct from the
+  integrity-failure branch, which is its own state. Called out in the release
+  notes because a one-off slow analysis after an update is otherwise reported
+  as a regression.

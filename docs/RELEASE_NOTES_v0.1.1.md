@@ -68,9 +68,12 @@ log the message named contained no record of the error at all.
 
 ## Upgrading
 
-Install over v0.1.0; no migration and no settings change. Your analysis cache
-stays valid — but a repository that previously failed will simply work now, and
-one analysed before will be re-analysed once because the engine version changed.
+Install over v0.1.0; no migration and no settings change.
+
+**Your first analysis of each repository after updating will be a cold run** —
+slower than usual, with no cache reuse. The analysis cache is keyed to the
+engine version, so updating discards it and rebuilds from scratch. This is
+expected and happens once per repository; the run after it is fast again.
 
 ## Platform status
 
