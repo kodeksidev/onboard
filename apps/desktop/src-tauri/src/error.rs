@@ -39,6 +39,20 @@ pub enum AppErrorCode {
     /// reported `E_ENGINE_CRASHED` for a sidecar it had never spawned.
     EEngineNotStarted,
     EEngineTimeout,
+    /// The engine RESPONDED with an error it could not classify — it is
+    /// alive and answering, and it did not exit. Distinct from
+    /// `EEngineCrashed`, which is reserved for a dead transport
+    /// (`RpcError::Closed`: the process exited or the pipe broke).
+    ///
+    /// The distinction is not cosmetic. `E_ENGINE_CRASHED`'s copy promises
+    /// that retrying usually works and that the cache keeps completed
+    /// files. For a deterministic engine-side failure — v0.1.0's
+    /// `UNIQUE constraint failed: symbol.id` — both promises are false:
+    /// re-parsing the same bytes fails identically every time, and the
+    /// batch persist is wrapped in a transaction that rolls back to zero
+    /// rows. Introduced after that error reached a user under a code whose
+    /// every statement was untrue for it.
+    EAnalysisFailed,
     EAnalysisInProgress,
     ENoAnalysis,
     EFileTooLarge,
@@ -91,6 +105,7 @@ impl AppErrorCode {
             AppErrorCode::EEngineCrashed => "E_ENGINE_CRASHED",
             AppErrorCode::EEngineNotStarted => "E_ENGINE_NOT_STARTED",
             AppErrorCode::EEngineTimeout => "E_ENGINE_TIMEOUT",
+            AppErrorCode::EAnalysisFailed => "E_ANALYSIS_FAILED",
             AppErrorCode::EAnalysisInProgress => "E_ANALYSIS_IN_PROGRESS",
             AppErrorCode::ENoAnalysis => "E_NO_ANALYSIS",
             AppErrorCode::EFileTooLarge => "E_FILE_TOO_LARGE",
@@ -156,6 +171,19 @@ impl AppError {
             format!(
                 "The analysis engine is missing from this installation, so nothing was \
                  analyzed. Reinstalling Onboard should restore it. The log is at {log_path}."
+            ),
+        )
+    }
+
+    /// The engine reported a failure it did not describe in terms this app
+    /// has a named state for. Says nothing about retrying and nothing about
+    /// cache retention, because neither holds for a deterministic failure —
+    /// see `AppErrorCode::EAnalysisFailed`.
+    pub fn analysis_failed(log_path: &str) -> Self {
+        Self::new(
+            AppErrorCode::EAnalysisFailed,
+            format!(
+                "Onboard could not finish analyzing this repository. The engine reported an                  internal error, and it will report the same one if this repository is                  analyzed again. The log is at {log_path}."
             ),
         )
     }

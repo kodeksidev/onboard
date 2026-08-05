@@ -1,6 +1,6 @@
 {
   "name": "onboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "verify": "bun run verify:js && bun run verify:rust",
-    "verify:js": "bun run typecheck && bun run lint && bun run lint:check-rules-fire && bun run contract:check-drift && bun run docs:check && bun run docs:check-dialogs && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run engine:check-globals && bun run criteria:check-drift && bun run ci:check-verify-coverage && bun run test",
+    "verify:js": "bun run typecheck && bun run lint && bun run lint:check-rules-fire && bun run queries:check-guard-parity && bun run contract:check-drift && bun run docs:check && bun run docs:check-dialogs && bun run ci:check-installs && bun run ci:check-python && bun run fixtures:check-tracked && bun run engine:check-globals && bun run criteria:check-drift && bun run ci:check-verify-coverage && bun run test",
     "verify:rust": "cargo fmt --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --all --check && cargo clippy --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --workspace --all-targets --all-features -- -D warnings && cargo build --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" -p onboard-dev-tools --bin onboard_engine_stub && cargo test --manifest-path \"apps/desktop/src-tauri/Cargo.toml\" --workspace --no-fail-fast",
     "contract:emit": "bun run --cwd \"packages/contract\" contract:emit",
     "contract:check-drift": "bun run --cwd \"packages/contract\" contract:check-drift",
@@ -22,6 +22,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "lint:check-rules-fire": "bun run scripts/lint-rules-fire-check.ts",
+    "queries:check-guard-parity": "python scripts/query-guard-parity-check.py",
     "test": "bun run --cwd \"packages/contract\" test && bun run --cwd \"packages/engine\" test && bun run --cwd \"apps/desktop\" test",
     "docs:check": "python scripts/docs-check.py",
     "docs:check-dialogs": "python scripts/dialog-strings-check.py",

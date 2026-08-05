@@ -251,3 +251,28 @@ works.
 
 Filed here so it is not lost, but it belongs with the Section 10 empty states
 rather than with this feature, and it should not wait for it.
+
+## Logging beyond the error line
+
+v0.1.1 added `AppState::log_app_error`, so a crash is now diagnosable from
+`onboard.log`. It deliberately stopped there: the error line is what makes a
+CRASH diagnosable, and the rest of the useful minimum serves hangs and
+performance questions, neither of which was in play for a patch release fixing
+a crash.
+
+Still to add, designed and costed at roughly six lines per analysis plus errors
+(the rotating logger already bounds file size):
+
+- analysis start — repoId and file count
+- phase transitions — walk / parse / resolve / persist, with elapsed ms
+- analysis end — fingerprint, symbol and edge counts
+- sidecar lifecycle — spawn, restart, exit
+
+`log_app_error` is currently wired into `analyze_repo` only; the other
+`#[tauri::command]` entry points should route their errors through it too, so
+the log covers command-layer failures (`E_PATH_NOT_FOUND`, `E_REPO_TOO_LARGE`)
+and not just engine-path ones.
+
+None of this carries file contents, keys, or repo-external paths, so Section 12
+does not constrain it: repoId is a hash and the only paths logged are the app's
+own.
