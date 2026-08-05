@@ -87,20 +87,32 @@ function stringLiteralContent(stringNode: Node): string {
   return stringNode.text;
 }
 
+/**
+ * A route symbol is positioned on ITS OWN decorator, not on the enclosing
+ * `decorated_definition`. Two genuine routes stacked on one function —
+ * `@app.get("/items")` over `@app.post("/items")` — share a name, so taking
+ * the position from the shared definition gave them the same `startLine` and
+ * therefore the same `symbol.id` (`path#name#startLine`, no `kind`). Python
+ * permits one decorator per line, so per-decorator positions are distinct by
+ * construction. `route.call` (the `decorated_definition`) is still used for
+ * container resolution, which must see the enclosing class. See
+ * `queries/python.scm` and docs/DECISIONS.md.
+ */
 function buildRouteSymbol(captures: readonly QueryCapture[]): RawSymbol | null {
   const call = captures.find((c) => c.name === 'route.call')?.node ?? null;
+  const decorator = captures.find((c) => c.name === 'route.decorator')?.node ?? null;
   const path = captures.find((c) => c.name === 'route.path')?.node ?? null;
-  if (call === null || path === null) {
+  if (call === null || decorator === null || path === null) {
     return null;
   }
   return {
     name: stringLiteralContent(path),
     kind: 'route',
-    startLine: call.startPosition.row + 1,
-    endLine: call.endPosition.row + 1,
+    startLine: decorator.startPosition.row + 1,
+    endLine: decorator.endPosition.row + 1,
     isExported: false,
     containerName: findContainerName(call),
-    signature: firstLineSignature(call),
+    signature: firstLineSignature(decorator),
   };
 }
 

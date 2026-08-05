@@ -167,6 +167,23 @@ it found a defect no automated gate could see.
 ## Launch and the static-mode guarantee
 
 - [ ] App launches with no crash and no unhandled native dialog.
+- [ ] **No console or terminal window accompanies the app.** Nothing beside
+      the Onboard window: no black console, no window whose title bar shows a
+      path ending `onboard-engine.exe`. Watch for the whole session, not just
+      at launch — the sidecar is restarted on crash (up to
+      `SIDECAR_MAX_RESTARTS`), and a window that reappears mid-session is the
+      same defect.
+      **v0.1.0 shipped with this broken on Windows** and no CI job could see
+      it: the engine subprocess was spawned without `CREATE_NO_WINDOW`, so
+      the OS gave the console-subsystem sidecar its own console, which sat
+      beside the app for the life of the process. The `installed-windows` job
+      asserts on log CONTENT, and the `installed .deb` job runs under Xvfb —
+      neither observes what is on screen. A human sees it in one second. That
+      gap is the whole reason this file exists (Section 3 above).
+      Structurally Windows-only: `CREATE_NO_WINDOW` has no POSIX analogue and
+      the child's stdio is fully piped, so `.deb`/`.dmg` users were never
+      affected — but check on every platform anyway rather than trusting that
+      reasoning.
 - [ ] **Icon check — read the EXECUTABLE, not the shortcut.** On a machine with
       a prior install, the Start-menu shortcut, the taskbar and Explorer may
       keep showing the **old** icon after an upgrade. That is the Windows
