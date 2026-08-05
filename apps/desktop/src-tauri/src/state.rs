@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use crate::ai::rate_limit::AiRateLimiter;
 use crate::contract::AnalysisResult;
+use crate::error::AppError;
 use crate::secrets::ai_key::AiKeyStore;
 use crate::sidecar::supervisor::SidecarSupervisor;
 use crate::util::logging::RotatingLogger;
@@ -51,6 +52,27 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Records an `AppError` in `onboard.log` with its code and developer
+    /// detail, and returns it unchanged so call sites stay `?`-shaped.
+    ///
+    /// Before v0.1.1 the log had exactly two call sites, both about sidecar
+    /// resolution, so an error that reached the UI left no trace in the file
+    /// the error copy tells the user to open. `E_ENGINE_CRASHED`'s copy
+    /// named a log that could not describe the crash.
+    ///
+    /// Section 12 constrains what may be logged — no file contents, no
+    /// keys, no repo-external paths — and none of that appears here.
+    /// `code` is a fixed enum string and `detail` is the same developer
+    /// text the UI already shows behind its Details disclosure, so this
+    /// records nothing the user cannot already see on screen.
+    pub fn log_app_error(&self, error: AppError) -> AppError {
+        let detail = error.detail.as_deref().unwrap_or("(none)");
+        let _ = self
+            .logger
+            .log_line(&format!("error {}: {}", error.code, detail));
+        error
+    }
+
     pub fn record_session(&self, repo_id: String, repo_root: PathBuf) {
         self.sessions.lock().expect("sessions map poisoned").insert(
             repo_id,
