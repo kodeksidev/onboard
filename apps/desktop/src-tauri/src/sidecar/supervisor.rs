@@ -182,7 +182,9 @@ impl SidecarSupervisor {
                 self.try_restart(&mut state);
                 Err(AppError::engine_crashed(&self.config.log_path))
             }
-            Err(RpcError::Remote(error_obj)) => Err(map_remote_error(error_obj)),
+            Err(RpcError::Remote(error_obj)) => {
+                Err(map_remote_error(error_obj, &self.config.log_path))
+            }
         }
     }
 
@@ -214,18 +216,24 @@ impl Drop for AnalysisGuard<'_> {
 /// Maps a JSON-RPC `error` object into an `AppError`. The convention this
 /// crate and the engine share (see `docs/DECISIONS.md`): a structured
 /// domain error (e.g. `E_REPO_TOO_LARGE`) is carried in `error.data` as a
-/// serialized `AppError`; anything else falls back to a generic
-/// `E_ENGINE_CRASHED` without leaking the raw remote string into `message`.
-fn map_remote_error(error_obj: Value) -> AppError {
+/// serialized `AppError`; anything else falls back to `E_ANALYSIS_FAILED`
+/// without leaking the raw remote string into `message`.
+///
+/// The fallback is deliberately NOT `E_ENGINE_CRASHED`. Reaching this
+/// function means the engine RESPONDED — `RpcError::Remote` carries a
+/// JSON-RPC `error` object, so the process is alive and answering. A dead
+/// transport arrives as `RpcError::Closed` instead, and that is the only
+/// path that should claim the engine crashed. v0.1.0 conflated the two, so
+/// a deterministic engine-side failure was reported with copy promising
+/// that retrying usually works and that the cache keeps completed files —
+/// both false for it.
+fn map_remote_error(error_obj: Value, log_path: &str) -> AppError {
     if let Some(data) = error_obj.get("data") {
         if let Ok(app_error) = serde_json::from_value::<AppError>(data.clone()) {
             return app_error;
         }
     }
-    let fallback = AppError::new(
-        AppErrorCode::EEngineCrashed,
-        "The analysis engine reported an error it did not describe in a way Onboard understands.",
-    );
+    let fallback = AppError::analysis_failed(log_path);
     match error_obj.get("message").and_then(Value::as_str) {
         Some(raw_message) => fallback.with_detail(raw_message.to_string()),
         None => fallback,

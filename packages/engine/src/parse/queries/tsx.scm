@@ -39,21 +39,33 @@
   arguments: (arguments (_) @import.dynamic_arg)) @import.dynamic_stmt
 
 ; ---- route registrations, e.g. `router.get('/users/:id', handler)` ----
-; The leading `.` anchors the path string to the FIRST argument, and the
-; second `(_)` pattern requires at least one MORE argument after it (a
-; handler/middleware) — together these require a >=2-argument call whose
-; first argument is a string. Without both constraints this over-matched
-; ordinary one-argument `.get(key)`-style calls (`Map.get`, a test's
-; `result.get('a')`, ...) as phantom routes: same name + same call-site
-; line as a genuinely different `.get(...)` call on the same source line
-; collided on `symbol.id` (path#name#startLine omits `kind`), which is
-; how "UNIQUE constraint failed: symbol.id" surfaced on real repos with
-; `.get(...)` calls unrelated to routing (see docs/DECISIONS.md).
+; INVARIANT: one route call produces exactly ONE match, whatever its arity.
+;
+; Both `.` anchors are load-bearing, and for different reasons:
+;   - the first pins the path string to the FIRST argument, so a string
+;     appearing anywhere else in the call is not mistaken for a path;
+;   - the second pins @route.handler to the argument IMMEDIATELY after the
+;     path, which both requires a >=2-argument call and — critically —
+;     admits exactly one binding.
+;
+; Two separate crashes ("UNIQUE constraint failed: symbol.id") came from
+; getting this wrong in opposite directions (see docs/DECISIONS.md):
+;   1. Originally the pattern required only that SOME string appear among
+;      the arguments, so one-argument `.get(key)` calls (`Map.get`, a
+;      test's `result.get('a')`, ...) became phantom routes; two such calls
+;      on one line shared name+startLine and collided.
+;   2. The fix for (1) added `(_) @route.handler` UNANCHORED, which binds
+;      once per argument following the path. tree-sitter emits one match
+;      per binding, so a route emitted `argc - 1` identical symbols, all
+;      sharing name+startLine. Any Express route carrying middleware —
+;      `router.get(path, validate(...), handler)` — crashed the cache
+;      write. Invisible at arity 2, which is the only arity the
+;      `node-express` fixture had.
 (call_expression
   function: (member_expression
     object: (identifier)
     property: (property_identifier) @route.method)
   arguments: (arguments
     . (string) @route.path
-    (_) @route.handler)
+    . (_) @route.handler)
   (#any-of? @route.method "get" "post" "put" "delete" "patch" "options" "head" "use")) @route.call

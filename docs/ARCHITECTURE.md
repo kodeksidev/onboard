@@ -107,6 +107,16 @@ repository. A call that exceeds its budget kills the process and reports
 `E_ENGINE_CRASHED`; a version handshake mismatch reports
 `E_ENGINE_VERSION_MISMATCH` rather than proceeding against an unknown contract.
 
+An engine that **answers** with an error it does not describe in terms the
+shell has a named state for reports `E_ANALYSIS_FAILED`, not
+`E_ENGINE_CRASHED`. The two are distinguished by the transport, not by
+guesswork: a dead transport arrives as a closed connection, while a JSON-RPC
+`error` object means the process is alive and replying. The distinction is
+load-bearing because the copy differs — `E_ENGINE_CRASHED` tells the user that
+retrying usually works and that the cache keeps completed files, and for a
+deterministic engine-side failure both statements are false. v0.1.0 reported
+one such failure under `E_ENGINE_CRASHED`; see `docs/DECISIONS.md`.
+
 Progress arrives as notifications on the same channel and is forwarded to the
 UI as events.
 

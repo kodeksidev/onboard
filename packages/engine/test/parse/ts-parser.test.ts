@@ -130,6 +130,48 @@ describe('createTsFamilyParser — route detection', () => {
     const route = parsed.symbols.find((s) => s.kind === 'route');
     expect(route?.name).toBe('/users');
   });
+
+  /**
+   * ONE ROUTE CALL PRODUCES EXACTLY ONE ROUTE SYMBOL, INDEPENDENT OF HOW
+   * MANY ARGUMENTS IT TAKES. Stated as an invariant over arity rather than
+   * as the handful of arities anyone thought to enumerate, because the
+   * defect this covers was invisible at exactly one arity.
+   *
+   * Regression test for the v0.1.0 crash on a real repo (docs/DECISIONS.md).
+   * Phase 11 fixed route OVER-matching by appending `(_) @route.handler` to
+   * require a handler argument after the path. That clause is an unanchored
+   * child pattern, so it binds once per argument FOLLOWING the path, and
+   * tree-sitter emits one match per binding: a route call emitted `argc - 1`
+   * identical `route` symbols, all sharing name and startLine, and therefore
+   * all sharing `symbol.id` (`path#name#startLine`, no `kind`). Every
+   * Express route carrying middleware — `router.get(path, validate(...),
+   * handler)` — crashed the cache write.
+   *
+   * It survived Phase 11's own verification because `node-express`, the
+   * fixture that proved that fix, contains only two-argument routes, and
+   * `argc - 1 == 1` is precisely the arity at which the defect is invisible.
+   * A regression test must exercise the shape a fix CREATES, not only the
+   * shape it REPAIRS.
+   */
+  test('emits exactly one route symbol per route call at every arity from 2 to 6', () => {
+    const middleware = ['auth', 'rbac', 'validate(schema)', 'rateLimit()'];
+    for (let argc = 2; argc <= 6; argc += 1) {
+      const args = ["'/x'", ...middleware.slice(0, argc - 2), 'handler'].join(', ');
+      const source = `router.get(${args});`;
+      const routes = jsParser.parse(source).symbols.filter((s) => s.kind === 'route');
+      expect({ argc, source, count: routes.length }).toEqual({ argc, source, count: 1 });
+      expect(routes[0]?.name).toBe('/x');
+    }
+  });
+
+  /** The same invariant at the layer that actually crashed: distinct ids. */
+  test('a multi-argument route call yields no duplicate (name, startLine) pairs', () => {
+    const parsed = jsParser.parse(
+      "router.get('/', validate({ query: listAuditLogsQuerySchema }), asyncHandler(auditController.list));",
+    );
+    const keys = parsed.symbols.map((s) => `${s.name}#${String(s.startLine)}`);
+    expect(keys.length).toBe(new Set(keys).size);
+  });
 });
 
 describe('createTsFamilyParser — raw imports', () => {

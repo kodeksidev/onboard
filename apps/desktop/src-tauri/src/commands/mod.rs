@@ -120,7 +120,7 @@ pub fn analyze_repo(
         },
     );
     stop_progress_forwarder();
-    result
+    result.map_err(|error| state.log_app_error(error))
 }
 
 #[tauri::command]

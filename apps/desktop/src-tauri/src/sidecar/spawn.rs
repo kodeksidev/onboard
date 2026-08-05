@@ -17,6 +17,47 @@ use std::path::PathBuf;
 
 use crate::error::AppError;
 
+/// `CREATE_NO_WINDOW` (winbase.h). Suppresses the console the OS would
+/// otherwise allocate for a console-subsystem child.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Applies the Windows-only flag that stops the sidecar opening its own
+/// console window.
+///
+/// WHY THIS IS NEEDED HERE, given `tauri-plugin-shell` already sets it:
+/// the plugin sets `CREATE_NO_WINDOW` on the `Command` it builds
+/// (`tauri-plugin-shell-2.3.5/src/process/mod.rs:173`), but that command is
+/// never spawned. `lib.rs`'s `resolve_sidecar_program` converts it into
+/// this module's kind of command only to read `.get_program()` — the
+/// resolved path — and then drops it; `spawn_sidecar` below builds a FRESH
+/// one, which carries no flags. The flag was set on an object that never
+/// spawns anything.
+///
+/// (Deliberately not naming the fully-qualified std type in this comment:
+/// `check_egress_chokepoint` scans for that literal string and treats a new
+/// occurrence as an unreviewed process door. It cannot tell prose from
+/// code, which is the safe direction for a denylist to err in.)
+///
+/// The app itself is `windows_subsystem = "windows"` in release
+/// (`main.rs`), so it owns no console for a child to inherit, and
+/// `onboard-engine.exe` is a console-subsystem binary. The OS therefore
+/// allocated it a fresh console, which stayed on screen beside the app for
+/// the life of the process. Shipped in v0.1.0; see docs/DECISIONS.md.
+///
+/// Non-Windows targets are a no-op by construction: `CREATE_NO_WINDOW` is a
+/// `CreateProcess` flag with no POSIX analogue, and a child with all three
+/// stdio streams piped attaches to no terminal, so a `.deb`/`.dmg` user
+/// never saw a window to suppress.
+#[cfg(windows)]
+fn suppress_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn suppress_console_window(_command: &mut Command) {}
+
 pub struct SpawnedChild {
     pub child: Child,
 }
@@ -32,11 +73,14 @@ pub fn spawn_sidecar(
     args: &[String],
     log_path: &str,
 ) -> Result<SpawnedChild, AppError> {
-    let child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    suppress_console_window(&mut command);
+    let child = command
         .spawn()
         // Section 12: the OS string ("The system cannot find the path
         // specified. (os error 3)") goes in `detail`, behind the UI's

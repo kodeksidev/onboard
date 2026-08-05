@@ -3046,3 +3046,195 @@ decided; it only records choices the spec left open.
   that could drift from it. `publisher` is the individual, which is also the
   string an individually-issued code-signing certificate would carry, so
   `SIGNING.md` will not have to change it.
+
+- **v0.1.1 (P0 defect, shipped) — "UNIQUE constraint failed: symbol.id"
+  returned, and the Phase 11 fix was its cause.** Reproduced on the real
+  repository the user reported (`CacttusEdu`, 308 files, no Python at all)
+  through `analyze()` with a real `SqliteCacheStore`, not by hand-feeding the
+  parser. The colliding rows, printed before anything was changed, came from
+  `backend/src/routes/admin/audit-logs.routes.ts:35`:
+  `router.get('/', validate({ query: listAuditLogsQuerySchema }),
+  asyncHandler(auditController.list));` — two byte-identical rows
+  `{ name: "/", kind: "route", startLine: 35 }`.
+  - **Not a hash collision, and not the missing `kind`.** Both rows are
+    `kind: "route"`, so widening `symbol.id` to include `kind` would have
+    changed nothing. The two rows carry IDENTICAL `(path, name, startLine)`
+    inputs, so `computeSymbolId` was handed the same string twice — an input
+    collision, not a digest collision. 16 hex chars is 64 bits; a birthday
+    collision needs billions of symbols, and this repo has 1,772.
+  - **Mechanism.** Phase 11 repaired route OVER-matching by appending
+    `(_) @route.handler` to require a handler argument after the path. That
+    clause is an UNANCHORED child pattern, so it binds once per argument
+    FOLLOWING the path, and tree-sitter emits one match per binding. Routes
+    emitted equals `argc - 1`, measured: 2 args produced 1 symbol, 3 produced
+    2, 4 produced 3, 5 produced 4. Every Express route carrying middleware
+    duplicated and crashed the cache write. Fixed by anchoring the handler to
+    the argument immediately after the path (`. (_) @route.handler`), which
+    both requires a two-or-more-argument call and admits exactly one binding.
+  - **Why Phase 11's own verification could not see it, in the terms that
+    generalise past routes.** Three unit tests were added. Two assert with
+    `.find()`, which returns the FIRST of N and therefore passes at one
+    duplicate or a hundred. The third is a negative — `.some(...) === false` —
+    trivially true when the shape emits nothing at all, so it survives any
+    defect that emits MORE. The one genuinely discriminating assertion,
+    kitchen-sink's end-to-end "no two symbols share an `id`", was pointed at a
+    fixture containing zero route calls. And `node-express`, the fixture that
+    proved the fix, contained only 2-argument routes — precisely the arity at
+    which `argc - 1 == 1` makes the new defect invisible. Each half was
+    individually reasonable. The defect lived in the gap between them: the
+    discriminating check had no route to check, and the route fixture had only
+    the harmless arity.
+  - **THE STANDING LESSON: a regression test must exercise the shape a fix
+    CREATES, not only the shape it REPAIRS.** A fix changes behaviour in two
+    directions and verifying one of them is half a verification. Where the new
+    behaviour has a parameter, state the property as an invariant over that
+    parameter rather than testing the cases you happened to think of. This
+    fix's test asserts EXACTLY ONE route symbol per route call at every arity
+    from 2 to 6, not three hand-picked examples.
+  - **Verified as a PAIR**, per the standing rule that a fix altering output
+    for repos that were already correct is a second defect. Fingerprints were
+    captured for 5 fixtures and 4 real repositories BEFORE any fixture was
+    edited. After the query change exactly one line moved: `CacttusEdu`
+    CRASH to `ee6c23e7...` (308 files, 1,772 symbols, 178 routes). All eight
+    others byte-identical.
+  - **Each fixture proven to discriminate**, by stashing the `.scm` change and
+    watching `node-express`, `python-flask` and `kitchen-sink` each crash with
+    the real `SQLiteError` before it, and pass after.
+
+- **v0.1.1 — the same guard gap in `python.scm`, which Phase 11 never touched,
+  plus a deliberate asymmetry that must not be "restored to parity".** Phase 11
+  hardened three of the four route-carrying queries. Python kept none of the
+  guards: no `#any-of?` on the verb and no first-argument anchor. Across 7,040
+  real Python files the engine emitted **230 symbols of kind `route`, of which
+  5 were routes** — the rest `@click.option`, `@mock.patch`,
+  `@unittest.skipIf`, `@_api.deprecated`. That is not only a crash source: it
+  corrupted classification, importance ranking and the roadmap for every
+  Python repository that did NOT crash. After the fix: 230 to 0, with genuine
+  Flask/FastAPI detection confirmed intact.
+  - A second, independent Python defect: a route symbol took its `startLine`
+    from the enclosing `decorated_definition`, so two GENUINE routes stacked on
+    one function (`@app.get("/items")` over `@app.post("/items")` — an ordinary
+    FastAPI idiom) shared a name AND a line, and collided. Tightening the query
+    could never have fixed this one. Route symbols are now positioned on their
+    own decorator; Python permits one decorator per line, so their lines are
+    distinct by construction.
+  - **THE ASYMMETRY, RECORDED SO IT IS NOT DELETED AS AN INCONSISTENCY:**
+    `python.scm` carries a guard the three TS/JS queries do not — a `#match?`
+    predicate requiring a route path to begin with a forward slash. It exists
+    because the verb list alone cannot separate HTTP `PATCH` from
+    `@mock.patch(...)`, the stdlib patcher, which appears in essentially every
+    Python test suite. A denylist of known non-route objects (`mock`,
+    `unittest`, ...) was rejected: an open-ended list of things that are not
+    routes is the same shape as the defect being fixed. A leading slash is a
+    property of what a route IS, and both Flask and FastAPI require one.
+    **The cost, accepted deliberately:** a Python route registered with a path
+    that does not begin with a slash is now undetected. TS/JS do not need this
+    guard — no comparable idiom collides with their verb list — and
+    propagating it there would change behaviour for already-correct repos to
+    fix no defect. Do not "restore parity" in either direction.
+  - The parity check treats this as an ADDITION, not a divergence: it asserts a
+    floor (verb restriction plus anchored argument-list captures) and is silent
+    about extra guards, so `python.scm` satisfies it while carrying more.
+
+- **v0.1.1 — `scripts/query-guard-parity-check.py`, because the real defect
+  both times was a decision that reached some call sites and not others.**
+  Same shape as the three `parseJsonSafely` copies and the tripled waker. The
+  check derives its worklist from the query files themselves — any `.scm`
+  capturing `@route.` participates — so a fourth language's query is covered
+  the day it is added rather than the day somebody remembers a list. It
+  asserts the verb restriction and that every argument-list capture is
+  anchored. **Proven to discriminate:** run against the pre-fix tree it
+  independently catches all four defects (the unanchored handler in each of
+  the three TS/JS queries, and both Python gaps). It distinguishes a capture
+  ATTACHED to a node pattern from one REFERENCED by a predicate form, because
+  the latter is not subject to the anchor rule.
+
+- **v0.1.1 — `E_ENGINE_CRASHED` was the wrong code, for the second time, and
+  the discriminator already existed.** The engine did not exit; it answered.
+  `RpcError::Closed` means a dead transport and `E_ENGINE_CRASHED` is correct
+  there. `RpcError::Remote` carries a JSON-RPC `error` object, which proves the
+  process is alive and replying — yet it fell through to the same code. The
+  fallback now returns a new `E_ANALYSIS_FAILED`, chosen by what actually
+  happened at the transport layer rather than by guessing, exactly as
+  `E_ENGINE_NOT_STARTED` was split out after a packaged build reported a crash
+  for a process it had never spawned.
+  - This is not a wording preference. `E_ENGINE_CRASHED`'s copy makes three
+    statements — the engine "exited before finishing", "retrying usually
+    works", and "the cache keeps completed files" — and for a deterministic
+    engine-side failure **all three are false**: the process is alive,
+    re-parsing identical bytes fails identically (verified: three consecutive
+    runs, same error), and the batch persist is transactional and rolls back
+    to zero rows (verified: `file_cache`, `symbol`, `token_index` and
+    `analysis_result` all 0 after three crashed runs, `integrity_check: ok`).
+    v0.1.0 shipped all three to a user. The new copy promises neither retry
+    nor retention. `E_ENGINE_CRASHED`'s copy is unchanged, because for a
+    genuinely closed transport it is true.
+  - Additive to the frozen contract, not a change to it: `AppError.code` is
+    `z.string()`, and the `E_ENGINE_NOT_STARTED` precedent added its code in
+    `error.rs` and the UI copy table only. No `SCHEMA_VERSION` bump, no cache
+    invalidation.
+
+- **v0.1.1 — the log had two call sites in the whole application, and the
+  error copy pointed users at it.** Both were about sidecar resolution
+  (`lib.rs`), so a real user's `onboard.log` after a crash read, in full,
+  three identical `sidecar resolved: ...` lines. `map_remote_error` put the
+  engine's message into `AppError.detail`, which reaches the UI and nothing
+  else. So `E_ENGINE_CRASHED`'s "The log is at {path}" named a file that could
+  not describe the error it was naming. `AppState::log_app_error` now records
+  every `AppError` it is given with its code and detail; `analyze_repo` is
+  wired to it. Section 12 constrains what may be logged — no file contents, no
+  keys, no repo-external paths — and none of that appears here: the code is a
+  fixed enum string and the detail is the same developer text the UI already
+  shows behind its Details disclosure. Nothing is recorded that the user
+  cannot already read on screen. Analysis start/end and phase transitions are
+  the obvious next additions and are deliberately NOT in this patch release.
+
+- **v0.1.1 (P1 defect, shipped) — a console window opened beside the app on
+  every Windows launch, and `tauri-plugin-shell` was already setting the flag
+  that would have prevented it.** The plugin sets `CREATE_NO_WINDOW` on the
+  command it builds (`tauri-plugin-shell-2.3.5/src/process/mod.rs:173`) — but
+  that command is never spawned. `lib.rs`'s `resolve_sidecar_program` converts
+  it only to read `.get_program()`, the path the plugin resolved, and drops it;
+  `sidecar/spawn.rs` then builds a fresh command carrying no flags. The flag
+  was set on an object that never spawns anything. Since the app is
+  `windows_subsystem = "windows"` in release it owns no console for a child to
+  inherit, so the OS allocated the console-subsystem `onboard-engine.exe` its
+  own, which sat on screen for the life of the process.
+  - **Scope, established rather than assumed.** Structurally Windows-only:
+    `CREATE_NO_WINDOW` is a `CreateProcess` flag with no POSIX analogue, and
+    the child's stdin/stdout/stderr are all piped, so no terminal is attached
+    on Linux or macOS — a `.deb` user never saw one, and the `installed-deb`
+    job running under Xvfb is not the reason. Restarts do not accumulate
+    windows: `try_restart` calls `kill_live` first, and on the `Closed` path
+    the child is already dead, so at most one console exists at a time — but it
+    is RE-created on each restart, so up to `SIDECAR_MAX_RESTARTS`
+    reappearances are possible within one session.
+  - **No CI job can see this**, which is the point. `installed-windows`
+    asserts on log CONTENT; `installed-deb` runs headless under Xvfb. Neither
+    observes the screen. A human sees it in one second. A line was added to
+    `docs/SMOKE_CHECKLIST.md` accordingly — that file exists for exactly this
+    category, and this defect is now its clearest example.
+
+- **v0.1.1 — `import_edge` is dead in real-world use, confirmed on a shipped
+  cache rather than by static analysis.** The table is defined in the frozen
+  schema, specified in Section 6.1, and given a justified index — and
+  `replaceImportEdgesForPath`/`getImportEdgesFromPath` have zero callers in
+  `src/`; the only caller of either is the cache-store's own unit test. A real
+  `0a8ae594cf7aa21c.sqlite` written by the installed v0.1.0 against a 111-file
+  repository contains **`import_edge`: 0 rows**, beside `symbol`: 355 and
+  `token_index`: 11,538. Warm runs never read edges from SQL: they rehydrate
+  the whole `ParsedFile` — raw imports included — from `file_cache.parsed_json`
+  and re-resolve every edge, and the fast path serves the entire assembled
+  result from `analysis_result.result_json`. The schema's own `-- Reason:`
+  comments therefore describe a design that is not the implementation:
+  `idx_import_edge_to` claims in-degree, PageRank and the "importers of this
+  file" panel traverse it, and `idx_symbol_path` claims the file-viewer outline
+  range-scans it, while `getSymbolsForPath` also has zero callers. Left in
+  place for v0.1.1 and recorded here, NOT fixed: removing a table from a frozen
+  schema is not a patch-release change. The latent hazard is real — its primary
+  key `(from_path, specifier, line)` is derived from a subset of the fields
+  that make a row unique, and numpy's
+  `from . import multiarray, numerictypes, numerictypes as nt` yields the
+  specifier `.numerictypes` twice on one line — but it is unreachable while
+  nothing writes the table. The doc comments actively invite someone to wire it
+  up; whoever does must fix the key first.

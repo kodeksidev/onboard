@@ -95,6 +95,21 @@ export const ERRORS = {
    * cannot help either, so this copy deliberately offers no Retry framing;
    * the install is broken, not the run. See docs/DECISIONS.md.
    */
+  /**
+   * The engine RESPONDED with an error it could not classify. It is alive
+   * and it did not exit, so `engineCrashed`'s copy is wrong here in every
+   * particular: it says the engine "exited before finishing" (it did not),
+   * that "retrying usually works" (a deterministic engine-side failure
+   * fails identically every time), and that "the cache keeps completed
+   * files" (the batch persist is transactional and rolls back to zero
+   * rows). v0.1.0 shipped all three statements to a user hitting
+   * `UNIQUE constraint failed: symbol.id`. This copy promises neither retry
+   * nor retention. See docs/DECISIONS.md.
+   */
+  analysisFailed: (logPath: string): TitledCopy => ({
+    title: 'Onboard could not finish analyzing this repository',
+    description: `The engine reported an internal error, and it will report the same one if this repository is analyzed again. The log is at ${logPath}. Reporting this with the log is the fastest way to get it fixed.`,
+  }),
   engineNotStarted: (logPath: string): TitledCopy => ({
     title: 'Onboard could not start its analysis engine',
     description: `The analysis engine is missing from this installation, so nothing was analyzed. Reinstalling Onboard should restore it. The log is at ${logPath}.`,
@@ -469,6 +484,7 @@ export const ERROR_TITLES: Readonly<Record<string, string>> = {
   E_REPO_TOO_LARGE: ERRORS.repoTooLarge(0).title,
   E_ENGINE_CRASHED: ERRORS.engineCrashed('').title,
   E_ENGINE_NOT_STARTED: ERRORS.engineNotStarted('').title,
+  E_ANALYSIS_FAILED: ERRORS.analysisFailed('').title,
   E_ENGINE_TIMEOUT: ERRORS.engineTimeout().title,
   E_ANALYSIS_IN_PROGRESS: ERRORS.analysisInProgress().title,
   E_FILE_TOO_LARGE: ERRORS.fileTooLarge('', '').title,
