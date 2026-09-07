@@ -61,6 +61,18 @@ const IS_WINDOWS = process.platform === 'win32';
  * webview is platform-native, so this differs per OS: WebView2/msedgedriver
  * on Windows, WebKitGTK/WebKitWebDriver on Linux. Overridable so CI can point
  * at a driver it installed itself.
+ *
+ * On Windows, this WILL go stale: WebView2 auto-updates with the OS/Edge, but
+ * the driver at this path does not update itself, and `msedgedriver` refuses
+ * to start a session against a runtime it wasn't built for — "session not
+ * created: This version of Microsoft Edge WebDriver only supports Microsoft
+ * Edge version X" (X is the driver's version; the SAME error message also
+ * states "Current browser version is Y" — that Y is exactly the version to
+ * fetch, no separate lookup needed). To refresh: download
+ * `https://msedgedriver.microsoft.com/{Y}/edgedriver_win64.zip`, extract
+ * `msedgedriver.exe`, and overwrite this path. See docs/DECISIONS.md
+ * ("msedgedriver pinning", 2026-09-07) for the incident this was written
+ * from.
  */
 const NATIVE_DRIVER_PATH =
   process.env.MSEDGEDRIVER_PATH ??

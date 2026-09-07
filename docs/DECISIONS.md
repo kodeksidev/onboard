@@ -3364,3 +3364,38 @@ decided; it only records choices the spec left open.
     against a repo this size, and confirm the canvas is visible and the tab
     strip is not shifted. Chromium agreement is evidence, not a substitute
     for that.
+
+- **v0.1.2 — msedgedriver pinning: the E2E suite's own driver goes stale
+  independently of everything it tests, and will do so again.** Discovered
+  while trying to run `e2e/graph-layout.spec.ts` (above) against real
+  WebView2: `wdio.conf.ts`'s `NATIVE_DRIVER_PATH` points at a checked-out
+  `msedgedriver.exe` under `src-tauri/target/webdriver/` (gitignored, not
+  part of the shipped app), and that binary is pinned to whatever Edge
+  build it was fetched for. WebView2 itself auto-updates with Windows/Edge;
+  the driver does not follow it. Symptom: `session not created: This
+  version of Microsoft Edge WebDriver only supports Microsoft Edge version
+  150. Current browser version is 152.0.4191.66` — a hard failure with no
+  retry that has nothing to do with the code under test.
+  - **The fix is not "pin the runtime too."** WebView2 is a shared system
+    component (other apps use it), not something this project should hold
+    back, and Edge itself updates on its own cadence outside this
+    project's control. The driver is the one side of this pair actually
+    checked out locally, so it is the one side to keep in sync.
+  - **How to refresh, recorded so the next person does not have to
+    rediscover it (they will hit this again — it is a when, not an if):**
+    the failing session's own error message states the exact version
+    needed ("Current browser version is Y" — no separate lookup required).
+    Download `https://msedgedriver.microsoft.com/{Y}/edgedriver_win64.zip`,
+    extract `msedgedriver.exe` from it, and overwrite
+    `apps/desktop/src-tauri/target/webdriver/msedgedriver.exe`. Verify with
+    `msedgedriver.exe --version` before re-running the suite — it should
+    echo back `Y` exactly. Same doc comment now lives at
+    `wdio.conf.ts`'s `NATIVE_DRIVER_PATH`, so it is visible at the exact
+    line someone debugging this will already be looking at, not only here.
+  - **Resolved this occurrence** by fetching
+    `https://msedgedriver.microsoft.com/152.0.4191.66/edgedriver_win64.zip`
+    (Microsoft's own driver host, matched to the installed runtime exactly;
+    confirmed via `--version` after extraction) with the user's explicit
+    go-ahead, since fetching a binary is a permission-gated action — this
+    is a test-toolchain tool, gitignored, and never enters the bundled
+    app.
