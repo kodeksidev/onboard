@@ -3464,33 +3464,48 @@ decided; it only records choices the spec left open.
     reading `ensure_started` directly, not inferred: the comparison is
     `contract_version != Some(CONTRACT_SCHEMA_VERSION)` and nothing else in
     that function reads `result` at all.
-  - **Fixed the visibility half.** `engineVersion`, `contractSchemaVersion`,
-    and `grammarFingerprint` are now logged on every successful handshake
-    (`onboard.log`: `engine handshake: engineVersion=... contractSchemaVersion=...
-    grammarFingerprint=...`) and kept in `SidecarSupervisor::last_handshake`
-    across restarts, surfaced through a new read-only `get_engine_info`
-    command and a footer in Settings (`EngineVersionFooter.tsx`) reading
-    `Onboard <appVersion> · engine <engineVersion> · schema <n>`. Additive:
-    a new command, following the same pattern `test_ai_key` and the three
-    `ai_*` commands were added by in Phase 12, with its own seam-coverage
-    case in `tauri-ipc.seam.test.ts` (a test written for precisely this
-    class of gap — "a method nothing asserts against the bridge can be a
-    stub forever" — and it caught the omission immediately when this
-    command was added without one).
-  - **NOT fixed, and deliberately left as an open question rather than
-    decided unilaterally: whether the shell should REFUSE to start a
-    sidecar whose `engineVersion` disagrees with what the app expects.**
-    Doing that requires the Rust binary to know, at compile time, which
-    engine build it was released with — nothing currently embeds that
-    (unlike `CONTRACT_SCHEMA_VERSION`, which is a real constant).
-    Arguments for: it would have caught this investigation's own defect
-    immediately instead of a week into it, and it is the same "does the
-    control reach the thing it governs" question the console-window and
-    `graphHasFail` entries above already named as a recurring failure
-    family. Arguments against: it would need a real mechanism (embedding
-    the expected `engineVersion` — the git-hash-suffixed build stamp, not
-    the semver alone — via `build.rs`, likely reading the same source
-    `build-sidecar.ts` hashes from), and during active development the app
-    and engine are frequently rebuilt independently and briefly out of
-    step, which a hard refusal would turn into a blocked dev loop rather
-    than a caught bug. Not decided here.
+  - **Fixed: visibility, at both points that matter.** `engineVersion`,
+    `contractSchemaVersion`, and `grammarFingerprint` are now logged on
+    every successful handshake (`onboard.log`: `engine handshake:
+    engineVersion=... contractSchemaVersion=... grammarFingerprint=...`)
+    and kept in `SidecarSupervisor::last_handshake` across restarts,
+    surfaced through a new read-only `get_engine_info` command and a
+    footer in Settings (`EngineVersionFooter.tsx`) reading `Onboard
+    <appVersion> · engine <engineVersion> · schema <n>`. Additive: a new
+    command, following the same pattern `test_ai_key` and the three `ai_*`
+    commands were added by in Phase 12, with its own seam-coverage case in
+    `tauri-ipc.seam.test.ts` (a test written for precisely this class of
+    gap — "a method nothing asserts against the bridge can be a stub
+    forever" — and it caught the omission immediately when this command
+    was added without one).
+
+    The handshake line alone answers "which engine is this app running"
+    only for whoever reads a session's first lines. `analyze_repo_core`
+    now also logs `analyze_repo: engineVersion=...` at the start of every
+    single analysis, reading `last_handshake` fresh each time — so a
+    long-lived session that has run many analyses against one warm
+    sidecar still has an engine-version line next to EVERY result, not
+    one line at the top a debugger has to scroll back to find. `(not yet
+    started)` on a sidecar's first-ever call is expected and is
+    immediately followed by that call's own handshake line.
+  - **DECIDED: the shell does NOT refuse to start a sidecar whose
+    `engineVersion` disagrees with the app's — visibility was the actual
+    gap, a refusal is not.** Considered and rejected, not left open.
+    A hard refusal needs a real mechanism the app does not have today —
+    the Rust binary would have to know, at compile time, which engine
+    build it shipped with (unlike `CONTRACT_SCHEMA_VERSION`, which already
+    is a real embedded constant; the engine's version is a git-hash-suffixed
+    build stamp computed at `build-sidecar.ts` time, not something
+    `build.rs` currently has access to). Building and maintaining that
+    machinery buys less than it costs: the app and engine are rebuilt
+    independently and are routinely, briefly out of step during ordinary
+    development, so a hard refusal would turn that normal state into a
+    blocked dev loop — trading a caught bug for a new, manufactured
+    failure mode, on every single day nobody shipped a stale binary.
+    The logged line and the Settings footer above would have surfaced
+    this investigation's own stale sidecar in seconds, the moment anyone
+    looked — which is the actual property a refusal was trying to buy,
+    at a fraction of the mechanism and none of the dev-loop cost. Revisit
+    only if a REAL incident (not this one) shows visibility genuinely
+    insufficient — not by default, and not by extrapolating from a defect
+    that logging alone already closes.

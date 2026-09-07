@@ -1,4 +1,4 @@
-﻿//! `analyze_repo` (Section 7.4). Validates the chosen path, enforces the
+//! `analyze_repo` (Section 7.4). Validates the chosen path, enforces the
 //! "one analysis at a time" guard, forwards to the sidecar's
 //! `engine.analyze`, and records the returned `repoId -> repoRoot` mapping
 //! `read_repo_file` later needs for its confinement check.
@@ -73,6 +73,23 @@ pub fn analyze_repo_core(
     let canonical_root = validate_path(&request.path)?;
 
     let _guard = state.supervisor.begin_analysis()?;
+
+    // Logged HERE, not only at the (possibly much earlier, possibly
+    // never-scrolled-back-to) handshake line: "which engine produced this
+    // result" is the first question anyone debugging a wrong analysis asks,
+    // and a session can run many analyses against one long-lived sidecar
+    // between handshakes. `(not yet started)` on a cold sidecar's first
+    // call is expected and immediately followed by the handshake's own log
+    // line once `engine.analyze` below triggers it. See docs/DECISIONS.md
+    // ("engine.version was answered and discarded").
+    let engine_version_for_log = state
+        .supervisor
+        .last_handshake()
+        .map(|info| info.engine_version)
+        .unwrap_or_else(|| "(not yet started)".to_string());
+    let _ = state.logger.log_line(&format!(
+        "analyze_repo: engineVersion={engine_version_for_log}"
+    ));
 
     // `std::fs::canonicalize` always returns a `\\?\`-prefixed
     // extended-length path on Windows (needed for Rust's OWN filesystem

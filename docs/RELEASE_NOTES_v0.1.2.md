@@ -39,9 +39,23 @@ construction, the same reason v0.1.1's console-window defect went uncaught.
   check (`e2e/graph-layout.spec.ts`) opens the graph tab, tears it down, and
   reopens it repeatedly against the real Windows engine, asserting the
   container never exceeds its available space, the app shell never needs to
-  scroll, and the tab strip stays visible — every time. Proven to actually
-  catch the defect, not merely to pass: run against the un-fixed code first,
-  it failed consistently; against the fix, it passes.
+  scroll, and the tab strip stays visible. Proven to actually catch the
+  defect, not merely to pass: run against the un-fixed code, it failed
+  consistently, every remount, with the container blown out to thousands of
+  pixels and the tab strip genuinely hidden.
+- **This spec is intentionally, visibly red some of the time on `main`, and
+  that is not this defect coming back.** Five confirmation runs against the
+  exact build this release ships found the ORIGINAL failure signature — the
+  multi-thousand-pixel blowout, the hidden tab strip — **zero times, in
+  40 remounts.** Three of those five runs instead hit a separate, much
+  smaller, already-tracked condition (`docs/KNOWN_ISSUES.md`, KI-11): an
+  intermittent ~16px overflow, two orders of magnitude smaller, that never
+  once affected the tab strip's visibility and that container measurements
+  place nowhere near its size budget. It is left failing on purpose rather
+  than tuned to pass — an unexplained ~16px is a real, open question, and
+  widening the test's tolerance to hide it would prove nothing about
+  whether it is safe. If you see this spec red in CI, check which failure
+  it is before assuming the fix regressed.
 - Onboard now records which analysis engine is actually running (version,
   schema, grammar fingerprint) to its log file and shows it in Settings.
   This was already available internally and was previously read and
