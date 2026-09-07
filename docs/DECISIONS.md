@@ -3564,3 +3564,60 @@ decided; it only records choices the spec left open.
   printing a wrong value that only gets noticed if someone happens to read
   it — the same "logged but not gated" shape this document's own
   `engine.version` entry just closed for a different surface.
+
+- **Follow-up to the `bundle.publisher` AMENDMENT above — the `.rpm`
+  question settled by a real build, not by reading further into
+  `tauri-bundler`; a real `dpkg-query` bug the Linux assertion almost
+  inherited; and the Linux gate closed to match the Windows one.**
+
+  **The `.rpm`'s Packager field, OBSERVED rather than inferred.** Built a
+  minimal real `.rpm` with `rpmbuild` (WSL2 Ubuntu, `rpm` package installed
+  for the query/build tools) carrying `Packager: kodeksidev`, then read it
+  back with `rpm -qp --queryformat '%{PACKAGER}' <file>` — no install
+  required, since RPM's own query tool reads a package file directly. Result:
+  `kodeksidev`, exact. This does not by itself prove `tauri-bundler` writes
+  `kodeksidev` into a REAL Onboard `.rpm` — that still rests on the
+  same-`Settings`-struct inference the prior entry named — but it does prove
+  the QUERY SIDE (what the new CI step reads and compares) is correct, which
+  is the half this project controls and the half a wrong assertion would
+  actually be wrong about. The CI step added below queries the real built
+  `.rpm` on every release, which finishes settling the other half on the
+  first real run.
+
+  **A real `dpkg-query` bug the Linux assertion would otherwise have
+  inherited.** The obvious first attempt — `dpkg-query -W --showformat=
+  '${Maintainer}\n' <package>` — was tried against a real installed test
+  package before being written into CI, per the same "prove it discriminates
+  before trusting it" standard applied to the Windows check. It silently
+  returned EMPTY, even though the field genuinely exists and installed
+  correctly (`dpkg -s`/`dpkg -l` both show `Maintainer: kodeksidev` on the
+  same package). `-W`'s format-string substitution does not support
+  arbitrary control fields on this dpkg version (6.0.1, Ubuntu 26.04) the way
+  its own documentation's phrasing suggests it should — `${Package}` and a
+  handful of others work, `${Maintainer}` does not. Had this shipped
+  unverified, the assertion would have compared `""` to `""` and passed on
+  ANY installed `.deb`, publisher correct or not — precisely "a gate that
+  passes on anything," and precisely why discrimination is proven against a
+  REAL package before a check is trusted, not read off a man page. Switched
+  to `dpkg -s <package> | grep '^Maintainer:' | cut -d' ' -f2-`, which was
+  independently built-and-installed-and-verified (a real `.deb`, `dpkg -i`,
+  then the extraction) to both read the correct value AND fail when handed a
+  wrong expected value, before being written into `release.yml`.
+
+  **Both new CI assertions — `installed`'s `.deb` Maintainer and its new
+  `.rpm` Packager check, plus `installed-windows`'s existing one — now read
+  their expected value from ONE place**, a `publisher` output the `plan` job
+  derives from `tauri.conf.json` via `jq -er '.bundle.publisher'` (the `-e`
+  makes the step itself fail if the value is ever unset, rather than
+  propagate a null/empty string forward). Not hardcoded per-job: two
+  workflow-file locations independently deciding the same expected string is
+  the exact shape of the `*.rpm` upload-glob disagreement that motivated
+  `release-formats.json` as a single source in the first place — recorded in
+  that file's own header, and worth not repeating one config value later.
+
+  **The `.deb` package NAME is also read from the artifact, not assumed.**
+  `dpkg-deb -f "$DEB" Package` on the file just installed, rather than
+  hardcoding `onboard` as a guess at what the bundler lowercased `Onboard`
+  to (Debian policy requires lowercase package names, which is why it is not
+  simply `productName`) — one fewer assumption in a check whose entire point
+  is to stop trusting assumptions about what a bundler produces.

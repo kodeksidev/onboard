@@ -77,6 +77,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      publisher: ${{ steps.publisher.outputs.publisher }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,6 +90,18 @@ jobs:
       - name: Derive the bundle matrix
         id: plan
         run: python scripts/release-plan.py --github
+
+      # The single source of truth for what installed-windows and installed
+      # (below) assert. Read here, not hardcoded in either job: two jobs each
+      # deciding the expected publisher string is the same duplication that
+      # let the bundle matrix and the upload glob disagree over *.rpm — one
+      # of them gets edited and the other silently does not (docs/DECISIONS.md).
+      - name: Read the expected publisher from tauri.conf.json
+        id: publisher
+        run: |
+          publisher=$(jq -er '.bundle.publisher' apps/desktop/src-tauri/tauri.conf.json)
+          echo "expected publisher: $publisher"
+          echo "publisher=$publisher" >> "$GITHUB_OUTPUT"
 
   sidecars:
     # ALL FOUR TRIPLES, ON LINUX, ONCE. `bun build --compile` cross-compiles
@@ -266,7 +279,7 @@ jobs:
     # fixed-port race makes it unfit as a gate (see ci.yml). Criterion 23's
     # "launch" is proven for the engine and unproven for the UI.
     name: installed .deb launches and analyses (clean runner)
-    needs: bundle
+    needs: [bundle, plan]
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout (for the check script only)
@@ -288,6 +301,7 @@ jobs:
       # that used dpkg would pass while a real install failed on a missing
       # webkit runtime.
       - name: Install the .deb the way a user would
+        id: install_deb
         run: |
           sudo apt-get update
           # ABSOLUTE path. `apt-get install foo/bar.deb` treats the argument as a
@@ -300,6 +314,54 @@ jobs:
           fi
           echo "installing $DEB"
           sudo apt-get install -y "$DEB"
+          # Read the package's own name from the SAME file just installed,
+          # rather than hardcode "onboard" as a guess at what the bundler
+          # named it (Debian policy lowercases package names, which is why
+          # this is not simply `productName`).
+          PKG=$(dpkg-deb -f "$DEB" Package)
+          echo "package=$PKG" >> "$GITHUB_OUTPUT"
+
+      # Windows precedent for why this is an assertion, not a print: the
+      # installed-windows job below used to only print Publisher=... and a
+      # human happened to read it. Proven to discriminate before trusting it
+      # (not assumed): `dpkg-query -W --showformat='${Maintainer}'` was tried
+      # first and silently returns EMPTY for this field on this dpkg version
+      # — a real gate-shaped bug that would have made this assertion compare
+      # "" to "", passing on anything. `dpkg -s | grep | cut` was verified
+      # against a real built-and-installed .deb to both correctly extract the
+      # field AND correctly fail when handed a wrong expected value before
+      # being written here.
+      - name: Assert the installed .deb's Maintainer field
+        run: |
+          actual=$(dpkg -s "${{ steps.install_deb.outputs.package }}" | grep '^Maintainer:' | cut -d' ' -f2-)
+          expected="${{ needs.plan.outputs.publisher }}"
+          echo "Maintainer='$actual' (expected '$expected')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::installed .deb Maintainer='$actual', expected '$expected' — bundle.publisher regressed or was not rebuilt"
+            exit 1
+          fi
+
+      # `.rpm` is built on this same runner (release-formats.json: deb+rpm)
+      # but never installed anywhere in this workflow — there is no RPM-based
+      # runner here to install it on. Read straight from the package FILE
+      # instead (`rpm -qp` needs no install), which is still a real assertion
+      # against real bundler output, not the "likely, unconfirmed" this
+      # replaces (docs/DECISIONS.md, the publisher-rename AMENDMENT).
+      - name: Assert the .rpm's Packager field
+        run: |
+          sudo apt-get install -y rpm
+          RPM=$(find "$PWD/installers" -name '*.rpm' | head -n 1)
+          if [ -z "$RPM" ]; then
+            echo "no .rpm found in the downloaded artifact" >&2
+            exit 1
+          fi
+          actual=$(rpm -qp --queryformat '%{PACKAGER}' "$RPM")
+          expected="${{ needs.plan.outputs.publisher }}"
+          echo "Packager='$actual' (expected '$expected')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$RPM Packager='$actual', expected '$expected' — bundle.publisher regressed or was not rebuilt"
+            exit 1
+          fi
 
       # Xvfb, because the shell claim below starts a real window. Without a
       # display the process dies before it reaches sidecar resolution, which
@@ -336,7 +398,7 @@ jobs:
     # A gate pointed at the format users do not execute is a gate whose green
     # answers a question nobody asked.
     name: installed setup.exe starts, resolves its engine, and analyses (clean runner)
-    needs: bundle
+    needs: [bundle, plan]
     runs-on: windows-2022
     steps:
       - name: Checkout (for the check script only)
@@ -428,10 +490,11 @@ jobs:
           # before anyone claimed it was fixed (docs/DECISIONS.md's AMENDMENT).
           # A print a human happens to read is not a gate: it would not have failed
           # a build that silently reverted. Asserted now, against the CURRENT
-          # bundle.publisher (docs/DECISIONS.md — the "kodeksidev" rename), so a
-          # future revert to the default or to a stale name fails here rather than
-          # only being noticed by whoever next reads this log.
-          $expectedPublisher = 'kodeksidev'
+          # bundle.publisher — read from tauri.conf.json by the `plan` job
+          # (docs/DECISIONS.md), not hardcoded here a second time: two places
+          # deciding the same expected string is the *.rpm upload-glob gap
+          # again, just in a different config.
+          $expectedPublisher = '${{ needs.plan.outputs.publisher }}'
           if ($key.Publisher -ne $expectedPublisher) {
             Write-Error "Add/Remove Programs Publisher='$($key.Publisher)', expected '$expectedPublisher' — bundle.publisher regressed or was not rebuilt"
             exit 1

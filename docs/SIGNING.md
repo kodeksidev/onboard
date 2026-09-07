@@ -62,9 +62,30 @@ Worth stating plainly, because "unsigned" is easy to read as "unsafe":
 Tauri v2 supports both platforms natively; the work is credential plumbing, not
 new code.
 
-1. **Acquire identities.** Apple Developer Program (Organization) for
-   `Developer ID Application`; a Windows OV or EV certificate from a CA,
-   held in an HSM or cloud signing service.
+1. **Acquire identities — and decide WHO the certificate is issued to before
+   applying for one, not after.** `bundle.publisher` (`tauri.conf.json`) is
+   `kodeksidev` as of the rename in `docs/DECISIONS.md` — a brand/handle, not
+   a legal name. A code-signing CA does not verify a handle; OV and EV
+   verification attaches a certificate to a **legal identity** — a natural
+   person (their real name) or a registered legal entity (a business name a
+   D-U-N-S/registry lookup resolves to). That identity is what the
+   certificate's Subject will read, and what Windows/macOS UI shows once
+   signed. So this step is not "buy a certificate" — it is:
+   - **Is `kodeksidev` a registered legal entity (a business), or does it
+     resolve to an individual operating under that name?** If the former,
+     the CA issues to the entity and the Subject can plausibly read
+     `kodeksidev` (or its full registered name) — same shape as the Apple
+     Organization path already below. If the latter, the CA issues to the
+     PERSON, and the certificate's Subject will show their real name — NOT
+     `kodeksidev` — regardless of what `bundle.publisher` says. That would
+     make the signed installer show one identity in the installer's own
+     metadata (Add/Remove Programs, `onboard.exe`'s CompanyName — all
+     `kodeksidev`) and a DIFFERENT one in the OS's own signature-verification
+     UI (the individual's legal name). Deciding this NOW avoids discovering
+     it mid-procurement, when an HSM/subscription may already be paid for.
+   - Apple Developer Program (Organization) for `Developer ID Application`;
+     a Windows OV or EV certificate from a CA, held in an HSM or cloud
+     signing service.
 2. **Store them as CI secrets**, never in the repository. Tauri reads
    `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
    `APPLE_ID`, `APPLE_TEAM_ID` and an app-specific password for notarization;
