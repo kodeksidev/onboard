@@ -491,3 +491,71 @@ The four largest categories, 210 of the 285 sites, were counted and not read.
 
 Re-run with `bun run guards:scan --list` for the full site list, and
 `bun run lossy:scan` for KI-1's class specifically.
+
+---
+
+## Other known issues
+
+Not products of the guard-disposition sweep above — found during other work,
+recorded here because this is where the project's open, unresolved findings
+live.
+
+### KI-11 — an intermittent ~16px overflow in `e2e/graph-layout.spec.ts`, mechanism unconfirmed
+
+| | |
+|---|---|
+| **Severity** | LOW — two orders of magnitude smaller than the defect this spec exists to catch, and reproduces none of its symptoms |
+| **Criterion** | none directly; `e2e/graph-layout.spec.ts`'s own containment assertions |
+| **Blocks** | nothing by itself; ask before treating it as a v0.1.2 release blocker (see below) |
+| **Family** | unexplained, intermittent — NOT the dependency-graph measurement feedback loop this spec was written for |
+| **Disposition** | **OPEN** — do not close this by widening `CONTAINMENT_TOLERANCE_PX`; that tunes the gate to its own output rather than explaining anything |
+
+Found running `e2e/graph-layout.spec.ts`'s 8-remount containment check against
+the real fix, on real WebView2, after the fix itself was confirmed correct.
+Roughly 1 run in 3 (mount index varies — 1, 6, then 4 across separate runs)
+shows `<main>`'s `scrollHeight` exceeding its `clientHeight` by exactly
+**16px** (744 vs 728), sometimes with a **15px** width overflow alongside it
+(1265 vs 1250) and sometimes without.
+
+**What stays true every time it fires**, which is why this is not the
+feedback loop from `docs/DECISIONS.md` recurring: the Cytoscape mount div's
+own height sits comfortably under its budget when it happens (640.8px used
+against 743.2px available — a ~100px margin, not a near-miss), the Overview
+tab stays visible (`isOverviewTabVisible: true` every single time), and the
+magnitude never approaches the loop's multi-thousand-pixel signature.
+
+**Ruled out, not merely suspected:**
+- **A settle-timing artifact in the test.** Replaced a fixed pause with
+  settle-detection (poll until `<main>`'s scroll box reports the same value
+  on two reads 150ms apart) before measuring. The exact same failure
+  reproduced under it.
+- **`fcose`'s `randomize: true`.** The leading hypothesis going in: a
+  randomized initial layout occasionally settles into a slightly larger
+  bounding box, tipping a scrollbar into existence, which then consumes
+  ~15px and produces overflow on the other axis. Tested directly —
+  temporarily set `randomize: false` in `useCytoscape.ts`, rebuilt, ran the
+  spec three times. Run 2 failed with the identical signature (mount index
+  4, `744` vs `728`). Disabling randomization did not remove the variance,
+  which rules it out as the mechanism. (Change was diagnostic only and was
+  reverted; `useCytoscape.ts` matches `HEAD`.)
+
+**Not established:** what actually causes it. 16px is suspiciously close to
+a typical scrollbar width, which is consistent with *some* boundary
+condition flipping a scrollbar on for one mount in several, but no
+confirmed mechanism produces that boundary condition — the leading
+candidate was tested and eliminated, and no second hypothesis has been
+verified.
+
+**Why the spec is left to fail intermittently rather than tuned green:**
+`CONTAINMENT_TOLERANCE_PX` exists to absorb border/scrollbar sub-pixel
+rounding (a few px), not a specific unexplained 16px. Widening it to 20px
+would make this pass without explaining it — the tolerance would be
+calibrated to today's failure rather than to a real invariant, which is
+exactly the shape of gate this project has spent effort removing elsewhere
+(see the guard-disposition sweep above, and `docs/DECISIONS.md`'s "a
+tolerance set to make today's run pass is a gate tuned to its own output").
+An intermittent red that names a real, unexplained condition is worth more
+than a green bought that way.
+
+If this ends up gating a release, that is a decision to make explicitly
+when it happens, not one to make by adjusting a constant now.

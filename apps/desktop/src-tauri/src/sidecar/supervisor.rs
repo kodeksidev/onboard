@@ -19,6 +19,65 @@ use crate::constants::{CONTRACT_SCHEMA_VERSION, SIDECAR_MAX_RESTARTS};
 use crate::error::{AppError, AppErrorCode};
 use crate::sidecar::rpc::{RpcConnection, RpcError};
 use crate::sidecar::spawn::{spawn_sidecar, SpawnedChild};
+use crate::util::logging::RotatingLogger;
+
+/// What `engine.version` actually told us, kept around after the handshake
+/// so `get_engine_info` (Section 7.4) can answer without a live process and
+/// so it survives a restart. NOT itself part of the version check —
+/// `ensure_started` compares `contractSchemaVersion` only (see its own doc
+/// comment for why that is a known, named gap, not an oversight repeated
+/// here). This struct exists so the two fields the check does NOT look at
+/// are recorded somewhere, rather than read off the wire and discarded —
+/// see docs/DECISIONS.md ("engine.version was answered and discarded").
+#[derive(Debug, Clone)]
+pub struct EngineHandshakeInfo {
+    pub engine_version: String,
+    pub contract_schema_version: i64,
+    pub grammar_fingerprint: String,
+}
+
+/// Checks `engine.version`'s ONLY checked field, logs all three, and
+/// returns the other two regardless of anything this function does not
+/// check. Split out of `ensure_started` to keep it under this crate's
+/// 50-line-per-function limit — same reason `tauri-ipc.ts`'s
+/// `createTauriIpc` was split.
+fn record_handshake(result: &Value, log_path: &str) -> Result<EngineHandshakeInfo, AppError> {
+    let contract_version = result.get("contractSchemaVersion").and_then(Value::as_i64);
+    if contract_version != Some(CONTRACT_SCHEMA_VERSION) {
+        return Err(AppError::new(
+            AppErrorCode::EEngineVersionMismatch,
+            format!(
+                "Engine reported contract schema version {contract_version:?}, expected {CONTRACT_SCHEMA_VERSION}."
+            ),
+        ));
+    }
+    // `engineVersion`/`grammarFingerprint` are read but NOT compared against
+    // anything here — see `CONTRACT_SCHEMA_VERSION`'s and
+    // `EngineHandshakeInfo`'s doc comments. Recorded regardless, so at least
+    // the information reaches the log and `get_engine_info`, even though
+    // nothing yet refuses to start on a mismatch in either.
+    let engine_version = result
+        .get("engineVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("(missing)")
+        .to_string();
+    let grammar_fingerprint = result
+        .get("grammarFingerprint")
+        .and_then(Value::as_str)
+        .unwrap_or("(missing)")
+        .to_string();
+    if let Ok(logger) = RotatingLogger::open(std::path::Path::new(log_path)) {
+        let _ = logger.log_line(&format!(
+            "engine handshake: engineVersion={engine_version} contractSchemaVersion={} grammarFingerprint={grammar_fingerprint}",
+            contract_version.unwrap_or(-1)
+        ));
+    }
+    Ok(EngineHandshakeInfo {
+        engine_version,
+        contract_schema_version: contract_version.unwrap_or(-1),
+        grammar_fingerprint,
+    })
+}
 
 pub struct SidecarConfig {
     /// `None` when the engine binary could not be located at startup —
@@ -51,6 +110,9 @@ pub struct SidecarSupervisor {
     /// (`lib.rs`) to fan out as `onboard://analysis-progress` events.
     pub progress_rx: Mutex<Receiver<(String, Value)>>,
     progress_tx: Sender<(String, Value)>,
+    /// Set once, on the first successful handshake; kept across restarts and
+    /// never cleared, so `get_engine_info` can still answer after a crash.
+    last_handshake: Mutex<Option<EngineHandshakeInfo>>,
 }
 
 impl SidecarSupervisor {
@@ -65,11 +127,22 @@ impl SidecarSupervisor {
             }),
             progress_rx: Mutex::new(progress_rx),
             progress_tx,
+            last_handshake: Mutex::new(None),
         }
     }
 
     pub fn restart_count(&self) -> u32 {
         self.state.lock().expect("state poisoned").restart_count
+    }
+
+    /// `None` until the sidecar has spawned and answered `engine.version`
+    /// at least once — e.g. before the first `analyze_repo` call, or if the
+    /// engine binary was never found at all.
+    pub fn last_handshake(&self) -> Option<EngineHandshakeInfo> {
+        self.last_handshake
+            .lock()
+            .expect("last_handshake poisoned")
+            .clone()
     }
 
     /// Acquires the "one analysis at a time" guard. Drop the returned guard
@@ -113,24 +186,16 @@ impl SidecarSupervisor {
             json!({}),
             Duration::from_secs(crate::constants::SIDECAR_RPC_TIMEOUT_SECS),
         );
-        match handshake {
-            Ok(result) => {
-                let contract_version = result.get("contractSchemaVersion").and_then(Value::as_i64);
-                if contract_version != Some(CONTRACT_SCHEMA_VERSION) {
-                    let _ = spawned.child.kill();
-                    return Err(AppError::new(
-                        AppErrorCode::EEngineVersionMismatch,
-                        format!(
-                            "Engine reported contract schema version {contract_version:?}, expected {CONTRACT_SCHEMA_VERSION}."
-                        ),
-                    ));
-                }
-            }
+        let info = match handshake {
+            Ok(result) => record_handshake(&result, &self.config.log_path).inspect_err(|_| {
+                let _ = spawned.child.kill();
+            })?,
             Err(_) => {
                 let _ = spawned.child.kill();
                 return Err(AppError::engine_crashed(&self.config.log_path));
             }
-        }
+        };
+        *self.last_handshake.lock().expect("last_handshake poisoned") = Some(info);
 
         state.live = Some(Live {
             child: spawned,

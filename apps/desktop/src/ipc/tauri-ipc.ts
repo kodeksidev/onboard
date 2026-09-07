@@ -10,6 +10,7 @@ import type {
   AnalysisProgressListener,
   AnalyzeRepoRequest,
   ClearAiKeyRequest,
+  EngineInfo,
   ModeChangedEvent,
   ModeChangedListener,
   OnboardIpc,
@@ -129,6 +130,8 @@ export function createTauriIpc(): OnboardIpc {
     getSettings: () => call<Settings>('get_settings'),
 
     updateSettings: (patch: SettingsPatch) => call<Settings>('update_settings', { patch }),
+
+    getEngineInfo: () => call<EngineInfo>('get_engine_info'),
 
     storeAiKey: (request: StoreAiKeyRequest) =>
       call<StoreAiKeyResult>('store_ai_key', {

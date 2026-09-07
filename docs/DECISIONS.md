@@ -3399,3 +3399,98 @@ decided; it only records choices the spec left open.
     go-ahead, since fetching a binary is a permission-gated action — this
     is a test-toolchain tool, gitignored, and never enters the bundled
     app.
+
+- **v0.1.2 — the `UNIQUE constraint failed: symbol.id` crash reproduced on
+  real production TypeScript was a stale sidecar in this development
+  environment, not a regression, an incomplete fix, or a fourth mechanism.**
+  Investigating the dependency-graph layout defect above required real
+  analysis of real repositories through the real app, and both the full
+  monorepo and `packages/engine` alone crashed with the exact v0.1.0 symptom
+  the v0.1.1 arity fix (`2d4f6b3`) was supposed to have closed.
+  - **Reproduced and dumped, not assumed.** A standalone script called
+    `analyze()` directly against current engine source (no Tauri, no
+    compiled sidecar), computing `symbol.id` exactly as documented
+    (`sha1(path#name#startLine)`) and grouping by id: `packages/engine`
+    alone, 979-981 symbols across two runs (one with a real
+    `SqliteCacheStore` exercising the actual persist path), **zero
+    collisions** either time. Current source does not reproduce the crash.
+  - **The discrepancy was the finding.** `apps/desktop/src-tauri/target/
+    debug/onboard-engine.exe` — what the real app actually spawns — was
+    dated **2026-07-28**. The arity-fix commit landed **2026-08-05**, a
+    week later. Every real-app test run earlier in this investigation had
+    been exercising a pre-fix binary the whole time.
+  - **Confirmed by hash, not by re-reading a version string** (the standard
+    this project already holds itself to — see the icon-cache entry above
+    and the msedgedriver entry): `bun run build:sidecar` against current
+    source produced engine hash `299bd25dd084`, the EXACT hash this
+    document already cites for the real, shipped v0.1.1 engine. Staged it,
+    rebuilt `onboard.exe` (required — `tauri-build`'s build script copies
+    `externalBin` at compile time, so a stale `binaries/` directory is not
+    picked up by a fresh binary until the binary itself rebuilds), confirmed
+    the copy was current by file timestamp, then re-ran real analysis
+    through the real app on real WebView2: `packages/engine` (981 symbols,
+    321 edges, 161 files parsed) and the full monorepo (2137 symbols, 791
+    edges, 355 files parsed) — both clean, no crash, no collision.
+  - **Why this decided the release scope.** Had the current-source
+    reproduction also crashed, v0.1.2 would have been the crash fix, not a
+    layout patch. It did not, so v0.1.2 ships as the layout fix only — but
+    the fact that a stale local artifact reproduced a real, already-fixed,
+    already-documented defect for an entire investigation, undetected,
+    is itself the reason `engine.version was answered and discarded` (next
+    entry) exists.
+  - **`parseFailedCount: 1`, checked and closed, not queued.** Both clean
+    runs above reported one `PARSE_FAILED` diagnostic. It is
+    `packages/engine/fixtures/kitchen-sink/src/broken.ts` — a fixture
+    file whose entire purpose is to BE unparseable, so the engine's own
+    test suite can assert the diagnostic fires. Working as designed, not a
+    finding.
+
+- **v0.1.2 — `engine.version` was answered and discarded.** Nothing in
+  the app told anyone which engine was actually running, and the only
+  reason the stale-sidecar defect above was ever noticed is that a
+  discrepancy was chased by hand — the app gave no signal, and neither did
+  this investigation until that point.
+  - **The check that exists is narrower than its name suggests.**
+    `SidecarSupervisor::ensure_started` performs the `engine.version`
+    handshake and compares exactly one field —
+    `contractSchemaVersion`, against the Rust-side `CONTRACT_SCHEMA_VERSION`
+    constant — and aborts with `E_ENGINE_VERSION_MISMATCH` if it differs.
+    `engineVersion` and `grammarFingerprint` are also in that response and
+    were read into a local, never used for anything, and dropped. A sidecar
+    built from entirely different engine source — including a
+    pre-arity-fix one, exactly the case that bit this investigation —
+    shares `contractSchemaVersion` with a fixed one whenever no *schema*
+    changed, and the check has nothing to say about it. Confirmed by
+    reading `ensure_started` directly, not inferred: the comparison is
+    `contract_version != Some(CONTRACT_SCHEMA_VERSION)` and nothing else in
+    that function reads `result` at all.
+  - **Fixed the visibility half.** `engineVersion`, `contractSchemaVersion`,
+    and `grammarFingerprint` are now logged on every successful handshake
+    (`onboard.log`: `engine handshake: engineVersion=... contractSchemaVersion=...
+    grammarFingerprint=...`) and kept in `SidecarSupervisor::last_handshake`
+    across restarts, surfaced through a new read-only `get_engine_info`
+    command and a footer in Settings (`EngineVersionFooter.tsx`) reading
+    `Onboard <appVersion> · engine <engineVersion> · schema <n>`. Additive:
+    a new command, following the same pattern `test_ai_key` and the three
+    `ai_*` commands were added by in Phase 12, with its own seam-coverage
+    case in `tauri-ipc.seam.test.ts` (a test written for precisely this
+    class of gap — "a method nothing asserts against the bridge can be a
+    stub forever" — and it caught the omission immediately when this
+    command was added without one).
+  - **NOT fixed, and deliberately left as an open question rather than
+    decided unilaterally: whether the shell should REFUSE to start a
+    sidecar whose `engineVersion` disagrees with what the app expects.**
+    Doing that requires the Rust binary to know, at compile time, which
+    engine build it was released with — nothing currently embeds that
+    (unlike `CONTRACT_SCHEMA_VERSION`, which is a real constant).
+    Arguments for: it would have caught this investigation's own defect
+    immediately instead of a week into it, and it is the same "does the
+    control reach the thing it governs" question the console-window and
+    `graphHasFail` entries above already named as a recurring failure
+    family. Arguments against: it would need a real mechanism (embedding
+    the expected `engineVersion` — the git-hash-suffixed build stamp, not
+    the semver alone — via `build.rs`, likely reading the same source
+    `build-sidecar.ts` hashes from), and during active development the app
+    and engine are frequently rebuilt independently and briefly out of
+    step, which a hard refusal would turn into a blocked dev loop rather
+    than a caught bug. Not decided here.

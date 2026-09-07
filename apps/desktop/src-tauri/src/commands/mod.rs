@@ -147,6 +147,33 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<Settin
     Ok(get_settings_core(&settings_path(&app)?, &state.ai_keys))
 }
 
+/// The app version is `Some` for `Settings`/`About`, whatever engine the
+/// running process last actually talked to for the other three — `None`
+/// until the first successful `engine.version` handshake (before any
+/// analysis, or if the sidecar was never found at all), so a user comparing
+/// this against a bug report can tell "no analysis has run yet" apart from
+/// "the engine answered with X" rather than seeing a blank/stale value in
+/// either case.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineInfo {
+    pub app_version: String,
+    pub engine_version: Option<String>,
+    pub contract_schema_version: Option<i64>,
+    pub grammar_fingerprint: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_engine_info(app: AppHandle, state: State<'_, AppState>) -> Result<EngineInfo, AppError> {
+    let handshake = state.supervisor.last_handshake();
+    Ok(EngineInfo {
+        app_version: app.package_info().version.to_string(),
+        engine_version: handshake.as_ref().map(|h| h.engine_version.clone()),
+        contract_schema_version: handshake.as_ref().map(|h| h.contract_schema_version),
+        grammar_fingerprint: handshake.map(|h| h.grammar_fingerprint),
+    })
+}
+
 #[tauri::command]
 pub fn update_settings(
     app: AppHandle,

@@ -110,6 +110,12 @@ const COMMAND_CASES: readonly CommandCase[] = [
     call: (ipc) => ipc.updateSettings({ theme: 'dark' }),
   },
   {
+    method: 'getEngineInfo',
+    command: 'get_engine_info',
+    args: undefined,
+    call: (ipc) => ipc.getEngineInfo(),
+  },
+  {
     method: 'storeAiKey',
     command: 'store_ai_key',
     args: { provider: 'anthropic', apiKey: 'sk-test-not-a-real-key' },

@@ -95,6 +95,23 @@ export type ModeChangedListener = (event: ModeChangedEvent) => void;
 export type Unsubscribe = () => void;
 
 /**
+ * `null` for the three engine fields until the sidecar has answered
+ * `engine.version` at least once (before any analysis, or if the binary
+ * was never found) — kept distinct from "unknown"/a stale placeholder so a
+ * user comparing this against a bug report can tell those two states
+ * apart. Read-only: this surfaces what `engine.version` already told the
+ * shell, which nothing currently acts on beyond the frozen
+ * `contractSchemaVersion` check (Section 7.3's `E_ENGINE_VERSION_MISMATCH`)
+ * — see docs/DECISIONS.md ("engine.version was answered and discarded").
+ */
+export interface EngineInfo {
+  readonly appVersion: string;
+  readonly engineVersion: string | null;
+  readonly contractSchemaVersion: number | null;
+  readonly grammarFingerprint: string | null;
+}
+
+/**
  * Every method whose result can fail (Section 7.4's "Error codes" column)
  * rejects its Promise with a plain object conforming to `AppError` — never a
  * thrown `Error` instance and never a raw provider/OS error string (Section
@@ -107,6 +124,7 @@ export interface OnboardIpc {
   readRepoFile(request: ReadRepoFileRequest): Promise<ReadRepoFileResult>;
   getSettings(): Promise<Settings>;
   updateSettings(patch: SettingsPatch): Promise<Settings>;
+  getEngineInfo(): Promise<EngineInfo>;
   storeAiKey(request: StoreAiKeyRequest): Promise<StoreAiKeyResult>;
   clearAiKey(request: ClearAiKeyRequest): Promise<Record<string, never>>;
   testAiKey(request: TestAiKeyRequest): Promise<TestAiKeyResult>;

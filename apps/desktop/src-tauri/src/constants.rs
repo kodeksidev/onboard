@@ -19,6 +19,16 @@ pub const SIDECAR_RPC_TIMEOUT: Duration = Duration::from_secs(SIDECAR_RPC_TIMEOU
 /// `packages/contract`'s frozen `SCHEMA_VERSION` (Section 7.1). Checked
 /// against `engine.version`'s `contractSchemaVersion` at spawn; a mismatch
 /// aborts with `E_ENGINE_VERSION_MISMATCH` (Section 7.3).
+///
+/// This is the ONLY field of `engine.version`'s response the spawn-time
+/// check looks at. `engineVersion` and `grammarFingerprint` are also in
+/// that response and are now recorded (`SidecarSupervisor::last_handshake`,
+/// `onboard.log`), but nothing compares them to anything — a sidecar built
+/// from different engine source that happens to share this schema version
+/// starts without complaint. Confirmed to matter, not theoretical: this is
+/// exactly the gap a stale pre-fix sidecar exploited during v0.1.2's
+/// development (docs/DECISIONS.md, "engine.version was answered and
+/// discarded").
 pub const CONTRACT_SCHEMA_VERSION: i64 = 1;
 
 /// `repoId` wire format (Section 6.1: `sha256(...).slice(0, 16)`, lowercase

@@ -14,6 +14,7 @@ import type {
   AiActionResult,
   AnalysisErrorListener,
   AnalysisProgressListener,
+  EngineInfo,
   ModeChangedListener,
   OnboardIpc,
   PickRepoFolderResult,
@@ -43,6 +44,13 @@ import type {
  */
 const SAMPLE_ENVELOPE: AnalysisEnvelope = AnalysisEnvelope.parse(rawSampleAnalysis);
 const MOCK_REPO_PATH = '/mock/acme-billing-api';
+/** No real sidecar handshake happens in mock mode, so this is fixed rather than state-dependent — good enough to exercise the UI, not a substitute for `get_engine_info`'s real null-until-handshake behavior. */
+const MOCK_ENGINE_INFO: EngineInfo = {
+  appVersion: '0.0.0-mock',
+  engineVersion: '0.0.0-mock',
+  contractSchemaVersion: 1,
+  grammarFingerprint: '0'.repeat(16),
+};
 const PROGRESS_PHASES = ['walk', 'parse', 'resolve', 'graph', 'rank', 'persist'] as const;
 const MOCK_TEST_KEY_LATENCY_MS = 42;
 /** Stands in for the real snippet payload's size (Section 8.9's caps apply on the Rust side). */
@@ -288,6 +296,7 @@ export function createMockIpc(): OnboardIpc {
     readRepoFile,
     getSettings: async () => state.settings,
     updateSettings: async (patch) => updateSettings(state, patch),
+    getEngineInfo: async () => MOCK_ENGINE_INFO,
     storeAiKey: async (request) => storeAiKey(state, request),
     clearAiKey: async () => clearAiKey(state),
     testAiKey: (request) => testAiKey(state, request),

@@ -201,6 +201,7 @@ pub fn run() {
             commands::read_repo_file,
             commands::get_settings,
             commands::update_settings,
+            commands::get_engine_info,
             commands::store_ai_key,
             commands::clear_ai_key,
             commands::test_ai_key,

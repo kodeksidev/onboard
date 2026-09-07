@@ -212,6 +212,20 @@ it found a defect no automated gate could see.
       `ss -tp`), **no outbound connection** is attempted at launch, at folder
       pick, or during a full analysis. Treat any unexplained attempt as a
       CRITICAL finding, not a note. This is the core guarantee (Section 1).
+- [ ] **Settings shows an engine version line, and it is not "not yet
+      known."** After at least one analysis has completed, open Settings and
+      confirm the footer reads `Onboard <version> · engine <version> ·
+      schema <n>` with a real engine version — not the "not yet known"
+      placeholder (which is only correct before any analysis has run).
+      Added in v0.1.2 after the exact opposite silently went unnoticed for a
+      week during that release's own development: nothing in the app ever
+      showed which engine build was actually running, and a stale sidecar
+      binary from before the v0.1.1 fix reproduced the fixed defect with
+      nothing to indicate why. `docs/DECISIONS.md` ("engine.version was
+      answered and discarded") has the full incident. This does not by
+      itself prove the RIGHT engine is running — only that the app can now
+      tell you which one is — so also sanity-check the version string
+      against what you expect to have installed.
 
 ## Folder pick → analysis → rendered graph
 
@@ -227,6 +241,25 @@ This is the sequence CI cannot perform. It is the reason this file exists.
 - [ ] The **Dependency graph** tab renders an actual graph: nodes visible,
       edges visible, laid out. A blank canvas is a failure even if no error
       appeared.
+- [ ] **Dependency graph — check the tab strip, not just the canvas, and check
+      it at two window sizes.** Open the graph tab **maximized**, then again
+      at one **restored** size (drag the window smaller first). At each size:
+      the canvas is visible (not blank, not grey blocks), no scrollbar
+      appears around the whole app, and every tab label — **Overview**,
+      **Dependency graph**, **Start here**, and the rest — stays visible and
+      in its normal position. **v0.1.1 shipped this broken**: on a real
+      Windows install against a real repository the canvas did not render at
+      all and the tab strip was scrolled so far right that the first three
+      tabs were clipped off the left edge — a defect no automated test could
+      see, because jsdom (the test environment) has no layout engine and
+      cannot measure a real box. Fixed in v0.1.2 and verified on real WebView2
+      across repeated mounts (`e2e/graph-layout.spec.ts`), but that spec runs
+      against a synthetic graph, not a real repository through the real
+      picker — this row is what actually closes it. See
+      `docs/DECISIONS.md` ("the dependency-graph measurement feedback loop")
+      and `docs/KNOWN_ISSUES.md` (KI-11) for one intermittent, separately-
+      tracked ~16px overflow that is NOT this defect recurring — do not
+      conflate the two if something looks slightly off.
 - [ ] Clicking a node opens that file in the **File viewer** with real contents.
 - [ ] **Where is X?** finds a symbol you know exists, and clicking a hit opens
       the file at the matched line.

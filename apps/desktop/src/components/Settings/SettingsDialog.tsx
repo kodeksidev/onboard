@@ -3,6 +3,7 @@ import type { JSX, RefObject } from 'react';
 import { Button } from '@/components/ui/button';
 import { SETTINGS_COPY } from '@/copy/messages';
 import { AiSettingsSection } from './AiSettingsSection';
+import { EngineVersionFooter } from './EngineVersionFooter';
 
 export interface SettingsDialogProps {
   readonly isOpen: boolean;
@@ -86,6 +87,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps): JSX.El
       >
         <DialogHeader onClose={onClose} />
         <AiSettingsSection />
+        <EngineVersionFooter />
       </div>
     </div>
   );
