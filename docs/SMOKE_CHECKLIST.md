@@ -131,8 +131,9 @@ it found a defect no automated gate could see.
       means `installMode` regressed and users without local admin cannot install.
 
 - [ ] **Windows — Add/Remove Programs.** Settings → Apps → Installed apps must
-      list **Onboard**, publisher **Eris Uruqi** (not `onboard`), with the
-      Onboard icon and version 0.1.0.
+      list **Onboard**, publisher **kodeksidev** (not `onboard`, and not the
+      earlier `Eris Uruqi` — see the publisher-rename AMENDMENT in
+      `docs/DECISIONS.md`), with the Onboard icon and version 0.1.0.
 
 - [ ] **Windows — SmartScreen's SECOND screen.** After clicking **More info**,
       record the exact strings. They are marked `observed: false` in

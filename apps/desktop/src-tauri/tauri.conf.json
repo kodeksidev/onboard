@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Onboard",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "identifier": "dev.onboard.app",
   "build": {
     "frontendDist": "../dist"
@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "Eris Uruqi",
+    "publisher": "kodeksidev",
     "homepage": "https://github.com/uruqierisi/onboard",
     "copyright": "Copyright (c) 2026 Onboard contributors",
     "licenseFile": "../../../LICENSE",

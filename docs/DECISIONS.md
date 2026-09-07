@@ -3509,3 +3509,58 @@ decided; it only records choices the spec left open.
     only if a REAL incident (not this one) shows visibility genuinely
     insufficient — not by default, and not by extrapolating from a defect
     that logging alone already closes.
+
+- **AMENDMENT — `bundle.publisher` renamed from the individual's name
+  (`Eris Uruqi`) to `kodeksidev`, before v0.1.3's draft published.**
+  Authorised-by: product owner (chat), 2026-09-07
+  Departs-from: the 2026-08-03 AMENDMENT above, which chose the individual's
+  name deliberately — recorded there as "also the string an individually-
+  issued code-signing certificate would carry." Superseded, not corrected:
+  that reasoning was sound for the identity in place at the time.
+
+  Filed as its own entry rather than an edit to the 2026-08-03 table, per
+  this file's own rule that a row already committed to (i.e. shipped in
+  v0.1.1/v0.1.2) is not rewritten in place.
+
+  **Every surface enumerated, each confirmed rather than assumed — not
+  the same enumeration repeated from memory, since the 2026-08-03 one is on
+  record as having taken two rounds to get complete (the icon-cache
+  correction, `docs/SMOKE_CHECKLIST.md`, is the precedent for why this pass
+  re-derived rather than trusted recall):**
+
+  | surface | confirmed by | changes? |
+  |---|---|---|
+  | Add/Remove Programs "Publisher" (NSIS → HKCU uninstall registry) | `@tauri-apps/cli`'s own `config.schema.json`: publisher "maps to the Manufacturer property of the Windows Installer" | YES |
+  | NSIS `MANUFACTURER` define (`Software\<MANUFACTURER>\Onboard` registry key) | same schema text; this file's own 2026-08-03 entry already traced `MANUPRODUCTKEY` to it | YES |
+  | `onboard.exe`'s VERSIONINFO `CompanyName` | read directly from the cached `tauri-build-2.6.3` crate source, not inferred: `lib.rs:646` — `config.bundle.publisher.unwrap_or_else(\|\| identifier.split('.').nth(1)...)`, `lib.rs:655` — `res.set("CompanyName", &company_name)`. The fallback is the literal `onboard` this project's own 2026-08-03 table already named as the pre-fix default, confirming this is the same value read the same way | YES |
+  | `.deb` package `Maintainer` field | same schema text: it maps to `publisher` **"if the Cargo.toml does not have the authors field."** Checked `apps/desktop/src-tauri/Cargo.toml`'s `[package]` directly: no `authors` key present | YES |
+  | `.rpm` Vendor/Packager-equivalent field | **not confirmed.** `config.schema.json` names Windows and `.deb` explicitly and is silent on `.rpm`; `tauri-bundler` (the crate that actually writes the RPM spec) is not a Cargo dependency of this crate, so its source was not available to read the way `tauri-build`'s was. Likely follows `publisher` too — RPM bundling and `.deb` bundling share one `Settings`/`BundleSettings` struct in upstream `tauri-bundler` — but "likely, by the same-struct pattern" is an inference, not a read source line, and is named as one rather than folded into the confirmed rows above. Verify against a real built `.rpm` (`rpm -qi`) before treating this as closed | LIKELY, UNVERIFIED |
+  | `bundle.copyright` | tauri.conf.json, read directly: `"Copyright (c) 2026 Onboard contributors"` — never carried the individual's name; the 2026-08-03 entry already recorded that `publisher` and `copyright` deliberately disagree | NO |
+  | `LICENSE` | read directly: `Copyright (c) 2026 Onboard contributors` | NO |
+  | `README.md` | searched directly: no author/publisher line at all | NO |
+  | `package.json` `author` field, all four workspace packages (root, `apps/desktop`, `packages/engine`, `packages/contract`) | searched directly: none declare an `author`/`authors` field at all — nothing for a name to occupy | NO |
+  | `docs/RELEASE_NOTES_v0.1.0/v0.1.1/v0.1.2.md` | searched directly: no mention | NO |
+  | Windows SmartScreen's "Unknown publisher" line | `docs/INSTALL.md` and `observed-dialogs.json` already record why: that text is the OS reading the Authenticode signature, not our metadata — an unsigned build says it regardless of what `bundle.publisher` holds | NO |
+
+  **`docs/SIGNING.md` carries no literal mention of the individual's name and
+  needed no text change** — but the REASONING that justified the original
+  choice (an individual's name matching what a future individually-issued
+  certificate would carry) is now stale against `kodeksidev`, which reads as
+  a brand/handle rather than a legal identity a CA verifies a certificate
+  subject against. Not acted on here — signing is out of scope for v1
+  (`docs/SIGNING.md`'s own header) — but named so whoever eventually works
+  the signing path in `docs/SIGNING.md` does not inherit an assumption this
+  rename quietly invalidated.
+
+  **The CI gate that would have caught a silent revert did not exist —
+  fixed, not merely noted.** `.github/workflows/release.yml`'s
+  `installed-windows` job read the real HKCU uninstall entry after a real
+  silent install and **printed** `Add/Remove Programs -> Publisher=...`.
+  That print is exactly what caught the identifier-derived `onboard` default
+  on 2026-08-03 — but a human reading a log is not a gate, and nothing
+  compared the printed value to anything. Added an actual assertion against
+  `kodeksidev` at that same step, so a future silent revert (a stray
+  `tauri.conf.json` edit, a stale cached bundle) fails the job instead of
+  printing a wrong value that only gets noticed if someone happens to read
+  it — the same "logged but not gated" shape this document's own
+  `engine.version` entry just closed for a different surface.

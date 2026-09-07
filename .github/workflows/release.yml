@@ -422,6 +422,20 @@ jobs:
           if (-not $key) { Write-Error "no HKCU uninstall entry — Add/Remove Programs would not list Onboard"; exit 1 }
           Write-Host "per-user OK: $perUser"
           Write-Host "  Add/Remove Programs -> Publisher='$($key.Publisher)' Version='$($key.DisplayVersion)'"
+          # This line used to only PRINT the publisher — it read Publisher='onboard'
+          # (the identifier-derived default, before bundle.publisher was set at all)
+          # from a real install, and that printed line was what caught the default
+          # before anyone claimed it was fixed (docs/DECISIONS.md's AMENDMENT).
+          # A print a human happens to read is not a gate: it would not have failed
+          # a build that silently reverted. Asserted now, against the CURRENT
+          # bundle.publisher (docs/DECISIONS.md — the "kodeksidev" rename), so a
+          # future revert to the default or to a stale name fails here rather than
+          # only being noticed by whoever next reads this log.
+          $expectedPublisher = 'kodeksidev'
+          if ($key.Publisher -ne $expectedPublisher) {
+            Write-Error "Add/Remove Programs Publisher='$($key.Publisher)', expected '$expectedPublisher' — bundle.publisher regressed or was not rebuilt"
+            exit 1
+          }
 
       # Asserts the shipped `*.exe` set by SET EQUALITY, not presence — which is
       # what catches `onboard_engine_stub.exe` shipping beside the real engine.
