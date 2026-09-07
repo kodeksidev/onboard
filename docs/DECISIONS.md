@@ -3584,6 +3584,50 @@ decided; it only records choices the spec left open.
   `.rpm` on every release, which finishes settling the other half on the
   first real run.
 
+  **Settled on that first real run, and the same-`Settings`-struct inference
+  above was WRONG, not merely unconfirmed.** The `workflow_dispatch` dry run
+  this entry predicted would settle it did, immediately: the real Onboard
+  `.rpm`, built by the real `tauri-bundler` on a real `ubuntu-22.04` runner,
+  reports `Packager='(none)'` — genuinely unset, not `kodeksidev`. Checked
+  exhaustively rather than re-guessed: `RpmConfig`'s complete property list
+  in `config.schema.json` is `depends`, `recommends`, `provides`,
+  `conflicts`, `obsoletes`, `release`, `epoch`, `files`, `desktopTemplate`,
+  and four lifecycle scripts — no `packager`, no `vendor`, nothing
+  publisher-shaped. `.deb` and `.rpm` do not in fact share enough of
+  `tauri-bundler`'s internals for the `publisher` field to reach both; they
+  only share a build command. The `.deb`'s own assertion passed on the same
+  run — `Maintainer='kodeksidev'`, exact — so this is not the query logic
+  failing again; it is the earlier INFERENCE about upstream's internals
+  being wrong, on a claim explicitly flagged at the time as an inference
+  rather than a read source line. It would have been wrong to fold into the
+  "confirmed" rows regardless of which way it landed — the point of marking
+  it separately was exactly to let it be checked and be either wrong or
+  right without disturbing what was actually confirmed.
+
+  **The assertion added for this does not compare `Packager` to
+  `bundle.publisher` — it asserts the field stays `(none)`, on purpose.**
+  There is no `tauri.conf.json` field that can change this today, so
+  `(none)` is the correct current truth, not a gap to paper over with a
+  non-blocking `::warning::`. A warning nobody is obligated to read is the
+  same soft-signal shape this project has spent weeks removing (the
+  console-window and `graphHasFail` "control that never reaches its effect"
+  family, generalized once more: a check that reports without holding is a
+  check whose result nobody has to act on). Asserting the true present
+  state instead means the day `tauri-bundler` gains a way to set this, the
+  value arriving turns the gate red on its own — which is the useful
+  failure: it says "wire this up now," not "someone should look into this
+  eventually."
+
+  **Whether shipping `.rpm` at all is worth it is now a live question, not
+  answered here.** Recorded in `release-formats.json`'s own header — where
+  the next person to touch the format table will read it — rather than
+  decided in this entry: `.rpm` has now diverged from `.deb` twice in what
+  it can carry (the upload-glob gap this file's header already tells that
+  story about, and now this), it shipped because it was one extra word in a
+  `--bundles` argument on a runner already building `.deb`, and nothing in
+  this project's history shows anyone asking for it or installing it
+  outside CI.
+
   **A real `dpkg-query` bug the Linux assertion would otherwise have
   inherited.** The obvious first attempt — `dpkg-query -W --showformat=
   '${Maintainer}\n' <package>` — was tried against a real installed test

@@ -34,7 +34,19 @@
     "Program Files and Tauri exposes no key to change that. A developer on a",
     "managed laptop without local administrator rights can install one of",
     "them. AMENDMENT in docs/DECISIONS.md; the enterprise-deployment path the",
-    "MSI carried is recorded in docs/V2_BACKLOG.md rather than dropped."
+    "MSI carried is recorded in docs/V2_BACKLOG.md rather than dropped.",
+    "",
+    "QUESTION FOR WHOEVER NEXT TOUCHES THIS TABLE, not a decision made here:",
+    "is `.rpm` earning its keep? Second time now it has diverged from `.deb`",
+    "in what it can even carry — first the upload-glob gap this file exists",
+    "to prevent, now confirmed (a real build, not a guess) unable to carry",
+    "bundle.publisher at all, because tauri-bundler 2.9.6's RpmConfig has no",
+    "Packager/Vendor field (release.yml's installed job asserts the field",
+    "stays unset for exactly this reason). It shipped because deb+rpm was",
+    "one bundles argument on the same runner, not because a Fedora/RHEL user",
+    "asked for it or one has ever installed it outside CI. Worth asking",
+    "whether \"cheap to build\" is still \"worth shipping\" the next time this",
+    "table changes — not whether to drop it now."
   ],
   "platforms": [
     {
