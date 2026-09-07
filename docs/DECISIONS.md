@@ -3641,3 +3641,15 @@ decided; it only records choices the spec left open.
   authoring time. Two instances were found by someone reading a real result
   and noticing it was wrong; this one was found by refusing to trust the
   check until it had been shown to fail on purpose.
+
+  **Named residual, not assumed closed: these two new assertions (and the
+  `plan` job's single-source `publisher` output feeding all three) have run,
+  for real, via a `workflow_dispatch` dry run on `main` — the same
+  `bundle`/`installed`/`installed-windows` code path a tag push executes,
+  minus the trigger type and the final publish-a-release step. They have
+  NOT yet run via an actual `push: tags: ['v*']` event.** `v0.1.3`'s own tag
+  predates this commit, so it did not exercise them and will not
+  retroactively start doing so. The gap is deliberately left open rather
+  than treated as closed by the dry run: whatever is tagged next is this
+  gate's first tag-triggered execution, and that is worth knowing going in,
+  not discovering if it is ever the one that fails.
