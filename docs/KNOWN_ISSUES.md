@@ -559,3 +559,17 @@ than a green bought that way.
 
 If this ends up gating a release, that is a decision to make explicitly
 when it happens, not one to make by adjusting a constant now.
+
+**Update, same investigation that found the `GraphListFallback` sr-only
+table defect (docs/DECISIONS.md):** explicitly checked whether the two were
+the same bug at different scales — they are not. Direct polling of `<main>`
+every 500ms for 20+ seconds (rather than one settle-check pair) shows it is
+not intermittent across mounts at all: it continuously alternates between
+exactly the same two states (`1250×744`-ish / `1265×743`-ish) for as long
+as it is watched. This reproduces byte-for-byte identically with and
+without the `sr-only` table fix applied, and with and without a hub file in
+the graph, so it is conclusively independent of both. The "roughly 1 in 3
+mounts" characterization above was this same continuous oscillation being
+sampled by a single 150ms-apart double-read rather than watched — not a
+different, rarer phenomenon. Still OPEN; still not a scrollbar-width
+tolerance to widen.

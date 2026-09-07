@@ -13,7 +13,7 @@ import {
   type PathsPattern,
   type ResolvedTsconfig,
 } from './tsconfig-paths';
-import type { WorkspacePackage } from './workspaces';
+import type { DeclaredWorkspacePackage, WorkspacePackage } from './workspaces';
 
 const DIRECT_SUFFIXES = ['', '.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.mjs', '.cjs', '.json'];
 const INDEX_SUFFIXES = ['/index.ts', '/index.tsx', '/index.mts', '/index.js', '/index.jsx', '/index.mjs', '/index.json'];
@@ -32,7 +32,16 @@ export interface NodeResolutionContext {
   readonly existingPathSet: ReadonlySet<string>;
   readonly tsconfigs: readonly ResolvedTsconfig[];
   readonly packageImports: readonly PackageImportsEntry[];
-  readonly workspacePackages: readonly WorkspacePackage[];
+  /**
+   * `DeclaredWorkspacePackage`, not `WorkspacePackage` — deliberately narrower
+   * than what `analyze.ts` knows overall (docs/DECISIONS.md, "resolution
+   * isolation made structural"). An inferred workspace name is a guess from
+   * directory shape; trusting it here would let a same-named real npm
+   * dependency silently misresolve as an internal edge. `workspaces.ts`'s
+   * `declaredOnly()` is the only way to produce this type, so a caller that
+   * hands this context the full (declared + inferred) list does not compile.
+   */
+  readonly workspacePackages: readonly DeclaredWorkspacePackage[];
 }
 
 /** Every direct-candidate then every `/index.*`-candidate, in Section 8.2 rule 6's exact order. */

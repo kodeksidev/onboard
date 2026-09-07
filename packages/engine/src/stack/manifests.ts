@@ -8,18 +8,35 @@
  * reported (a repo can be honestly described even when its language isn't
  * parsed — A2), but their dependency lists are out of scope, matching
  * Section 3 non-goal 1.
+ *
+ * Reads the repo root AND every known workspace package directory
+ * (`workspacePackages`, declared or inferred — docs/DECISIONS.md,
+ * "detectManifests reads root-relative paths only") — mirroring
+ * `entry-points.ts`'s existing `detectEntryPoints`, which already looped
+ * over workspace dirs before this module did. A sibling-packages repo with
+ * no root manifest (CacttusEdu: `backend/`, `dashboard/`,
+ * `cacttus-edu-front/`) previously reported zero manifests and zero
+ * dependencies even though three real `package.json` files existed one
+ * level down.
  */
 import { z } from 'zod';
 import { DependencyInfo, ManifestInfo } from '@onboard/contract';
 import { inferDependencyRole } from './dependency-roles';
+import { posixJoin } from '../util/posix-path';
 import { parseManifest, type UnparseableSink } from '../util/json';
 
 export type ManifestInfoValue = z.infer<typeof ManifestInfo>;
 export type DependencyInfoValue = z.infer<typeof DependencyInfo>;
 
+export interface ManifestWorkspaceRef {
+  readonly dirPath: string;
+}
+
 export interface ManifestDetectionInput {
   readonly existingPaths: ReadonlySet<string>;
   readonly readFile: (repoRelPath: string) => string | null;
+  /** Every known workspace package (declared or inferred) — manifests are read from each, plus the repo root. Defaults to root-only when omitted, matching this module's original behavior. */
+  readonly workspacePackages?: readonly ManifestWorkspaceRef[];
   /** Notified with the path of any manifest that did not parse (see `util/json.ts`). */
   readonly onUnparseable?: UnparseableSink;
 }
@@ -54,20 +71,21 @@ function npmDependenciesFromSection(section: unknown, scope: DependencyInfoValue
     }));
 }
 
-function detectPackageJson(input: ManifestDetectionInput): { manifest: ManifestInfoValue; deps: DependencyInfoValue[] } | null {
-  const content = input.readFile('package.json');
+function detectPackageJson(dirPath: string, input: ManifestDetectionInput): { manifest: ManifestInfoValue; deps: DependencyInfoValue[] } | null {
+  const path = posixJoin(dirPath, 'package.json');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
   // A manifest that does not parse is NOT an empty manifest. Reporting it as
   // one is what made a malformed package.json read as a project with no
   // dependencies.
-  const parsed = parseManifest(content, 'package.json', input.onUnparseable);
+  const parsed = parseManifest(content, path, input.onUnparseable);
   if (parsed === null) {
     return null;
   }
   const manifest: ManifestInfoValue = {
-    path: 'package.json',
+    path,
     kind: 'package.json',
     projectName: typeof parsed.name === 'string' ? parsed.name : null,
     version: typeof parsed.version === 'string' ? parsed.version : null,
@@ -102,8 +120,9 @@ function parseRequirementLine(line: string): DependencyInfoValue | null {
   };
 }
 
-function detectRequirementsTxt(input: ManifestDetectionInput): { manifest: ManifestInfoValue; deps: DependencyInfoValue[] } | null {
-  const content = input.readFile('requirements.txt');
+function detectRequirementsTxt(dirPath: string, input: ManifestDetectionInput): { manifest: ManifestInfoValue; deps: DependencyInfoValue[] } | null {
+  const path = posixJoin(dirPath, 'requirements.txt');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
@@ -112,7 +131,7 @@ function detectRequirementsTxt(input: ManifestDetectionInput): { manifest: Manif
     .map(parseRequirementLine)
     .filter((d): d is DependencyInfoValue => d !== null);
   return {
-    manifest: { path: 'requirements.txt', kind: 'requirements.txt', projectName: null, version: null, packageManager: 'pip' },
+    manifest: { path, kind: 'requirements.txt', projectName: null, version: null, packageManager: 'pip' },
     deps,
   };
 }
@@ -146,8 +165,9 @@ function extractPoetryDependencies(content: string): DependencyInfoValue[] {
   return deps;
 }
 
-function detectPyprojectToml(input: ManifestDetectionInput): { manifest: ManifestInfoValue; deps: DependencyInfoValue[] } | null {
-  const content = input.readFile('pyproject.toml');
+function detectPyprojectToml(dirPath: string, input: ManifestDetectionInput): { manifest: ManifestInfoValue; deps: DependencyInfoValue[] } | null {
+  const path = posixJoin(dirPath, 'pyproject.toml');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
@@ -155,38 +175,40 @@ function detectPyprojectToml(input: ManifestDetectionInput): { manifest: Manifes
   const version = extractTomlString(content, 'version');
   const packageManager = content.includes('[tool.poetry]') ? 'poetry' : 'pip';
   return {
-    manifest: { path: 'pyproject.toml', kind: 'pyproject.toml', projectName, version, packageManager },
+    manifest: { path, kind: 'pyproject.toml', projectName, version, packageManager },
     deps: extractPoetryDependencies(content),
   };
 }
 
 function detectSimpleManifest(
+  dirPath: string,
   input: ManifestDetectionInput,
-  path: string,
+  relativePath: string,
   kind: ManifestInfoValue['kind'],
   packageManager: string | null,
 ): ManifestInfoValue | null {
-  return input.readFile(path) === null
-    ? null
-    : { path, kind, projectName: null, version: null, packageManager };
+  const path = posixJoin(dirPath, relativePath);
+  return input.readFile(path) === null ? null : { path, kind, projectName: null, version: null, packageManager };
 }
 
-function detectGoMod(input: ManifestDetectionInput): ManifestInfoValue | null {
-  const content = input.readFile('go.mod');
+function detectGoMod(dirPath: string, input: ManifestDetectionInput): ManifestInfoValue | null {
+  const path = posixJoin(dirPath, 'go.mod');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
   const match = /^module\s+(\S+)/m.exec(content);
-  return { path: 'go.mod', kind: 'go.mod', projectName: match?.[1] ?? null, version: null, packageManager: null };
+  return { path, kind: 'go.mod', projectName: match?.[1] ?? null, version: null, packageManager: null };
 }
 
-function detectCargoToml(input: ManifestDetectionInput): ManifestInfoValue | null {
-  const content = input.readFile('Cargo.toml');
+function detectCargoToml(dirPath: string, input: ManifestDetectionInput): ManifestInfoValue | null {
+  const path = posixJoin(dirPath, 'Cargo.toml');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
   return {
-    path: 'Cargo.toml',
+    path,
     kind: 'Cargo.toml',
     projectName: extractTomlString(content, 'name'),
     version: extractTomlString(content, 'version'),
@@ -194,26 +216,28 @@ function detectCargoToml(input: ManifestDetectionInput): ManifestInfoValue | nul
   };
 }
 
-function detectPomXml(input: ManifestDetectionInput): ManifestInfoValue | null {
-  const content = input.readFile('pom.xml');
+function detectPomXml(dirPath: string, input: ManifestDetectionInput): ManifestInfoValue | null {
+  const path = posixJoin(dirPath, 'pom.xml');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
   const match = /<artifactId>([^<]+)<\/artifactId>/.exec(content);
-  return { path: 'pom.xml', kind: 'pom.xml', projectName: match?.[1] ?? null, version: null, packageManager: 'maven' };
+  return { path, kind: 'pom.xml', projectName: match?.[1] ?? null, version: null, packageManager: 'maven' };
 }
 
-function detectComposerJson(input: ManifestDetectionInput): ManifestInfoValue | null {
-  const content = input.readFile('composer.json');
+function detectComposerJson(dirPath: string, input: ManifestDetectionInput): ManifestInfoValue | null {
+  const path = posixJoin(dirPath, 'composer.json');
+  const content = input.readFile(path);
   if (content === null) {
     return null;
   }
-  const parsed = parseManifest(content, 'composer.json', input.onUnparseable);
+  const parsed = parseManifest(content, path, input.onUnparseable);
   if (parsed === null) {
     return null;
   }
   return {
-    path: 'composer.json',
+    path,
     kind: 'composer.json',
     projectName: typeof parsed.name === 'string' ? parsed.name : null,
     version: typeof parsed.version === 'string' ? parsed.version : null,
@@ -221,39 +245,54 @@ function detectComposerJson(input: ManifestDetectionInput): ManifestInfoValue | 
   };
 }
 
-/** Detects every supported manifest kind at the repo root and extracts npm/pypi dependencies. */
-export function detectManifests(input: ManifestDetectionInput): ManifestDetectionResult {
+/** Detects every supported manifest kind in one directory (`''` = repo root). */
+function detectManifestsInDir(dirPath: string, input: ManifestDetectionInput): ManifestDetectionResult {
   const manifests: ManifestInfoValue[] = [];
   const dependencies: DependencyInfoValue[] = [];
 
-  const packageJson = detectPackageJson(input);
+  const packageJson = detectPackageJson(dirPath, input);
   if (packageJson !== null) {
     manifests.push(packageJson.manifest);
     dependencies.push(...packageJson.deps);
   }
-  const requirementsTxt = detectRequirementsTxt(input);
+  const requirementsTxt = detectRequirementsTxt(dirPath, input);
   if (requirementsTxt !== null) {
     manifests.push(requirementsTxt.manifest);
     dependencies.push(...requirementsTxt.deps);
   }
-  const pyprojectToml = detectPyprojectToml(input);
+  const pyprojectToml = detectPyprojectToml(dirPath, input);
   if (pyprojectToml !== null) {
     manifests.push(pyprojectToml.manifest);
     dependencies.push(...pyprojectToml.deps);
   }
-  const setupPy = detectSimpleManifest(input, 'setup.py', 'setup.py', 'pip');
+  const setupPy = detectSimpleManifest(dirPath, input, 'setup.py', 'setup.py', 'pip');
   if (setupPy !== null) {
     manifests.push(setupPy);
   }
-  const pipfile = detectSimpleManifest(input, 'Pipfile', 'Pipfile', 'pip');
+  const pipfile = detectSimpleManifest(dirPath, input, 'Pipfile', 'Pipfile', 'pip');
   if (pipfile !== null) {
     manifests.push(pipfile);
   }
-  [detectGoMod(input), detectCargoToml(input), detectPomXml(input), detectComposerJson(input)].forEach((manifest) => {
-    if (manifest !== null) {
-      manifests.push(manifest);
-    }
-  });
+  [detectGoMod(dirPath, input), detectCargoToml(dirPath, input), detectPomXml(dirPath, input), detectComposerJson(dirPath, input)].forEach(
+    (manifest) => {
+      if (manifest !== null) {
+        manifests.push(manifest);
+      }
+    },
+  );
 
+  return { manifests, dependencies };
+}
+
+/** Detects every supported manifest kind at the repo root and in every known workspace package, and extracts npm/pypi dependencies. */
+export function detectManifests(input: ManifestDetectionInput): ManifestDetectionResult {
+  const dirs = [''].concat((input.workspacePackages ?? []).map((p) => p.dirPath));
+  const manifests: ManifestInfoValue[] = [];
+  const dependencies: DependencyInfoValue[] = [];
+  dirs.forEach((dirPath) => {
+    const result = detectManifestsInDir(dirPath, input);
+    manifests.push(...result.manifests);
+    dependencies.push(...result.dependencies);
+  });
   return { manifests, dependencies };
 }

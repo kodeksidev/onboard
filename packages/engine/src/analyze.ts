@@ -15,7 +15,7 @@ import type { AnalysisResult as AnalysisResultValue, EngineProgress } from '@onb
 import type { ParsedFile } from './parse/language-parser';
 import { walk, type WalkFs } from './walk/walk';
 import { classifyFile } from './classify/classify-file';
-import { discoverWorkspacePackages, type WorkspacePackage } from './resolve/workspaces';
+import { declaredOnly, discoverWorkspacePackages, type DeclaredWorkspacePackage, type WorkspacePackage } from './resolve/workspaces';
 import { discoverTsconfigs } from './resolve/tsconfig-paths';
 import { discoverPackageImports, type NodeResolutionContext } from './resolve/node-resolution';
 import { discoverPythonPackageRoots, type PythonResolutionContext } from './resolve/python-resolution';
@@ -142,7 +142,12 @@ function processAllFiles(
 function buildResolverContext(
   existingPaths: ReadonlySet<string>,
   readFile: (p: string) => string | null,
-  workspacePackages: readonly WorkspacePackage[],
+  // `DeclaredWorkspacePackage`, not `WorkspacePackage` — the parameter type
+  // itself is the guard (docs/DECISIONS.md, "resolution isolation made
+  // structural"): a caller passing the full declared+inferred list does
+  // not compile, so this function can only ever build a resolver context
+  // that trusts declared workspace names.
+  declaredWorkspacePackages: readonly DeclaredWorkspacePackage[],
   pyManifestNames: ReadonlySet<string>,
 ): { context: ResolverContext; tsconfigDiagnostics: PreparedAnalysis['tsconfigDiagnostics'] } {
   const tsconfigPaths = [...existingPaths].filter(
@@ -162,7 +167,7 @@ function buildResolverContext(
     existingPathSet: existingPaths,
     tsconfigs: tsconfigDiscovery.configs,
     packageImports,
-    workspacePackages,
+    workspacePackages: declaredWorkspacePackages,
   };
   const python: PythonResolutionContext = {
     existingPathSet: existingPaths,
@@ -245,12 +250,15 @@ function prepareAnalysis(options: AnalyzeOptions): PreparedAnalysis {
 
   const classified = classifyAll(processedFiles, entryPointPaths);
 
-  const { manifests, dependencies } = detectManifests({ existingPaths, readFile, onUnparseable });
+  const { manifests, dependencies } = detectManifests({ existingPaths, readFile, workspacePackages, onUnparseable });
   const pyManifestNames = new Set(dependencies.filter((d) => d.ecosystem === 'pypi').map((d) => d.name));
+  // Resolution trusts declared workspace names only — see `declaredOnly`'s
+  // and `DeclaredWorkspacePackage`'s doc comments (resolve/workspaces.ts).
+  const declaredWorkspacePackages = declaredOnly(workspacePackages);
   const { context: resolverContext, tsconfigDiagnostics } = buildResolverContext(
     existingPaths,
     readFile,
-    workspacePackages,
+    declaredWorkspacePackages,
     pyManifestNames,
   );
 

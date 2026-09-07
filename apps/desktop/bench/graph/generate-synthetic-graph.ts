@@ -12,6 +12,16 @@ const SYNTHETIC_GRAPH_SEED = 0x0b0a4d;
 const FILES_PER_DIRECTORY = 20;
 const MODULE_COUNT = 12;
 const MAX_OUTGOING_EDGES_PER_FILE = 3;
+/**
+ * Forces file 0 to be a hub with a dependent list sized like the real one
+ * that exposed the sr-only table width blowout (docs/DECISIONS.md: a real
+ * hub file, ~63 dependents from a 500-file repo — roughly 1 in 8). Without
+ * this, the base RNG-driven edges rarely give any single file more than a
+ * handful of dependents, so `graph-layout.spec.ts`'s containment check never
+ * exercised the code path that actually broke: the fixture was structurally
+ * incapable of producing the defect it was meant to catch.
+ */
+const HUB_DEPENDENT_STEP = 8;
 
 const CLASSIFICATIONS: readonly AnalysisResult['files'][number]['classification'][] = [
   'controller',
@@ -119,6 +129,30 @@ function buildEdges(files: AnalysisResult['files'], rng: () => number): Analysis
   return edges;
 }
 
+/** Deterministic, index-based (not RNG-driven) so it never disturbs the existing seeded edge set — purely additive. */
+function addHubDependentEdges(files: AnalysisResult['files']): AnalysisResult['edges'] {
+  const hub = files[0];
+  if (hub === undefined) {
+    return [];
+  }
+  const hubEdges: AnalysisResult['edges'] = [];
+  for (let index = HUB_DEPENDENT_STEP; index < files.length; index += HUB_DEPENDENT_STEP) {
+    const source = files[index];
+    if (source === undefined) {
+      continue;
+    }
+    hubEdges.push({
+      fromPath: source.path,
+      toPath: hub.path,
+      specifier: `./${hub.path}`,
+      line: 1,
+      kind: 'static',
+      isTypeOnly: false,
+    });
+  }
+  return hubEdges;
+}
+
 /**
  * Builds a schema-shaped (not zod-validated — this is bench-only, never
  * shipped) `AnalysisResult` with `fileCount` files spread across
@@ -130,7 +164,7 @@ function buildEdges(files: AnalysisResult['files'], rng: () => number): Analysis
 export function generateSyntheticResult(fileCount: number): AnalysisResult {
   const rng = mulberry32(SYNTHETIC_GRAPH_SEED + fileCount);
   const files = buildFiles(fileCount, rng);
-  const edges = buildEdges(files, rng);
+  const edges = [...buildEdges(files, rng), ...addHubDependentEdges(files)];
 
   return {
     schemaVersion: 1,

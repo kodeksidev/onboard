@@ -3697,3 +3697,400 @@ decided; it only records choices the spec left open.
   than treated as closed by the dry run: whatever is tagged next is this
   gate's first tag-triggered execution, and that is worth knowing going in,
   not discovering if it is ever the one that fails.
+
+- **v0.1.3 (unreleased) — the dependency-graph tab was STILL reported broken
+  on the real installed exe after the `min-h-0`/`min-w-0` fix shipped, and
+  the mechanism is a second, unrelated defect: an `sr-only` accessibility
+  `<table>` whose intended 1px box is overridden by its own content.**
+  Reported live against the real v0.1.3 installer: grey/mis-scaled Cytoscape
+  texture blocks, the tab strip clipped to "Ask AI" alone, both scrollbars
+  present — on the real installed binary, with the CSS fix from the prior
+  entry confirmed present in that exact binary (read directly off a live
+  WebView2 session via Chrome DevTools Protocol: the compiled `.min-h-0` /
+  `.min-w-0` rules were found, byte for byte, in the running app's own
+  stylesheets). Ruling out "the fix never shipped" left one honest
+  conclusion to chase: something the prior fix did not touch.
+  - **Real IPC path, not a substitution, this time.** The prior entry's own
+    e2e spec injects a synthetic `AnalysisResult` through the
+    `window.__onboardE2E` bridge, bypassing `analyze_repo` — named there as a
+    substitution, twice. Reproducing THIS report meant not doing that again.
+    First attempt monkey-patched `window.__TAURI_INTERNALS__.invoke` to
+    fake the folder-picker result while leaving `analyze_repo` untouched —
+    it looked like it worked (a real handshake, a real analyze call landed
+    in the log) but the resulting UI showed an unrelated repo the patch
+    never named, and direct inspection afterward found the patched `invoke`
+    had reverted to the original with no page reload in between — the
+    mechanism for that reversion was never nailed down, and rather than
+    trust a hack that had just demonstrably done something unexplained, it
+    was abandoned outright. Replaced with genuine UI automation: a live
+    Win32 `Select Folder` dialog, enumerated and driven via
+    `System.Windows.Automation` (address bar click, select-all, type the
+    real path, `Select Folder` button click by coordinates) — the same
+    thing a person's hands would do, against this repo itself (500 files
+    scanned, 356 parsed, 158 orphans) through the unmodified
+    `pick_repo_folder` → `analyze_repo` path.
+  - **The mechanism, measured directly, not inferred.** With the graph tab
+    open on that real analysis, `main` and `body` both measured normal
+    (`scrollWidth`/`scrollHeight` within ~15-16px of `client*` — see KI-11
+    below) — the ORIGINAL fix is intact and not regressing. But
+    `document.documentElement.scrollWidth` measured **28,554px** against a
+    1265px client width. Walking the DOM for anything wider than 2000px
+    found the cause immediately: `GraphListFallback.tsx`'s `<table
+    className="sr-only">` (one `<tr>` per file, added Section 9 Phase 8 for
+    screen-reader parity), whose `getComputedStyle` reported `width:
+    28555.5px`, `tableLayout: auto`, `whiteSpace: nowrap`, `position:
+    absolute`. Tailwind's `sr-only` sets `width: 1px` — which a `<table>`
+    with the default `auto` layout algorithm does not respect once cell
+    content needs more, `white-space: nowrap` forces that content to stay
+    unwrapped, and `position: absolute` with no positioned ancestor between
+    the table and the document root means the resulting oversized box
+    inflates `document.documentElement`'s own scroll extent while leaving
+    `main`'s and `body`'s scroll boxes untouched — which is exactly why the
+    prior entry's own containment checks (both of which measure `main`, not
+    `documentElement`) never saw it. The specific worst cell, confirmed by
+    reading it directly: `cacttus-edu-front/src/app/theme.ts`'s "Depended on
+    by" column, 2,656 characters of comma-joined dependent paths, unwrapped.
+  - **Honest gap, named rather than closed:** the tab strip and canvases
+    still measured with correct rects in this same session, live. A real
+    horizontal scrollbar on the whole window is proven; that it is the
+    direct, sole cause of the specific grey-block/clipped-strip visuals
+    reported is not — plausible (a window-level scrollbar appearing/
+    disappearing under real WebView2 compositing is a believable trigger
+    for Cytoscape's own `textureOnViewport` cache mis-blitting) but not
+    independently confirmed the way the width measurement itself is.
+  - **The fix: cap what the fallback renders, not the table's CSS.** Chosen
+    over `table-layout: fixed` with a hard `max-width` because the
+    underlying content was the actual defect, not just its symptom — a
+    screen reader reading 2,656 unwrapped characters of joined filenames
+    for one cell is not usable accessibility regardless of whether it also
+    breaks layout. Capped both `dependsOn`/`dependedOnBy` lists to 8 entries
+    (`+N more` appended when truncated) in `GraphListFallback.tsx`'s
+    `formatList`, matching `packages/engine/src/constants.ts`'s
+    `ROADMAP_DEPENDS_ON_CAP = 8` — the roadmap step generator caps the exact
+    same shape of list for the exact same reason; the fallback table having
+    no cap was the inconsistency, not a deliberate difference. The other
+    six `sr-only` surfaces in the app (two headings and the search label in
+    `WhereIsSearch.tsx`, two headings and one `aria-live` div in
+    `DependencyGraph.tsx`, one label in `GraphToolbar.tsx`) were checked
+    individually: all six are non-`<table>` elements with short, fixed, or
+    single-value content, so the auto-layout-width mechanism above cannot
+    reach them — this is not a general `sr-only` defect, it is specific to
+    the one element that is both a `<table>` and unbounded.
+  - **The e2e spec's own fixture could not have caught this, and that is
+    fixed too.** `graph-layout.spec.ts`'s synthetic `AnalysisResult`
+    (`generateSyntheticResult`, `bench/graph/generate-synthetic-graph.ts`)
+    spreads edges randomly with a max of 3 outgoing per file and no
+    deliberate hub — no file in it ends up with anywhere near 8 dependents,
+    so its "Depended on by" cells were never long enough to trigger the
+    table's auto-layout behavior even before the cap existed. The
+    containment check was asserting against data structurally incapable of
+    producing the defect it existed to catch — the same shape of gap named
+    elsewhere in this file for `node-express`'s 2-argument routes. Fixed by
+    adding `addHubDependentEdges`: deterministic (index-based, not another
+    draw from the seeded RNG, so the existing edge set is untouched),
+    forcing file 0 to accumulate one inbound edge from every 8th later
+    file — for the spec's 429-file fixture, ~53 dependents, the same order
+    of magnitude as the real `theme.ts` finding (~63) that exposed this.
+  - **Named residual, not assumed closed: none of the above has been
+    re-verified end to end yet.** The fix and the fixture change are
+    written and pass their own unit tests (`GraphListFallback.test.tsx`
+    gained a case asserting the cap fires and the cell stays under 500
+    characters), and `bun run test`/`typecheck` are clean across the whole
+    desktop app, but neither the real installed-exe reproduction above nor
+    `e2e/graph-layout.spec.ts` has been re-run against a build containing
+    this fix. Explicitly agreed before any of this landed: no tag, no
+    release, until that re-test happens and the grey-block/clipped-strip
+    symptoms are confirmed gone on a real build — if they are not, this
+    entry's mechanism was real but incomplete, not wrong, and the
+    investigation continues rather than closes.
+
+- **Follow-up, same day — the cap alone was insufficient at real path
+  lengths; `table-layout: fixed` was the missing second half, and the
+  combined fix is now confirmed on a real analysis through the real IPC
+  path.** Re-verifying the entry above surfaced a real gap in the first
+  attempt: capping `dependsOn`/`dependedOnBy` to 8 entries cut the worst
+  cell in this repo's own real analysis from 2,656 to 531 characters (a real
+  reduction), but the `<table>`'s `getComputedStyle` width was still
+  **9,905px** — real file paths in a real monorepo (`apps/desktop/src/
+  components/DependencyGraph/DependencyGraph.axe.test.tsx`-length strings)
+  are long enough that even 8 of them per cell, across two such columns,
+  still exceeds a phone-book's worth of pixels. The cap bounds accessibility
+  content; it does not bound the table's own CSS box, because `table-layout:
+  auto` (the default) was still in effect. Added `table-fixed` (Tailwind's
+  `table-layout: fixed` utility) to the same element, keeping the cap for
+  the accessibility reason it exists for independently.
+  - **A build-tooling near-miss worth naming so it is not repeated:** the
+    first attempt to verify this looked like it failed — `getComputedStyle`
+    on the live app kept reporting `tableLayout: "auto"` and `className:
+    "sr-only"` (no `table-fixed`) even after editing the source, rebuilding
+    the frontend, and running `cargo build --bin onboard` a second time.
+    The cargo build had actually failed (`error: failed to remove file
+    ...onboard.exe: Access is denied` — the previous debug instance was
+    still running and holding the executable open) but was being piped
+    through `tail`, whose own exit code (always 0) masked cargo's real one,
+    so the failure looked like a successful no-op rebuild. Caught by
+    checking the live DOM's actual `className` rather than trusting the
+    build step's reported success — the same "verify by output, not by the
+    step that claims to have produced it" standard this file has applied to
+    CI checks, applied here to a local build. Killing the still-running
+    instance before rebuilding, and checking cargo's own exit code directly
+    rather than through a pipe, fixed it.
+  - **Confirmed, on the real thing this time:** the same real dialog
+    automation (no synthetic injection, no `invoke` patching) against this
+    repo's own real analysis (539 files scanned, 354 parsed) on the rebuilt
+    debug binary. With both parts of the fix in place: `table.className`
+    is `"sr-only table-fixed"`, computed width **536.8px** (down from
+    9,905px), and — the number that actually matters —
+    `document.documentElement.scrollWidth` (1265px) now EQUALS
+    `document.documentElement.clientWidth` (1265px): zero document-level
+    horizontal overflow, where before there was 8,640px of it. All 7 tabs
+    render at their correct, undisturbed positions; all 4 Cytoscape canvas
+    layers measure at the expected ~1250-1265px width. The `main`/`body`
+    scroll boxes still show the pre-existing ~15-16px gap — see below, this
+    is KI-11, confirmed unrelated.
+  - **KI-11 does NOT disappear, and is not this defect seen small — it is
+    independently reproducible, with or without either half of this fix.**
+    Checked directly, as asked: injected the exact same synthetic graph
+    `graph-layout.spec.ts` uses, with and without the hub-dependent edges
+    added below, into this same rebuilt binary, and polled `<main>`'s
+    scroll box every 500ms for 20+ seconds with the graph tab open. It does
+    not settle — it continuously alternates between exactly two states
+    (`1250×744`-ish and `1265×743`-ish, the same two pairs of numbers KI-11
+    was originally logged with) for as long as it is watched, on BOTH the
+    hub and no-hub fixture, identically. This is a stronger, and different,
+    characterization than "roughly 1 run in 3": it is not intermittent
+    across mounts, it is continuously live within a single mount, and the
+    prior spec's 150ms-apart double-read settle check most likely used to
+    get lucky landing on two reads in the same phase more often than it now
+    does — nothing here suggests the oscillation itself changed, only that
+    this observation method finally caught it directly instead of sampling
+    it. Because it reproduces byte-for-byte identically on data that never
+    touches `GraphListFallback` at all, it is conclusively a third,
+    still-unexplained mechanism, not a small-scale echo of either half of
+    this entry's fix. Remains OPEN in `docs/KNOWN_ISSUES.md`, unchanged.
+  - **The e2e spec itself cannot currently produce a clean pass, for a
+    reason unrelated to this fix.** Running `e2e/graph-layout.spec.ts`
+    against the rebuilt binary hit `mount 0: <main>'s scroll box never
+    settled` — its `browser.waitUntil` (4s budget, 150ms-apart reads) never
+    finds two matching consecutive reads, for the KI-11 reason above, before
+    the containment assertion it guards ever runs. This is a pre-existing
+    gate limitation surfaced by better direct observation, not a regression
+    from anything in this entry — the direct CDP measurement above is what
+    actually confirms the fix, precisely because it does not depend on that
+    settle-detection succeeding first. Widening the settle timeout or
+    tolerance to get the spec green is exactly the move this project has
+    repeatedly declined to make for KI-11 already; it stays open here too.
+  - **The fixture fix (`addHubDependentEdges` in
+    `bench/graph/generate-synthetic-graph.ts`) is confirmed to reproduce
+    the ORIGINAL (uncapped) table-width defect on synthetic data, closing
+    the loop this entry opened.** Before either half of the source fix
+    existed, injecting the hub-augmented synthetic result produced a real
+    `document.documentElement.scrollWidth` inflation on this same binary;
+    the no-hub fixture did not. The fixture now exercises the exact code
+    path that broke — it was verified to fail before the fix and pass after,
+    not merely assumed to.
+
+- **Follow-up, same investigation — the same defect on the HEIGHT axis was
+  real, is now fixed, and testing it disproved the leading hypothesis for
+  the still-open width gap rather than confirming it.** Measuring a real
+  CacttusEdu analysis (356 files parsed) for the graph rendering report
+  below surfaced `document.documentElement.scrollHeight` at **12,142px**
+  against an ~800px viewport, `main`/`body` both unaffected — the identical
+  mechanism as the width entry above, on the other axis: 500 `<tr>` at
+  ~24px each, `table-fixed` bounds column width, not row count, and the
+  content cap bounds cell text, not row count either. Fixed by adding
+  `MAX_FALLBACK_ROWS = 100` to `GraphListFallback.tsx`: files are now
+  sorted by `importanceRank` (ascending — the table's own caption already
+  claimed this ordering; the component was not actually doing it before,
+  since `AnalysisResult.files` comes path-sorted from
+  `analyze-assemble.ts`'s `buildFileNodes`, an incidental correctness fix
+  alongside the cap) and sliced to the top 100, with the caption stating
+  the omitted count and pointing at "Where is X?" for the rest — the same
+  cap-and-say-so shape as `DEPENDENCY_LIST_CAP`, and for the same reason: a
+  screen reader was never going to read 500 rows usefully either.
+  - **Verified live, not just in tests:** rebuilt, cleared the analysis
+    cache, ran a genuinely fresh `analyze_repo` against real CacttusEdu
+    (not a cache hit), opened the graph tab exactly once, measured before
+    touching anything further. Table rows: 500 -> 100. Table height: 12,048px
+    -> 2,448px. `documentElement.scrollHeight`: 12,142px -> 2,542px. The
+    residual ~1,748px is expected and bounded — 100 rows at this row height
+    will always exceed a typical viewport height by roughly a constant
+    amount, regardless of repo size, which is the actual design goal
+    (bounded, not zero, and no longer scaling with `files.length`).
+  - **The KI-11-causes-width hypothesis was tested and did not hold here.**
+    The specific, testable claim: a ~12,000px vertical overflow forces a
+    vertical scrollbar, which consumes ~15px of width, which could push an
+    exactly-fitting layout into horizontal overflow — meaning the width
+    symptom would be downstream of the height defect rather than a separate
+    cause. Tested directly, using the exact sequence asked for (fresh
+    analysis, cache cleared, graph tab opened once, measured immediately —
+    no remounts): `document.documentElement.scrollWidth` equaled
+    `clientWidth` BOTH before this fix (with the full 12,142px height
+    overflow present) AND after (with it reduced to 1,748px). Zero width
+    overflow in both states, in this environment. This does not mean the
+    hypothesis is wrong in general — only that it did not produce the
+    predicted effect here, so the height fix does not appear to have closed
+    a width symptom that was never present on this machine to begin with.
+  - **The width symptom remains unreproduced, now under every variation
+    tried:** debug and release builds, windowed and maximized, 5 remounts
+    and single-open, warm cache and cold cache, before and after the height
+    fix. Genuinely open. Left there rather than guessed at further. Seen on
+    the user's real install, not reproduced on this machine — the
+    difference is environmental and neither side has found it yet. Next
+    step is whatever the next real build surfaces, not further local
+    hunting.
+
+- **CacttusEdu's "Unknown project type" — Option B implemented: manifest and
+  workspace discovery now recognize sibling packages with no root manifest
+  as a monorepo, with three conditions attached to contain it.** Diagnosis
+  (prior entries in this file, same investigation): `detectManifests` and
+  `discoverWorkspacePackages` both read root-relative paths only;
+  `discoverWorkspacePackages` additionally bailed to `[]` with no root
+  `package.json#workspaces` / `pnpm-workspace.yaml` / `lerna.json` to read
+  globs from. CacttusEdu (`backend/`, `dashboard/`, `cacttus-edu-front/`,
+  each with its own real `package.json`, no root manifest at all) hit both
+  gaps: "Unknown project type," zero dependencies, two Python scripts under
+  `docs/` picked as entry points for a TypeScript monorepo. Chosen over the
+  narrower alternative (extend `detectManifests` only) because entry points
+  are half the user-visible defect and `detectEntryPoints`
+  (`entry-points.ts`) already loops over `workspacePackages` — the narrower
+  fix would have left the wrong entry points untouched.
+  - **Condition 1 — the heuristic gate, tightened beyond "no root manifest,
+    >= 2 siblings."** `inferSiblingPackages` (`resolve/workspaces.ts`) opts
+    out entirely the moment a root `package.json` exists at all (an
+    intentional single manifest is never reinterpreted), requires each
+    candidate to carry a real `name` field, requires each candidate's file
+    count to be at least 20% of the largest candidate's (`tools/` sitting
+    beside a real, substantial `app/` does not count as a sibling merely
+    because it also has a name and a package.json), and requires the
+    surviving candidates together to cover a majority of the repo's own
+    files (a repo whose files mostly live outside every candidate is not
+    "these packages," whatever else sits alongside them). Uses the walk's
+    existing-file count as the file-count basis, not "parsed source files"
+    specifically — that classification runs later in `analyze.ts`'s
+    pipeline than workspace discovery does, so it is not available yet; a
+    deliberate simplification, stated as one in the code, not silently
+    substituted.
+  - **The negative case is planted as a fixture, not assumed handled.**
+    `test/resolve/workspaces.test.ts` gained direct unit coverage for the
+    exact tools/-beside-a-real-package shape (20 files vs. 1, correctly
+    rejected by the size-ratio gate, not just the sibling-count gate), a
+    second negative case where the majority of files sit outside every
+    candidate, a single-sibling case, an unnamed-manifest case, and the
+    positive case. `test/analyze/inferred-workspaces.test.ts` adds the same
+    two shapes end-to-end through the real `analyze()` entry point (not
+    `discoverWorkspacePackages` in isolation) — the fixture that failed on
+    first write, exactly because file counts scaled differently than the
+    unit test's, is worth naming: the earliest version of the tools/
+    fixture used 6 files in the real package and 1 in tools/, which the
+    ratio gate did not reject (1 file was still >= 20% of 6) — caught
+    immediately by running it, not by inspection, which is the entire
+    argument for planting these as executable fixtures instead of trusting
+    the gate by construction.
+  - **Condition 2 — resolution isolation, kept exactly as specified: the
+    engine's opinion, not a workaround.** `WorkspacePackage` gained a
+    `source: 'declared' | 'inferred'` field (`resolve/workspaces.ts`) — NOT
+    part of the frozen contract; `analyze-assemble.ts`'s `buildRepoSection`
+    already mapped only `{name, dirPath}` into
+    `AnalysisResult.repo.workspacePackages`, so this stays engine-internal.
+    Manifests, dependencies, `detectedType`, `sourceRoots`, and
+    `entryPoints` all consume the full list, declared and inferred alike.
+    Only `analyze.ts`'s `prepareAnalysis` filters: the resolver context
+    (`buildResolverContext`, feeding `NodeResolutionContext.workspacePackages`,
+    consumed by `node-resolution.ts`'s `resolveBareSpecifier`) is built from
+    `workspacePackages.filter((p) => p.source === 'declared')` only. An
+    inferred name colliding with a real npm dependency would otherwise
+    silently misresolve a genuine external import as internal — a wrong
+    edge, not a missing one, propagating into PageRank, importance, and the
+    roadmap, which is the one failure mode in this whole change that would
+    be invisible rather than merely incomplete. `node-resolution.test.ts`
+    gained an explicit test proving `resolveNodeImport` itself has no
+    opinion about `source` (isolation is `prepareAnalysis`'s job, not
+    that function's) paired with `inferred-workspaces.test.ts`'s end-to-end
+    version: a real cross-sibling bare import (`backend/src/index.ts`
+    importing `'dashboard'`, an inferred package name) surfaces as an
+    external dependency and produces no edge into `dashboard/`, through the
+    real `analyze()` pipeline, not asserted in isolation.
+  - **Verified additive against the 5 existing engine snapshots, not just
+    argued to be:** regenerating all 5
+    (`bun run scripts/generate-snapshots.ts`) changed exactly one —
+    `mixed-monorepo` — and only in `stack.manifests` (gained
+    `packages/core/package.json` and `packages/web/package.json`, which
+    `detectManifests` now reads because it loops over `workspacePackages`
+    unconditionally, not only when they are inferred) and `stack.dependencies`
+    (gained `@acme/core`, a real dependency `packages/web/package.json`
+    always declared and the engine never read). `detectedType`,
+    `sourceRoots`, `workspacePackages`, `entryPoints`, `edges`, `files`, and
+    the roadmap are byte-for-byte unchanged in that diff. `node-express`,
+    `react-app`, `python-flask`, and `kitchen-sink` are byte-for-byte
+    unchanged — none has a root-manifest-less sibling shape, so the new
+    fallback path never fires for them, and none has workspace packages
+    whose depth-level manifests were being missed before. `bun run
+    verify:determinism` stays 20/20 after the regeneration.
+  - **Condition 3 — fingerprint movement is accepted, not treated as a
+    defect, and needs one line whenever this ships:** any repo whose
+    manifests, dependencies, `detectedType`, `sourceRoots`, or
+    `entryPoints` change under this fix gets a new fingerprint next open
+    (`analyze-assemble.ts` hashes the whole assembled result, not just file
+    contents), which means a one-time cold re-analysis for that repo, not a
+    correctness problem. Residual, not yet acted on: whenever this is
+    included in release notes, name it the same way an engine-version bump
+    already is — affected repos re-analyze cold once.
+  - **What `mixed-monorepo`'s changed snapshot actually was, because the
+    mechanism matters more than the instance.** The fixture's
+    `packages/web/package.json` declares `"dependencies": {"@acme/core":
+    "workspace:*"}` — a real, ordinary cross-workspace dependency, present
+    in the fixture since it was written, and `packages/web/src/index.ts`'s
+    real `import` of `@acme/core` already showed up correctly as a graph
+    edge (`detectEntryPoints`/resolution both walk workspace directories
+    and always had). `detectManifests` alone never read
+    `packages/web/package.json` at all — root-only, unconditionally, before
+    this fix — so the one manifest that actually declared a dependency was
+    never opened, and the fixture's own root `package.json` (`mixed-
+    monorepo-fixture`, declaring only `workspaces: ["packages/*"]`, no
+    `dependencies` of its own) legitimately had none to report. The
+    committed snapshot's `stack.dependencies: []` was not a fixture with no
+    dependencies; it was three subsystems (`discoverWorkspacePackages`,
+    `detectEntryPoints`, `resolveNodeImport`) correctly knowing about
+    `packages/web` and one (`detectManifests`) never being told. **This
+    was never a defect confined to repos with no root manifest at all** —
+    `mixed-monorepo` has an explicit `workspaces` declaration and was
+    under-reporting anyway, for however long this fixture has existed.
+  - **What this says about the other four snapshots, stated as a limit, not
+    audited further.** All five snapshot tests passed, unchanged, for the
+    entire time `mixed-monorepo`'s was quietly missing a real dependency —
+    passing proved the engine's output was STABLE across runs, never that
+    it was CORRECT. A snapshot recording wrong output is indistinguishable
+    from one recording right output until something external forces a
+    regeneration — the same shape as a vacuous gate, just on the output
+    side instead of the assertion side. `node-express`, `react-app`,
+    `python-flask`, and `kitchen-sink` stayed byte-identical when
+    regenerated here, which rules out THIS specific mechanism (manifests
+    skipped at workspace depth) for those four — none of them declares
+    workspace packages with their own manifests, so the code path this fix
+    touches was never reachable for them. It does not rule out some
+    different, still-undiscovered mechanism doing the same thing elsewhere.
+    That is the honest position and where this stops: noted, not chased —
+    auditing the other four for unrelated silent gaps is a different task
+    than the one this entry is closing.
+  - **Condition 2, made structural rather than a filtering convention at
+    one call site.** `resolve/workspaces.ts` gained
+    `DeclaredWorkspacePackage` (a `WorkspacePackage` narrowed to `source:
+    'declared'` exactly) and `declaredOnly()`, the only supported way to
+    produce one. `NodeResolutionContext.workspacePackages`
+    (`node-resolution.ts`) and `buildResolverContext`'s parameter
+    (`analyze.ts`) both now type themselves as `readonly
+    DeclaredWorkspacePackage[]`, not `readonly WorkspacePackage[]` — a
+    future caller that builds a resolver context from the unfiltered
+    (declared + inferred) list does not compile, full stop, rather than
+    silently reintroducing the exact risk this entry names above. The
+    runtime-assertion fallback ("prove the resolver context contains no
+    inferred package") is no longer needed and was removed:
+    `node-resolution.test.ts`'s prior test proving `resolveNodeImport`
+    itself has no opinion about `source` could only be exercised by
+    constructing a `DeclaredWorkspacePackage` with `source: 'inferred'`,
+    which the type no longer permits without a deliberate cast — testing a
+    scenario real callers cannot reach is not a test worth keeping.
+    Replaced with a direct unit test of `declaredOnly()` itself
+    (`workspaces.test.ts`), the one function that actually enforces the
+    boundary now.

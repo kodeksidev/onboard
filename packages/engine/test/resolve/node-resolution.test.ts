@@ -123,7 +123,7 @@ describe('resolveNodeImport — tsconfig paths alias', () => {
 describe('resolveNodeImport — workspace packages', () => {
   test('resolves a bare specifier matching a workspace package name to its entry file', () => {
     const context = contextWith({
-      workspacePackages: [{ name: '@acme/core', dirPath: 'packages/core', entryField: 'src/index.ts' }],
+      workspacePackages: [{ name: '@acme/core', dirPath: 'packages/core', entryField: 'src/index.ts', source: 'declared' }],
       existingPathSet: new Set(['packages/core/src/index.ts']),
     });
     const result = resolveNodeImport('packages/web/src/index.ts', '@acme/core', context);
@@ -132,7 +132,7 @@ describe('resolveNodeImport — workspace packages', () => {
 
   test('resolves a workspace package deep import', () => {
     const context = contextWith({
-      workspacePackages: [{ name: '@acme/core', dirPath: 'packages/core', entryField: null }],
+      workspacePackages: [{ name: '@acme/core', dirPath: 'packages/core', entryField: null, source: 'declared' }],
       existingPathSet: new Set(['packages/core/utils.ts']),
     });
     const result = resolveNodeImport('packages/web/src/index.ts', '@acme/core/utils', context);
