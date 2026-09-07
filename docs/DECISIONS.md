@@ -3621,3 +3621,23 @@ decided; it only records choices the spec left open.
   to (Debian policy requires lowercase package names, which is why it is not
   simply `productName`) — one fewer assumption in a check whose entire point
   is to stop trusting assumptions about what a bundler produces.
+
+  **The `dpkg-query` bug above is the fail-open family's third instance, not
+  a new shape.** Named earlier in this file (search "Shape worth noting"):
+  INV-3 dropped a repo-containment refusal and returned a shorter array,
+  reporting success; `grammar-loader.ts`'s `Parser.init()` degraded a WASM
+  lookup failure into an empty-but-well-formed `AnalysisResult`, twice, in
+  the same function, six months apart. `dpkg-query -W --showformat=
+  '${Maintainer}'` returning EMPTY for a field that genuinely exists is the
+  same mechanism in a third subsystem neither of those touches: a lookup
+  that cannot answer produces an absence rather than an error, and an
+  absence compared to another absence reads as agreement. What is different
+  this time, and worth naming precisely because it is different: this
+  instance did not reach a user, or even reach `main` unnoticed — it was
+  caught by the same protocol INV-3's own fix now stands on ("ships with a
+  test rather than a comment"), applied one step earlier, BEFORE the code
+  existed to fail open in the first place. Proving a check discriminates
+  against a real artifact before writing it into CI is that protocol run at
+  authoring time. Two instances were found by someone reading a real result
+  and noticing it was wrong; this one was found by refusing to trust the
+  check until it had been shown to fail on purpose.

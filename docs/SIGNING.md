@@ -81,8 +81,16 @@ new code.
      make the signed installer show one identity in the installer's own
      metadata (Add/Remove Programs, `onboard.exe`'s CompanyName — all
      `kodeksidev`) and a DIFFERENT one in the OS's own signature-verification
-     UI (the individual's legal name). Deciding this NOW avoids discovering
-     it mid-procurement, when an HSM/subscription may already be paid for.
+     UI (the individual's legal name). **That is the concrete cost of getting
+     this wrong, not just an inconsistency:** a user who checks both — which
+     is exactly what a security-conscious user is told to do — sees two
+     different names for the same publisher, in two OS surfaces that are
+     each individually trustworthy. Two disagreeing trustworthy sources
+     reads as tampering (a repackaged or MITM'd installer carrying someone
+     else's signature), not as an internal naming mismatch nobody thought to
+     reconcile — the opposite of what signing exists to buy. Deciding this
+     NOW avoids discovering it mid-procurement, when an HSM/subscription may
+     already be paid for.
    - Apple Developer Program (Organization) for `Developer ID Application`;
      a Windows OV or EV certificate from a CA, held in an HSM or cloud
      signing service.
