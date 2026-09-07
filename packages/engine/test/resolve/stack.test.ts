@@ -47,6 +47,37 @@ describe('detectManifests', () => {
     expect(result.manifests).toEqual([]);
     expect(result.dependencies).toEqual([]);
   });
+
+  /**
+   * Two sibling packages declaring the same dependency became possible once
+   * manifests are read from every workspace directory, not just root
+   * (docs/DECISIONS.md, "the @radix-ui/react-dialog duplicate"). Keeps the
+   * first occurrence in root-then-path-ascending order; a later package's
+   * conflicting versionSpec is dropped, not merged — this test pins that
+   * specific, chosen behavior rather than just "no duplicates."
+   */
+  test('deduplicates a dependency declared by two workspace packages, keeping the first by sorted package path', () => {
+    const files: Record<string, string> = {
+      'backend/package.json': JSON.stringify({ name: 'backend', dependencies: { zod: '^3.0.0' } }),
+      'frontend/package.json': JSON.stringify({ name: 'frontend', dependencies: { zod: '^4.0.0' } }),
+    };
+    const result = detectManifests({
+      existingPaths: new Set(Object.keys(files)),
+      readFile: (p) => files[p] ?? null,
+      workspacePackages: [{ dirPath: 'backend' }, { dirPath: 'frontend' }],
+    });
+    expect(result.dependencies).toEqual([
+      { name: 'zod', versionSpec: '^3.0.0', ecosystem: 'npm', scope: 'runtime', inferredRole: 'schema validation', importedByCount: 0 },
+    ]);
+  });
+
+  test('keeps two dependencies with the same name but different scopes (runtime vs dev)', () => {
+    const files: Record<string, string> = {
+      'package.json': JSON.stringify({ name: 'acme', dependencies: { zod: '^4.0.0' }, devDependencies: { zod: '^3.0.0' } }),
+    };
+    const result = detectManifests({ existingPaths: new Set(Object.keys(files)), readFile: (p) => files[p] ?? null });
+    expect(result.dependencies.map((d) => `${d.scope}:${d.versionSpec}`).sort()).toEqual(['dev:^3.0.0', 'runtime:^4.0.0']);
+  });
 });
 
 describe('detectEntryPoints', () => {

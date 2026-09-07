@@ -500,15 +500,15 @@ Not products of the guard-disposition sweep above — found during other work,
 recorded here because this is where the project's open, unresolved findings
 live.
 
-### KI-11 — an intermittent ~16px overflow in `e2e/graph-layout.spec.ts`, mechanism unconfirmed
+### KI-11 — a scrollbar-reservation feedback loop in the dependency graph tab (RESOLVED)
 
 | | |
 |---|---|
-| **Severity** | LOW — two orders of magnitude smaller than the defect this spec exists to catch, and reproduces none of its symptoms |
-| **Criterion** | none directly; `e2e/graph-layout.spec.ts`'s own containment assertions |
-| **Blocks** | nothing by itself; ask before treating it as a v0.1.2 release blocker (see below) |
-| **Family** | unexplained, intermittent — NOT the dependency-graph measurement feedback loop this spec was written for |
-| **Disposition** | **OPEN** — do not close this by widening `CONTAINMENT_TOLERANCE_PX`; that tunes the gate to its own output rather than explaining anything |
+| **Severity** | Originally recorded LOW (no visible symptom found); reclassified HIGH once reproduced on a real repo — a visible flicker in the app's headline feature, roughly twice a second |
+| **Criterion** | `e2e/graph-layout.spec.ts`'s own containment assertions |
+| **Blocks** | nothing now — fixed |
+| **Family** | a real CSS containment gap (auto-scrolling ancestor + a self-resizing canvas child with no clipping boundary between them) — NOT the dependency-graph measurement feedback loop `docs/DECISIONS.md`'s original entry was written for |
+| **Disposition** | **RESOLVED** — `overflow-hidden` added to `DependencyGraph.tsx`'s root section (docs/DECISIONS.md, "KI-11 is a scrollbar-reservation feedback loop"). Confirmed by re-running the same 100-sample poll that found it (zero transitions) and independently by `e2e/graph-layout.spec.ts`, which now passes cleanly for the first time. |
 
 Found running `e2e/graph-layout.spec.ts`'s 8-remount containment check against
 the real fix, on real WebView2, after the fix itself was confirmed correct.
@@ -571,5 +571,29 @@ without the `sr-only` table fix applied, and with and without a hub file in
 the graph, so it is conclusively independent of both. The "roughly 1 in 3
 mounts" characterization above was this same continuous oscillation being
 sampled by a single 150ms-apart double-read rather than watched — not a
-different, rarer phenomenon. Still OPEN; still not a scrollbar-width
-tolerance to widen.
+different, rarer phenomenon.
+
+**Resolved, same day: a real user report against real CacttusEdu (500
+files) showed this at larger amplitude than any local reproduction had —
+visible on screen, not just in measurements, roughly once a second.** That
+reframed severity from "curiosity" to "primary defect." Measured precisely
+(100 samples, 150ms apart): `main.offsetWidth`/`offsetHeight` never changed
+while `clientWidth`/`clientHeight` alternated between two values exactly
+~15px apart, in lockstep with the graph's own container — the literal
+signature of a scrollbar being reserved and released, not a real resize.
+Root cause: `AppShell`'s `<main overflow-auto>` had no clipping boundary
+between it and the dependency graph's self-resizing Cytoscape canvas, so
+the canvas's own resize could nudge `main` past its box, growing a
+scrollbar that consumed ~15px, which shrank the canvas back under budget,
+which removed the scrollbar, which regrew the canvas — forever. Fixed with
+`overflow-hidden` on `DependencyGraph.tsx`'s root section: the panel is a
+canvas that manages its own pan/zoom and never legitimately needs a native
+scrollbar, so making it its own containment boundary means whatever
+Cytoscape does inside it can no longer be seen by `main` at all, on any
+future resize, for any reason — not scrollbar-gutter-style damping of one
+instance's symptom. Verified with the same 100-sample poll that found it
+(zero transitions across 16.6s) and independently by
+`e2e/graph-layout.spec.ts`, which could not previously even complete its
+own settle-detection because of this exact oscillation and now passes
+cleanly. Full mechanism and the argument for `overflow-hidden` over
+`scrollbar-gutter: stable`: `docs/DECISIONS.md`.

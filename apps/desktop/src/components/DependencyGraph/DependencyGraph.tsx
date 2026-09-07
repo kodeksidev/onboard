@@ -265,6 +265,24 @@ function useDependencyGraphController(
  * same as `FileViewer.tsx`'s CodeMirror mount already carries for the same
  * reason. Full mechanism and the remount-based e2e proof:
  * `docs/DECISIONS.md` ("the dependency-graph measurement feedback loop").
+ *
+ * `overflow-hidden` on the root `<section>` below is load-bearing too, for a
+ * related but distinct reason: this panel is a canvas that fills its box and
+ * manages its own pan/zoom, so nothing in it ever needs a native scrollbar.
+ * Without it, the panel sits inside `AppShell`'s `overflow-auto` `<main>`
+ * with no clipping boundary in between, so Cytoscape's own container-
+ * matching resize (`useCytoscape.ts`) can affect `main`'s measured
+ * scrollWidth/scrollHeight directly: a resize nudges `main` past its own box
+ * by a sub-pixel amount, `main` grows a scrollbar, the scrollbar consumes
+ * ~15px, the panel (and Cytoscape's container inside it) shrinks to fit, the
+ * overflow reason disappears, the scrollbar is removed, and the panel grows
+ * back — forever, roughly twice a second on a real repo (docs/DECISIONS.md,
+ * "KI-11 is a scrollbar-reservation feedback loop"). `overflow-hidden` makes
+ * this section its own clipping boundary: whatever Cytoscape does inside it
+ * can no longer be seen by `main` at all, so `main` never has a reason to
+ * grow a scrollbar because of this tab, regardless of what triggers a resize
+ * in the future. Other tabs keep `main`'s `overflow-auto` unchanged — they
+ * have real scrollable content; this one never did.
  */
 export function DependencyGraph({
   result,
@@ -276,7 +294,7 @@ export function DependencyGraph({
 
   if (result.files.length === 0) {
     return (
-      <section aria-labelledby="dependency-graph-title" className="flex flex-1 flex-col">
+      <section aria-labelledby="dependency-graph-title" className="flex flex-1 flex-col overflow-hidden">
         <h2 id="dependency-graph-title" className="sr-only">
           Dependency graph
         </h2>
@@ -286,8 +304,8 @@ export function DependencyGraph({
   }
 
   return (
-    // min-h-0: see this component's doc comment above + docs/DECISIONS.md.
-    <section aria-labelledby="dependency-graph-title" className="flex min-h-0 flex-1 flex-col">
+    // min-h-0, overflow-hidden: both load-bearing — see this component's doc comment above + docs/DECISIONS.md.
+    <section aria-labelledby="dependency-graph-title" className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <h2 id="dependency-graph-title" className="sr-only">
         Dependency graph
       </h2>

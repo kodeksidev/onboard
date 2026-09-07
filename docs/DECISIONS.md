@@ -4094,3 +4094,142 @@ decided; it only records choices the spec left open.
     Replaced with a direct unit test of `declaredOnly()` itself
     (`workspaces.test.ts`), the one function that actually enforces the
     boundary now.
+
+- **KI-11 is a scrollbar-reservation feedback loop — confirmed by
+  measurement, fixed by removing the loop rather than damping it.** A user
+  report against real CacttusEdu described the graph tab visibly
+  oscillating roughly once a second: a black band appearing and
+  disappearing to the right of the canvas, in sync with a horizontal
+  scrollbar. Measured directly (100 samples, 150ms apart, 18.6s, real
+  500-file analysis): `main`'s `offsetWidth`/`offsetHeight` never changed
+  (1521x737, every sample) while `clientWidth`/`clientHeight` alternated
+  between `1521x737` and `1506x722` — a constant ~15px delta on both axes,
+  in lockstep with the graph's own container one level down. `offsetWidth`
+  is unaffected by scrollbar reservation; `clientWidth` is defined to
+  exclude it. An element whose own box never moves while its client size
+  does, by exactly a scrollbar's width, is not resizing — it is gaining and
+  losing a scrollbar. 48 transitions in 18.6s, no CSS `transition`/
+  `duration-*` class on any of these elements, so the ~770ms full-cycle
+  period is real measure/resize/repaint work, not an animation.
+  - **The mechanism, not just the symptom:** `AppShell`'s `<main
+    class="overflow-auto">` wraps every tab uniformly. The graph tab is the
+    only one whose content (Cytoscape's canvas) actively resizes itself to
+    match its own container on every layout pass (`useCytoscape.ts`,
+    already named in this file's earlier entries). With no clipping
+    boundary between the canvas and `main`, that resize can nudge `main`
+    itself past its own box by a sub-pixel amount, `main` grows a
+    scrollbar, the scrollbar consumes ~15px, the graph's container shrinks
+    to fit inside the smaller space, the overflow reason disappears, the
+    scrollbar is removed, and the container grows back — forever. Whether
+    Cytoscape's specific `ResizeObserver` is the listener that re-triggers
+    each cycle was deliberately not chased further (explicit instruction):
+    the loop exists regardless of which listener closes it, and stopping
+    the toggle matters more than naming its exact participant.
+  - **Fixed by making the graph panel its own overflow-clipping boundary,
+    not by reserving the scrollbar's space.** `overflow-hidden` added to
+    `DependencyGraph.tsx`'s root `<section>` (both the populated and
+    empty-state variants). Argued from the mechanism, not preference:
+    `scrollbar-gutter: stable` on `main` would have stopped the VISUAL
+    toggle by reserving 15px unconditionally, but `main`'s `overflow: auto`
+    would keep re-evaluating overflow on every one of Cytoscape's resizes
+    forever, on every tab, permanently, for a defect that only ever existed
+    on one of them. `overflow-hidden` on the panel itself is a real CSS
+    containment boundary: whatever Cytoscape does inside it can no longer
+    be seen by `main`'s own scroll accounting, at all, regardless of what
+    triggers a future resize — the mistake being fixed is "a
+    self-resizing canvas panel sitting inside an auto-scrolling ancestor
+    with nothing between them," not "a scrollbar that shows up too often."
+    A canvas that manages its own pan/zoom never legitimately needs a
+    native scrollbar; other tabs keep `main`'s `overflow-auto` completely
+    unchanged, since they have real scrollable content this tab never did.
+  - **Verified with the same measurement that found it, not a different
+    one:** re-ran the identical 100-sample, 150ms-apart poll against the
+    real CacttusEdu repo, real IPC path, on the rebuilt release binary.
+    **Zero transitions.** `main.clientWidth`/`clientHeight` held at exactly
+    `1521x737` for all 100 samples across 16.6s — the same two values that
+    previously alternated now never move at all. Independently confirmed a
+    second way: `e2e/graph-layout.spec.ts`, which previously could not even
+    get past its own settle-detection because of this exact oscillation
+    (the prior table-height entry named this as a residual), now passes
+    cleanly — "stays within its available space across 8 remounts" — on
+    real WebView2, real `tauri-driver`, no tolerance widened to get there.
+  - **KI-11 is superseded by this entry, not merely referenced by it.** The
+    original `docs/KNOWN_ISSUES.md` entry characterized this as an
+    unexplained ~16px curiosity with no visible symptom, deliberately left
+    open rather than tuned away. On a real repo it was a visible flicker in
+    the app's headline feature, at ~15px amplitude — the same mechanism,
+    not a coincidence at similar magnitude. Marked resolved in
+    `docs/KNOWN_ISSUES.md`, with the confirmed zero-transition result above
+    as the closing evidence, not an assumption.
+
+- **The `@radix-ui/react-dialog` duplicate: fixed, and the choice on
+  conflicting versions stated rather than left implicit.** Real cause,
+  confirmed: `dashboard` and `frontend` (CacttusEdu) both independently
+  declare it as a dependency; `detectManifests` reading every workspace
+  directory (this file, above) made two entries for one logical dependency
+  possible where a single root-only manifest read never could produce
+  that. `buildDependenciesWithCounts` (`analyze-assemble.ts`) did — and
+  still does — a straight 1:1 map with no dedup; the fix is at the source,
+  `detectManifests` itself (`dedupeDependencies`, `manifests.ts`).
+  - **The choice, stated:** keep the FIRST occurrence by
+    `(ecosystem, name, scope)`, in the existing root-then-path-ascending
+    iteration order — a later package's conflicting `versionSpec` is
+    dropped, not merged, not flagged. `DependencyInfoValue` has no field
+    for "which package(s) declared this" or "these specs disagree," so
+    showing two unlabeled entries for one name is not a more honest answer
+    than showing one — it just spreads the same missing information across
+    two rows instead of one. If which-version-wins ever turns out to
+    matter for a real repo, the honest fix is a schema change (represent
+    that the specs disagree), not a smarter heuristic for picking a winner
+    silently. Not done here — this fix restores "one dependency, one row,"
+    the invariant that held by construction before this file's own change
+    broke it.
+  - Verified at both levels: a unit test in `stack.test.ts` pins the exact
+    chosen behavior (two packages, two versions, one surviving entry, the
+    first by sorted path) rather than just "no duplicates"; a second unit
+    test confirms a real, non-bug case — the same name at different
+    *scopes* (`dependencies` vs `devDependencies`) — is not conflated with
+    it. `inferred-workspaces.test.ts`'s existing end-to-end fixture gained
+    the same shared-dependency shape, proving the fix through the real
+    `analyze()` pipeline, not just the unit-level function. All 5 engine
+    snapshots and `verify:determinism` (20/20) stayed unaffected — none of
+    the vendored fixtures has two manifests declaring the same package.
+
+- **Entry points: filed, not fixed — a real, separate coverage gap, sized
+  for a v0.1.5 conversation.** CacttusEdu's entry points still read as the
+  two Python `docs/` scripts after Option B, and the reason is now
+  precisely known rather than assumed cosmetic: `detectEntryPoints`
+  correctly loops over the discovered workspace packages (it already did,
+  before Option B existed) and finds nothing in any of the three, for
+  three distinct reasons, not one:
+  - `backend/package.json#main` is `"dist/server.js"`, and `dist` is in
+    the engine's own default exclude list (`constants.ts`) — that path
+    never exists in the walked file set regardless of workspace discovery.
+    Its `scripts.start` (`"node dist/server.js"`) hits the identical wall.
+    Its real entry, `src/server.ts`, is referenced only via `scripts.dev`,
+    which `startScriptCandidate` does not check.
+  - `dashboard` and `frontend` (CacttusEdu) declare no `main`, no `bin`,
+    and no `scripts.start` (`dev`/`build`/`preview` instead). Their real
+    entry, `src/main.tsx`, is the standard Vite convention — and
+    `CONVENTION_FILES` (`entry-points.ts`) lists only
+    `src/index.ts`/`src/index.js`/`index.ts`/`index.js`: no `.tsx`
+    extension, no `main.*` name, at all.
+  - Net effect: the Python module-guard scripts are not outranking real
+    candidates by priority (`main` is priority 0, module-guard is priority
+    5, the lowest) — there are no other candidates anywhere in the 500-file
+    repo, so priority 5 wins by being the only bid.
+  - This is a pre-existing gap in `entry-points.ts`'s heuristic coverage
+    that Option B's workspace loop simply made reachable for the first
+    time, not a defect in Option B or something "entryPoints correct
+    themselves for free" failed to deliver on. Section 8.2's convention
+    list predates common Vite tooling shapes; excluding `dist` is correct
+    and deliberate, and `main`/`scripts.start` pointing into it is common
+    for any repo that has not been built yet. Options, not decided here:
+    recognize `scripts.dev` as an entry-point signal; extend
+    `CONVENTION_FILES` to include `main.ts`/`main.tsx`/`src/main.ts`/
+    `src/main.tsx`; or treat a `main`/`scripts.start` target that resolves
+    into an excluded directory as a distinct, lower-confidence signal
+    worth reporting differently from "no signal at all." Costing these
+    (including whether any changes `EntryPointValue`'s shape or evidence
+    strings, which are part of the frozen contract) is a v0.1.5
+    conversation with its own options, not a rendering-fix side effect.

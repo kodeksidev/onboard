@@ -284,6 +284,34 @@ function detectManifestsInDir(dirPath: string, input: ManifestDetectionInput): M
   return { manifests, dependencies };
 }
 
+/**
+ * Two sibling packages can each declare the same dependency (e.g. both
+ * `dashboard` and `frontend` depend on `@radix-ui/react-dialog`) — reading
+ * manifests from every workspace directory means that is now possible where
+ * it structurally could not be before. `DependencyInfoValue` has no field
+ * for "which package(s) declared this" or "these specs disagree," so
+ * showing two entries for one logical dependency isn't a richer answer, it
+ * is an unlabeled duplicate. Keeps the FIRST occurrence by
+ * `(ecosystem, name, scope)` — `dirs` below is already root-then-path-
+ * ascending, so "first" means the root manifest if it declares this
+ * dependency, else the alphabetically-first workspace package that does.
+ * A conflicting versionSpec from a later package is silently dropped, not
+ * merged or flagged — recorded here rather than invisibly: if that turns
+ * out to matter, the honest fix is a schema change (this dependency's
+ * specs disagree), not a heuristic for which one "wins."
+ */
+function dedupeDependencies(dependencies: readonly DependencyInfoValue[]): readonly DependencyInfoValue[] {
+  const seen = new Set<string>();
+  return dependencies.filter((dep) => {
+    const key = `${dep.ecosystem}:${dep.name}:${dep.scope}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Detects every supported manifest kind at the repo root and in every known workspace package, and extracts npm/pypi dependencies. */
 export function detectManifests(input: ManifestDetectionInput): ManifestDetectionResult {
   const dirs = [''].concat((input.workspacePackages ?? []).map((p) => p.dirPath));
@@ -294,5 +322,5 @@ export function detectManifests(input: ManifestDetectionInput): ManifestDetectio
     manifests.push(...result.manifests);
     dependencies.push(...result.dependencies);
   });
-  return { manifests, dependencies };
+  return { manifests, dependencies: dedupeDependencies(dependencies) };
 }

@@ -123,4 +123,23 @@ describe('DependencyGraph', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
     expect(screen.queryByRole('application', { name: /dependency graph canvas/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
+
+  /**
+   * Real-world regression (docs/DECISIONS.md, "KI-11 is a scrollbar-
+   * reservation feedback loop"): without a clipping boundary between this
+   * panel and `AppShell`'s `overflow-auto` <main>, Cytoscape's own resize
+   * could make `main` itself oscillate a real scrollbar in and out roughly
+   * twice a second on a real repo. This panel never has scrollable content
+   * of its own — it is a canvas that fills its box — so it must never be
+   * able to affect an ancestor's overflow accounting, regardless of size.
+   */
+  test('is its own overflow-clipping boundary, so it can never make an ancestor scroll', () => {
+    render(<DependencyGraph result={SAMPLE} />);
+    expect(screen.getByRole('region', { name: 'Dependency graph' })).toHaveClass('overflow-hidden');
+  });
+
+  test('the empty-state variant is also its own clipping boundary', () => {
+    render(<DependencyGraph result={{ ...SAMPLE, files: [], edges: [] }} />);
+    expect(screen.getByRole('region', { name: 'Dependency graph' })).toHaveClass('overflow-hidden');
+  });
 });

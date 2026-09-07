@@ -38,11 +38,11 @@ describe('analyze — sibling packages with no root manifest (Option B)', () => 
       'backend/src/index.ts': "import { d } from 'dashboard';\nexport const started = d;\n",
       'backend/src/db.ts': 'export const connect = (): void => undefined;\n',
       'backend/src/util.ts': 'export const noop = (): void => undefined;\n',
-      'dashboard/package.json': JSON.stringify({ name: 'dashboard', main: 'src/main.ts' }),
+      'dashboard/package.json': JSON.stringify({ name: 'dashboard', main: 'src/main.ts', dependencies: { zod: '^3.0.0' } }),
       'dashboard/src/main.ts': 'export const d = 1;\n',
       'dashboard/src/view.ts': 'export const render = (): void => undefined;\n',
       'dashboard/src/state.ts': 'export const state = {};\n',
-      'frontend/package.json': JSON.stringify({ name: 'frontend', main: 'src/app.ts' }),
+      'frontend/package.json': JSON.stringify({ name: 'frontend', main: 'src/app.ts', dependencies: { zod: '^4.0.0' } }),
       'frontend/src/app.ts': 'export const app = {};\n',
       'frontend/src/component.ts': 'export const Component = (): null => null;\n',
       'frontend/src/routes.ts': 'export const routes = [];\n',
@@ -73,6 +73,14 @@ describe('analyze — sibling packages with no root manifest (Option B)', () => 
         'dashboard/package.json',
         'frontend/package.json',
       ]);
+
+      // dashboard and frontend both declare zod, at different versions —
+      // one entry, not two (docs/DECISIONS.md, "the @radix-ui/react-dialog
+      // duplicate"), keeping the first by sorted package path (dashboard
+      // sorts before frontend).
+      const zodEntries = result.stack.dependencies.filter((d) => d.name === 'zod');
+      expect(zodEntries).toHaveLength(1);
+      expect(zodEntries[0]?.versionSpec).toBe('^3.0.0');
 
       // Condition 2: `backend/src/index.ts` imports the bare specifier
       // 'dashboard', matching an INFERRED workspace package's name. It must
