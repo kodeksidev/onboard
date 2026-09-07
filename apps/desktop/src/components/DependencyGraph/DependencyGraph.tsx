@@ -249,6 +249,22 @@ function useDependencyGraphController(
  * highlight, a quick search filter, and full keyboard navigation (Section 9
  * Phase 8). `useGraphStore` is the seam Phase 9's roadmap uses to focus and
  * center a step's file without knowing a `cytoscape.Core` exists.
+ *
+ * `min-h-0`/`min-w-0` below (the `<section>` and the Cytoscape mount div)
+ * are load-bearing, not cosmetic — delete either and this regresses. Without
+ * them, this flex-column chain has no floor above it, so Cytoscape's own
+ * `canvasContainer` — an IN-FLOW child it manages, sized via an explicit
+ * inline pixel width/height from `matchCanvasSize` — can inflate its own
+ * ancestors' content-based `min-height`/`min-width: auto`, which then hands
+ * Cytoscape a bigger container to measure next time: a real feedback loop,
+ * not a one-off race. Proven live (2026-09-07): hiding `canvasContainer` via
+ * devtools collapsed the mount div from 4910px to 710px tall instantly, and
+ * restored it instantly on un-hiding. `min-h-[28rem]` on the mount div is
+ * already an explicit, non-`auto` floor and needs no `min-h-0` companion
+ * (the two would just override each other) — only `min-w-0` was missing,
+ * same as `FileViewer.tsx`'s CodeMirror mount already carries for the same
+ * reason. Full mechanism and the remount-based e2e proof:
+ * `docs/DECISIONS.md` ("the dependency-graph measurement feedback loop").
  */
 export function DependencyGraph({
   result,
@@ -270,7 +286,8 @@ export function DependencyGraph({
   }
 
   return (
-    <section aria-labelledby="dependency-graph-title" className="flex flex-1 flex-col">
+    // min-h-0: see this component's doc comment above + docs/DECISIONS.md.
+    <section aria-labelledby="dependency-graph-title" className="flex min-h-0 flex-1 flex-col">
       <h2 id="dependency-graph-title" className="sr-only">
         Dependency graph
       </h2>
@@ -281,13 +298,14 @@ export function DependencyGraph({
         onExpandAll={graph.expandAll}
         onCollapseAll={graph.collapseAll}
       />
+      {/* min-w-0 (not min-h-0 — see this component's doc comment above): the Cytoscape mount div, load-bearing. */}
       <div
         ref={containerRef}
         role="application"
         aria-label="Dependency graph canvas. Press slash to search. Arrow keys move between files by importance rank. Bracket keys step to dependents or dependencies. Enter opens the focused file. Escape exits."
         tabIndex={0}
         onKeyDown={handleKeyDown}
-        className="relative min-h-[28rem] flex-1 border-y border-slate-200 dark:border-slate-800"
+        className="relative min-h-[28rem] min-w-0 flex-1 border-y border-slate-200 dark:border-slate-800"
       />
       <div aria-live="polite" className="sr-only">
         {announcement}

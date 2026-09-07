@@ -90,6 +90,13 @@ function FileContentView({ result, path, file, line, onOpenFile }: FileContentVi
 
   return (
     <div className="flex flex-1 gap-4 overflow-hidden p-4">
+      {/*
+        `min-w-0`: without it, this flex item's width floors at its content's
+        min-content size instead of the space this row actually gives it —
+        the same class of bug `DependencyGraph.tsx`'s Cytoscape mount div had
+        (see its comment, and docs/DECISIONS.md) until CodeMirror's own wide
+        content made this div carry the fix first.
+      */}
       <div ref={containerRef} className="min-w-0 flex-1 overflow-auto rounded-md border border-slate-200 dark:border-slate-800" />
       <aside className="flex w-64 shrink-0 flex-col gap-4 overflow-auto">
         <div>

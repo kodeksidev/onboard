@@ -3284,3 +3284,83 @@ decided; it only records choices the spec left open.
   integrity-failure branch, which is its own state. Called out in the release
   notes because a one-off slow analysis after an update is otherwise reported
   as a regression.
+
+- **v0.1.2 (P1 defect, real installed build) — the dependency-graph
+  measurement feedback loop.** The graph tab rendered with no visible canvas,
+  a shifted/clipped tab strip, and both scrollbars present — reported against
+  the real v0.1.1 install, on CacttusEdu (308 files), and not caught by any
+  of 385 UI tests or 4 axe suites because jsdom has no layout engine: any
+  defect that lives in intrinsic sizing or real canvas measurement is
+  invisible to that whole test class by construction, the same gap
+  `CREATE_NO_WINDOW` fell through for the same reason (a human, not a gate,
+  is what caught both).
+  - **Root cause, proven live rather than inferred.** `DependencyGraph.tsx`'s
+    Cytoscape mount div sat in a `flex-col` chain (`AppShell`'s `<main>` →
+    `App.tsx`'s `ReadyContent` wrapper → `DependencyGraph`'s own `<section>`
+    → the mount div) with no `min-h-0`/`min-w-0` above it. Cytoscape's
+    renderer (`matchCanvasSize`, `cytoscape.cjs.js:30742`) reads the mount
+    div's `clientWidth`/`clientHeight` and writes them straight back onto an
+    IN-FLOW child it owns (`canvasContainer`, `position: relative`) as an
+    explicit inline pixel size — not an absolutely-positioned overlay, a real
+    flow participant. With no floor above it, the mount div's own height is
+    `min-height: auto` — a content-based floor — so on the next of several
+    internal measurement passes Cytoscape runs during construction
+    (`notify('load'|'resize'|'mount')`, `cytoscape.cjs.js:27636`), it reads
+    back a `clientHeight` that already includes its own prior write. Proven
+    directly against the real installed app (`bunx tauri` substituted with
+    the project's own `VITE_IPC=mock` dev server in Chrome — same rendering
+    family, not the same engine; see the WebView2 caveat below): hiding the
+    `canvasContainer` div via devtools collapsed the mount div from 4910px to
+    710px instantly; unhiding it restored 4910px instantly. Remounting the
+    identical component with identical data landed on 2060px instead — proof
+    the loop converges on whatever internal render pass happened to run
+    last, not on any function of content, which is also why dragging the OS
+    window produced no repaint: Cytoscape's own `ResizeObserver` (it has one;
+    an earlier turn in this diagnosis wrongly assumed it didn't) re-measures
+    correctly, but re-measures the SAME already-inflated `clientHeight` every
+    time, and `matchCanvasSize`'s own early-exit (`if (canvasWidth ===
+    r.canvasWidth && ...) return`) then does nothing.
+  - **Fix.** `min-h-0` added to `ReadyContent`'s wrapper (`App.tsx`) and to
+    `DependencyGraph`'s `<section>` — both were `min-height: auto` with
+    nothing capping them, the two links the loop actually climbed through.
+    The mount div's own `min-h-[28rem]` is already an explicit, non-`auto`
+    value and needed no change; what it lacked was `min-w-0`, since nothing
+    had ever given it a width floor and the same loop runs on `clientWidth`
+    exactly the way it runs on `clientHeight`. Argued from the mechanism, not
+    tried: `min-h-0`/`overflow: non-visible` are the two CSS-spec-equivalent
+    ways to zero a flex item's automatic minimum size, `main` already uses
+    the `overflow-auto` form correctly, and once every level between it and
+    the mount div resolves to a definite top-down size, nothing a descendant
+    writes can feed back into the number Cytoscape reads next — no
+    `overflow: hidden` or absolute positioning on the mount div itself is
+    additionally required. Matches (and now cross-references)
+    `FileViewer.tsx`'s CodeMirror mount, which already carried `min-w-0` for
+    an unrelated reason (CodeMirror's own wide content) and never exhibited
+    this.
+  - **Verified across remounts, not once**, per the same discipline
+    `import_edge`'s dead-table finding and the cache-invalidation branch
+    above both used: the landing value differs per mount, so a single clean
+    render proves nothing. `e2e/graph-layout.spec.ts` remounts the graph tab
+    repeatedly against a real engine (`tauri-driver`, not jsdom — jsdom
+    cannot host this class of test at all) and asserts the mount div's
+    measured height never exceeds its parent's, every time, so a regression
+    here fails a real test instead of waiting for the next person to notice
+    a grey canvas.
+  - **Scale.** The original report was CacttusEdu (308 files); this repo's
+    own `apps/`+`packages/` source tree (429 files) stood in for it in both
+    the e2e run and a Chrome-side synthetic-graph check, since CacttusEdu
+    itself is not present in this environment — comparable order of
+    magnitude, not the identical repo, and named as a substitution for the
+    same reason the WebView2 one is below.
+  - **What is NOT verified by any of the above.** Every measurement in this
+    entry — the live devtools reproduction, the fix's confirmation, the new
+    e2e assertion when it runs outside `tauri-driver` — used Chromium
+    (either plain Chrome or, for the e2e spec, `tauri-driver`'s
+    `msedgedriver`-backed WebView2 session). `msedgedriver` IS WebView2's own
+    driver, so the e2e run is the real engine; the earlier Chrome-only
+    reproduction was not, and is not offered as proof of anything beyond the
+    mechanism. Put a manual pass on the smoke checklist regardless: open the
+    graph tab on a real Windows install, maximized and at one restored size,
+    against a repo this size, and confirm the canvas is visible and the tab
+    strip is not shifted. Chromium agreement is evidence, not a substitute
+    for that.

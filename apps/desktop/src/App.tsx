@@ -154,7 +154,18 @@ function ReadyContent({ result }: ReadyContentProps): JSX.Element {
   };
 
   return (
-    <div className="flex flex-1 flex-col">
+    // `min-h-0`: without it this column's flex-item height defaults to
+    // `min-height: auto`, a content-based floor. `DependencyGraph`'s
+    // Cytoscape canvas can write itself an inline pixel height derived from
+    // ITS OWN measured container size (`matchCanvasSize`); with an
+    // unconstrained floor at every level in between, that write becomes part
+    // of the content this div "must" fit, inflating this div to match,
+    // which then inflates the graph's own container the next time Cytoscape
+    // measures it. `min-h-0` makes this div's height a pure function of
+    // `main`'s resolved size instead, so nothing a descendant writes can
+    // feed back into it. See docs/DECISIONS.md ("the dependency-graph
+    // measurement feedback loop") for the reproduction.
+    <div className="flex min-h-0 flex-1 flex-col">
       <ReadyTabList view={view} onSelect={setView} />
       <ReadyViewPanel view={view} result={result} openFile={openFile} onOpenFile={handleOpenFile} />
     </div>
