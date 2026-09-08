@@ -4302,3 +4302,34 @@ decided; it only records choices the spec left open.
     through the second map (62/62 compose, verified), and a second table lists
     the between-rewrites hashes, which is the era the broken citations came
     from.
+- **Criterion 28 (2026-09-08) — `8d7df06` is exempted from `commit:check` by
+  hash, and the criterion goes green with the exemption named in
+  `docs/CRITERIA_MAP.md`.** Repairing the inert gate (see the tooling entry
+  above) surfaced one real violation: a 114-character subject against a
+  100-character maximum, in a commit contained in tag **v0.1.4**.
+  - **Why exempt rather than amend.** Amending means a third `git filter-repo`
+    run. That invalidates v0.1.4's tag, every SHA reference repaired earlier
+    the same day, and `docs/COMMIT_MAP.md` — trading a working audit trail for
+    a formatting fix with no user impact. The violation is real but cosmetic;
+    the cost of "fixing" it is not.
+  - **It is a hash, not a rule.** Boundary-forward enforcement is unchanged and
+    no rule was relaxed: `MAX_SUBJECT_LENGTH` still applies to every commit in
+    scope. `EXEMPT_COMMITS` names one commit, with its reason stored beside it,
+    and `commit:check` PRINTS the exemption and its justification on every run
+    — a gate that goes green by ignoring something should say what it ignored.
+  - **The exemption breaks rather than rots.** This file spent the same day
+    repairing references that had degraded silently, so an exemption that could
+    outlive its commit would be the same defect wearing a different hat. Three
+    guards each FAIL the gate: (1) an exempted hash that no longer resolves —
+    which is precisely what a future history rewrite would produce — with an
+    error naming `docs/COMMIT_MAP.md` as the way to re-point it; (2) a hash
+    outside the enforced range; (3) a hash whose subject now conforms, i.e. an
+    inert exemption, the same check `docs-check.py` applies to its own context
+    phrases. `exemption_self_test()` proves all three fire, and guard 1 was
+    additionally verified by hand: substituting a dead hash turns the gate red
+    with the intended message.
+  - **The original note said "with NO exceptions list."** That reasoning was
+    about RULES and still holds — an allowlist that grows one argued-away
+    violation at a time is worthless. It did not survive contact with a commit
+    inside a published tag, where the remedy costs more than the defect. The
+    note has been rewritten rather than quietly contradicted.

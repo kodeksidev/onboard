@@ -221,7 +221,13 @@ EVIDENCE: dict[int, Evidence] = {
         "commit-message-check",
         "ci",
         "CI-backed FROM THE BOUNDARY FORWARD, not unqualified: the gate checks "
-        "every commit after a203731, where it landed, with no exceptions list. "
+        "every commit after a203731, where it landed, with ONE exemption named "
+        "by hash: 8d7df06 (114-character subject), which is contained in tag "
+        "v0.1.4 — amending it would rewrite published history and invalidate "
+        "every SHA reference repaired on 2026-09-08. The exemption is guarded: "
+        "commit:check FAILS if that hash stops resolving, leaves the enforced "
+        "range, or starts conforming, so a future rewrite cannot carry it "
+        "forward silently. "
         "A commit-message linter cannot retroactively govern history that "
         "predates it. Pre-boundary subjects remain visible via "
         "`commit:check --all-history`, which is INFORMATIONAL and wired to "
@@ -289,7 +295,7 @@ EXECUTED: dict[int, str] = {
     # remaining non-conforming subjects predate the boundary and are out of
     # scope by principle, not by exception — `commit:check --all-history` still
     # reports them, informationally.
-    28: f"{CI_RUN}, from boundary a203731 forward",
+    28: f"{CI_RUN}, from boundary a203731 forward, 1 exemption by hash (8d7df06)",
 }
 
 
