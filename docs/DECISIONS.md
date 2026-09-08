@@ -3243,19 +3243,38 @@ decided; it only records choices the spec left open.
   up; whoever does must fix the key first.
 
 - **v0.1.1 — a named failure mode: A CONTROL THAT EXISTS, IS CORRECT, AND
-  NEVER REACHES THE THING IT GOVERNS.** Two instances now, in unrelated
-  subsystems, which is what makes it worth naming rather than filing twice:
+  NEVER REACHES THE THING IT GOVERNS.** THREE instances now, in three
+  unrelated subsystems, which is what makes it worth naming rather than filing
+  three times:
   - `graphHasFail` was computed correctly and then dropped before it reached
     `process.exitCode`, so a failing gate reported success.
   - `CREATE_NO_WINDOW` was set correctly by `tauri-plugin-shell` on a command
     object that is never spawned — `lib.rs` takes only `.get_program()` from
     it — so the console it was meant to suppress appeared anyway.
-  In both, reviewing the control in isolation finds nothing wrong: the flag IS
-  set, the variable IS computed. The defect is entirely in the wiring between
+  - **(2026-09-08, third instance.)** The dependency graph's `Escape` handler
+    was written, correct, and unreachable. It hangs off the container div's
+    `onKeyDown`; Cytoscape's canvas consumes the mousedown, so focus never
+    moved to the container — measured on the shipped binary as
+    `activeElement: BODY`, `containerHasFocus: false`. A user who clicked a
+    node and then pressed Escape got nothing, and since background tap had
+    never been wired either, the only exit was to leave the panel and come
+    back.
+    **What distinguishes this one, and why it is the most instructive: a
+    keyboard-only test PASSES.** Arriving by Tab is the single path where the
+    container does hold focus, so the automated keyboard coverage and the
+    criterion-20 traversal both exercised the working path and reported green.
+    The test was correct and the affordance was correct — for different users.
+    The wiring between them existed for one and not the other. Where the first
+    two instances were "the control never reaches its effect", this is "the
+    control is reachable only along the path the test happens to take", which
+    no amount of reviewing the handler in isolation would reveal.
+  In all three, reviewing the control in isolation finds nothing wrong: the flag
+  IS set, the variable IS computed, the key IS bound. The defect is entirely in the wiring between
   the control and its effect, which is exactly the part a reader's eye skips
   because the interesting logic is elsewhere. **The check is not "is this
   configured correctly" but "does this configuration reach the thing it
-  governs" — trace it forward to the effect, or assert the effect.** Where the
+  governs, ALONG EVERY PATH A USER CAN ARRIVE BY" — trace it forward to the
+  effect, or assert the effect.** Where the
   effect is observable only by a human (a window on screen), that assertion
   belongs in `docs/SMOKE_CHECKLIST.md`, not in a unit test that can only
   re-confirm the control was set.
@@ -4583,3 +4602,63 @@ decided; it only records choices the spec left open.
     `.claude / 1 file`; zoom 1.41, so those labels render at 18px; content
     inside the viewport. Collapse all holds the same. Residual: the canvas is
     still ~50% empty, which is legible but not yet well-composed.
+- **Phase 8, AMENDMENT (2026-09-08) — Escape is PROGRESSIVE: the first clears
+  the selection, the second exits the graph. This changes what Section 8
+  specifies, and Section 8's contract survives as the terminal step.** Section
+  8's keyboard paragraph assigns Escape one meaning, "exit the graph". That was
+  written for a graph with no destructive selection state. Clicking a node now
+  dims everything unrelated, and with a selection active a single-meaning
+  Escape leaves the user no way to say "just undo that" — one key cannot mean
+  two things at once, so the question is only which order they come in.
+  Clearing first is the right order because it is the reversible, lower-stakes
+  action, and because a user who wants to leave can press Escape twice. Section
+  8 is therefore honoured rather than contradicted: Escape still exits the
+  graph, as the LAST step of the sequence rather than the only one. Asserted in
+  both directions in `DependencyGraph.test.tsx` — first Escape clears and keeps
+  focus, second Escape blurs.
+- **Phase 8, AMENDMENT (2026-09-08) — the graph toolbar is named for outcomes,
+  and its strings move into `messages.ts` under Section 10.** The toolbar's
+  labels were hardcoded in `GraphToolbar.tsx`, which put the only controls this
+  panel offers outside the byte-exact copy assertions that cover every other
+  user-facing string in the app. They are now in `GRAPH_COPY.toolbar`.
+  - "Collapse all" described the mechanism; **"Reset view"** describes what the
+    user wants — the view they landed on, restored.
+  - **"Clear selection" is new**, and it is the point of the change: clicking a
+    node dimmed the whole graph with no way back, and it is the only escape
+    route a first-time user can SEE. It is disabled when nothing is selected
+    rather than being a control that silently does nothing.
+  - **"Overview" was rejected as a name.** It is the label of a TAB one row
+    above; two adjacent controls meaning different things under the same word
+    is worse than a mechanical name.
+  - **Clearing never moves the camera.** Emphasis and viewport are separate
+    concerns: a user who clicked one node to inspect it should not lose their
+    zoom as a side effect of dismissing a highlight. Restoring the view is
+    "Reset view", explicit and separate.
+- **Phase 8, FIX (2026-09-08) — dimming recedes instead of erasing, and does
+  not happen at all when there is nothing to highlight.** `.dimmed` was
+  `opacity: 0.15`, tuned in the original Phase 8 view where the graph was 500
+  dense nodes and 0.15 read as "pushed back". The entering view is about a
+  dozen boxes, where the same value reads as "deleted" — labels vanish and the
+  user loses all sense of where the highlighted node sits. Now `0.4`.
+  Separately, `highlightNeighborhood` used to dim EVERYTHING and then re-light
+  the node's neighbours, so a node with no visible connected edges destroyed
+  the whole view and lit nothing: measured on the shipped binary as 94 of 95
+  elements dimmed, 0 highlighted. That is not a rare case — a root file with no
+  imports, or the common case of a file whose dependencies all lead into
+  collapsed directories, where the aggregate edge attaches to the DIRECTORY and
+  not to the file. It now marks the selection and dims nothing.
+- **Tooling (2026-09-08) — local test installers are versioned
+  `0.1.4-dev.<sha>` (`bun run bundle:dev`), because three review rounds have
+  now been lost to a stale artefact.** The July sidecar, the v0.1.3-vs-v0.1.4
+  confusion, and — this round — a local build of `0.1.4` tested against the
+  published `0.1.4` from the release page, which produced a full round of
+  analysis of a binary that contained none of the work. The version string was
+  identical in both, so there was nothing to check AFTER installing: the
+  mistake was invisible by construction, and the Settings engine-version line
+  cannot distinguish two builds of the same version. `scripts/bundle-dev.ts`
+  stamps the short SHA into the version, which changes the installer FILENAME
+  and what the app reports, so "which build is this?" is answerable at a
+  glance. A dirty tree appends `.dirty`, because claiming a commit for a build
+  containing uncommitted changes would be a more convincing lie than saying
+  nothing. `bun run bundle` is untouched and still produces the release
+  artefact.

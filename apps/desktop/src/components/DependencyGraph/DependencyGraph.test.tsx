@@ -143,6 +143,64 @@ describe('DependencyGraph', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
     });
   });
 
+  /**
+   * PROGRESSIVE ESCAPE (2026-09-08). Section 8 specifies Escape as "exit the
+   * graph". Before this, Escape ALWAYS cleared and deselected, so with a
+   * selection active there was no way to express "exit" — and, more to the
+   * point, a mouse user could never reach this handler at all (Cytoscape's
+   * canvas consumes the mousedown, so focus stayed on <body>). First Escape
+   * clears; second exits.
+   */
+  test('the first Escape clears the selection rather than exiting', async () => {
+    const user = userEvent.setup();
+    render(<DependencyGraph result={SAMPLE} />);
+
+    await user.click(getCanvasRegion());
+    await user.keyboard('{ArrowDown}');
+    await waitFor(() => {
+      expect(useGraphStore.getState().selectedPath).not.toBeNull();
+    });
+
+    await user.keyboard('{Escape}');
+
+    expect(useGraphStore.getState().selectedPath).toBeNull();
+    // Still inside the graph: exiting is what the SECOND Escape is for.
+    expect(getCanvasRegion()).toHaveFocus();
+  });
+
+  test('the second Escape leaves the graph, honouring Section 8s contract as the terminal step', async () => {
+    const user = userEvent.setup();
+    render(<DependencyGraph result={SAMPLE} />);
+
+    await user.click(getCanvasRegion());
+    await user.keyboard('{ArrowDown}');
+    await waitFor(() => {
+      expect(useGraphStore.getState().selectedPath).not.toBeNull();
+    });
+
+    await user.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
+
+    expect(getCanvasRegion()).not.toHaveFocus();
+  });
+
+  test('the toolbar offers a visible way out of a selection, enabled only when there is one', async () => {
+    const user = userEvent.setup();
+    render(<DependencyGraph result={SAMPLE} />);
+    const clear = screen.getByRole('button', { name: 'Clear selection' });
+    expect(clear).toBeDisabled();
+
+    await user.click(getCanvasRegion());
+    await user.keyboard('{ArrowDown}');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Clear selection' })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Clear selection' }));
+
+    expect(useGraphStore.getState().selectedPath).toBeNull();
+  });
+
   /** "Analysed fine, nothing qualified" — defensive: `E_NO_SUPPORTED_FILES` already gates this above `DependencyGraph` in practice, but the component itself does not assume that invariant. */
   test('explains there is nothing to graph instead of an empty toolbar and canvas', () => {
     render(<DependencyGraph result={{ ...SAMPLE, files: [], edges: [] }} />);

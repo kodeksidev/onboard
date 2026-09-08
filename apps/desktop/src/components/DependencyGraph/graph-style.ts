@@ -200,8 +200,14 @@ function buildInteractionStyles(): cytoscape.StylesheetJson {
       style: { 'border-width': 4, 'border-color': '#7c3aed', 'border-style': 'solid' },
     },
     {
+      // 0.15 was tuned against the ORIGINAL always-expanded view, where the
+      // graph was 500 dense nodes and 0.15 read as "receded". The entering
+      // view is about a dozen boxes, and at that density 0.15 reads as
+      // "gone": labels vanish and the user loses all sense of where the
+      // highlighted node sits. Dimming should push things back, not delete
+      // them (docs/DECISIONS.md, 2026-09-08).
       selector: '.dimmed',
-      style: { opacity: 0.15 },
+      style: { opacity: 0.4 },
     },
     {
       selector: 'node.search-match',

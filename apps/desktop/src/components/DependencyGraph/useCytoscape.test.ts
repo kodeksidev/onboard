@@ -1,13 +1,15 @@
 import { describe, expect, test } from 'vitest';
 import cytoscape from 'cytoscape';
 import {
+  supportsCanvasRendering,
+} from './useCytoscape';
+import {
   applyRouteOverlay,
   applySearchFilter,
   clearHighlight,
   focusNodeById,
   highlightNeighborhood,
-  supportsCanvasRendering,
-} from './useCytoscape';
+} from './graph-interactions';
 import { fileNodeId } from './graph-model';
 
 /**
