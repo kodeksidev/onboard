@@ -4333,3 +4333,202 @@ decided; it only records choices the spec left open.
     violation at a time is worthless. It did not survive contact with a commit
     inside a published tag, where the remedy costs more than the defect. The
     note has been rewritten rather than quietly contradicted.
+- **Phase 8, AMENDMENT (2026-09-08) — the dependency graph opens on a bounded
+  "entering view" instead of on the whole repo. This changes what
+  `GRAPH_AUTO_COLLAPSE_THRESHOLD = 600` means and what Section 11's graph
+  budgets measure.** This is an amendment against Section 9 Phase 8 and
+  Section 11, not a config tweak, and it is recorded here because the spec's
+  own numbers no longer describe the shipped behaviour.
+  - **The finding it comes from.** Phase 8's rule was "auto-collapse
+    directories at depth >= 2 WHEN node count > 600" — show every file by
+    default, collapse only once the graph got expensive. That rule optimises
+    render cost, and it left the default view of any repo under 600 nodes as
+    one fitted force-directed layout of every file at once. Such a view is
+    not readable at any zoom, and no amount of tuning the label-hiding
+    threshold (0.35) or the collapse threshold (600) makes it readable: a
+    node-link diagram's legibility collapses well below 500 nodes at real
+    edge density. The problem was never those constants; it was that
+    "everything at once" was the default state at all.
+  - **The rule now.** `computeEnteringCollapsedDirectoryPaths`
+    (`collapse.ts`) always collapses, whatever the repo's size, choosing the
+    DEEPEST level of detail whose visible node count still fits
+    `GRAPH_ENTERING_VIEW_MAX_NODES = 60`. A repo small enough to fit whole
+    still shows every file (the set comes back empty — strictly the old
+    behaviour for small repos). Expanding is deliberate: tapping a directory
+    (`toggleDirectory`), a keyboard move revealing a file (`revealPath`), or
+    the toolbar's "Expand all". "Collapse all" now means "back to the
+    entering view", recomputed from the `AnalysisResult` rather than
+    remembered, so it is the same view however deep the user drilled.
+  - **`GRAPH_ENTERING_VIEW_MAX_NODES = 60` is a judgment call, not a derived
+    number.** fcose fits its result to the viewport, so on a maximised
+    ~1600x900 canvas 60 nodes leaves each roughly a 180x150px cell — enough
+    for the node plus its label without neighbours colliding. It was
+    validated by screenshot against CacttusEdu and is guarded against
+    regression by `collapse.test.ts`, which asserts that the entering view of
+    a real 500-file repo shape never exceeds it. On CacttusEdu (500 files, 90
+    directories, engine-measured 2026-09-08) the rule resolves to depth 1:
+    **11 visible nodes** — 6 top-level directories and 5 repo-root files.
+  - **What `GRAPH_AUTO_COLLAPSE_THRESHOLD = 600` means now.** It no longer
+    gates collapse; nothing does, because collapse is unconditional. The
+    constant survives under the name `GRAPH_DRAFT_LAYOUT_NODE_THRESHOLD` in
+    `useCytoscape.ts`, with the one job it still does: the visible-node count
+    past which fcose drops to `quality: 'draft'`. A graph only reaches that
+    size now by the user explicitly pressing "Expand all". The old name is
+    gone from the codebase; Phase 8's paragraph still carries it, which is
+    why this entry exists.
+  - **What the Section 11 budgets should measure.** `graphFirstPaint1kMs`,
+    `graphPanP95_1kMs` and `graphPanP95_5kMs` were written when 1,000/5,000
+    nodes on screen was the default state. That is now a state users reach
+    only on purpose, so those budgets were measuring something almost nobody
+    sees. They are renamed in `bench/budgets.json` to
+    `graphEnteringViewFirstPaint1kFilesMs` /
+    `graphEnteringViewPanP95_1kFilesMs` / `graphEnteringViewPanP95_5kFilesMs`
+    — same numbers, now honestly labelled as measuring the entering view of a
+    1k/5k-FILE repo. Measured after this change (`bun run bench:graph`,
+    headless Edge, 2026-09-08): first paint **140.2 ms** at 1,000 files and
+    **81.7 ms** at 5,000 files against a 1,500 ms budget, pan p95 16.9 ms at
+    both — roughly a tenth of the allowance, which is the point: what the
+    budget measures got cheap because the entering view is bounded (13
+    visible nodes for both synthetic repos). Two new entries,
+    `graphExpandAllFirstPaint1kMs` and `graphExpandAllPanP95_5kMs`, name the
+    deliberate all-nodes state and are marked not-yet-measured (the same
+    convention `webviewHeap5kMb` already uses): that state is what the
+    original numbers were really about, and it now needs its own bench
+    scenario rather than inheriting the default one's.
+- **Phase 8, AMENDMENT (2026-09-08) — the keyboard model and the canvas were
+  diverging, and criterion 20 could not see it.** `keyboard-nav.ts` traverses
+  the FULL `AnalysisResult` (every file, by importance rank); the canvas shows
+  only what is currently expanded. Before this change `focusNodeById` did
+  `cy.getElementById(id)`, found nothing for a file inside a collapsed
+  directory, and returned silently — so `ArrowDown`/`[`/`]` announced a file
+  through `aria-live` that no sighted user could see, and moved no camera.
+  That was already true above 600 nodes; collapsed-by-default would have made
+  it the normal case. `UseCytoscapeApi.focusNodeById` is therefore replaced by
+  `focusPath(path)`, which expands whatever hides the target first
+  (`collapse.ts`'s `revealPath` — the whole collapsed-ancestor chain, not just
+  the shallowest one `resolveVisibleNodeId` reports) and centres only once the
+  reveal layout has settled. `DependencyGraph.test.tsx` now asserts the
+  focused node is really on the canvas (materialised AND not
+  `hidden-by-collapse`) after a keyboard move — the assertion criterion 20's
+  axe and keyboard checks structurally cannot make, since both can pass while
+  the canvas shows nothing. `GraphListFallback` is unaffected: it renders from
+  the `AnalysisResult`, never from the Cytoscape core, and never did.
+- **Phase 8, BUG FIX (2026-09-08) — an animated fcose run does not reliably
+  emit `layoutstop`, which silently hung first paint and every drill step.
+  THE FIX: `animate: false` for the graph layout, unconditionally.** This is a
+  shipped-code defect, not an observation: any repository whose top-level areas
+  do not import each other lands on it, which is most monorepos.
+
+  **THE FINDING IS THAT THE OBVIOUS PREDICATE IS WRONG — read this before
+  narrowing the flag again.** An unconditional `animate: false` looks
+  over-broad, and the natural instinct is to re-scope it to "only the case that
+  actually hangs". That instinct was followed once already, and shipped: the
+  first fix animated only when `visibleEdgeCount > 0`, on the reasoning that a
+  layout with edges has forces and will converge. It was WRONG. A drill step
+  into `backend` — which HAD visible edges — hung exactly the same way, so
+  `layoutstop` never fired, and the packing pass silently never ran. The
+  property the hanging graphs actually share is a top level with no edges
+  ACROSS it, which is not the same as having no edges, and there is no cheap
+  runtime predicate for "will fcose converge on this graph". Nothing short of
+  running the layout answers it. Re-narrowing therefore needs a reproducible
+  characterisation of the hang, not a plausible-sounding condition; without
+  one, the flag stays unconditional. The cost is a brief motion on drill; the
+  purchase is an event that always fires, which four separate mechanisms
+  depend on.
+  Measured
+  live in the webview against CacttusEdu's entering view (11 visible nodes, 0
+  visible edges): `layoutstart` and `layoutready` fire, `layoutstop` never
+  does, still nothing after 9 seconds; the identical graph with
+  `animate: false` completes and fires all three. No forces, no convergence.
+  Everything downstream waits on that event — `isReady`, the entering-view
+  fit, and reveal-then-centre — so all three hung. An edgeless view is not a
+  corner case: a monorepo of independent workspaces has no cross-directory
+  imports at all (all 1,227 of CacttusEdu's edges live inside a single
+  top-level directory, so its entering view has exactly zero).
+
+  **Why it was never seen before.** Phase 8's own rule sets `animate: false`
+  whenever `prefers-reduced-motion` is set, so anyone testing with that
+  preference on — which is the configuration criterion 21 is checked under —
+  took the working path every time. The bug was invisible to exactly the
+  people most likely to be exercising the graph deliberately, and visible only
+  to a default-settings user opening a repo whose workspaces are independent.
+  A gate that tests the accessible path can hide a defect on the default one.
+- **Phase 8, AMENDMENT (2026-09-08) — the entering-view fit runs from a React
+  effect, not from `layoutstop`.** At `layoutstop` Cytoscape is still working
+  from the container size it captured when the layout began, which during a
+  tab switch is not the final one: fitting there computed zoom 0.96 where the
+  settled container needs 0.68, leaving the largest directory boxes hanging
+  off the bottom edge of the panel. `fitToVisible` is called from an effect
+  keyed on `isReady`, which React runs after the DOM commit, when the panel
+  has its real height. (A `requestAnimationFrame` deferral inside the
+  `layoutstop` handler was tried first; its callback never ran at all.)
+- **Phase 8, AMENDMENT (2026-09-08) — the Cytoscape stylesheet is now
+  theme-aware.** A canvas gets no CSS, so every colour in `graph-style.ts` is
+  a literal and none of the app's `dark:` Tailwind variants reach it. That was
+  survivable while the graph was a field of coloured file dots whose labels
+  were incidental. It is not survivable now that collapsed DIRECTORY boxes and
+  their labels are the entering view's entire content: rendered against the
+  app's dark theme (which is `prefers-color-scheme`-driven — this app sets no
+  `dark` class), the old fixed palette drew near-black labels on dark boxes,
+  i.e. the entering view was "legible" only in a light theme nobody was
+  running. `resolveGraphPalette()` picks a light or dark `GraphPalette`, and
+  `useCytoscape` rebuilds the stylesheet on a `prefers-color-scheme` change.
+- **Phase 8, AMENDMENT (2026-09-08) — collapsed directories are sized and
+  coloured, and `cytoscape-expand-collapse`'s cue layer is off.** A
+  lazily-collapsed directory has no children in the core, so Cytoscape gave it
+  the default node size: in an entering view that is mostly collapsed
+  directories, every directory rendered as the same small grey blob whatever
+  it contained. Their box area is now proportional to `descendantFileCount`
+  and tinted by the module owning most of their files
+  (`computeDominantModuleByDirectory`), so "this box holds half the repo" is
+  legible before reading a single label. Separately, the extension's
+  `cueEnabled` is now `false`: its cues collapse a node by hiding children it
+  can see, which would be a SECOND source of truth for collapse state
+  alongside `collapsedDirsBox` — and it already could not expand a
+  lazily-collapsed directory, whose children it has never seen. A11 keeps the
+  extension registered; `toggleDirectory` owns the interaction, in both
+  directions, so drilling is reversible. The cost is that the +/- cue is gone,
+  leaving the label ("backend / 138 files") and the border style to signal
+  "clickable" — worth a designer's eye.
+- **Phase 8, FIX (2026-09-08) — top-level boxes are packed deterministically
+  when the top level has no edges (`pack-layout.ts`).** This closes the two
+  residuals this change originally filed, which had one root cause: fcose
+  positions nodes by forces, and when no edge joins two top-level nodes there
+  are no forces at that level. The visible results were an arbitrary scatter
+  with large empty regions, and — worse, because it is WRONG rather than untidy
+  — unrelated root files coming to rest INSIDE an expanded directory's compound
+  box, drawing containment that does not exist. Measured on CacttusEdu after
+  expanding `backend`: four root-level nodes inside its box; zero after.
+  `shelfPack` places the boxes tallest-first in rows, ties broken by id so the
+  same repo always packs the same way. It runs only when no visible edge
+  crosses two top-level nodes, so an arrangement that does carry force
+  information (after "Expand all", say) is left alone, and it never touches
+  what is INSIDE a compound — fcose keeps the job it is good at.
+
+  **Where it runs is load-bearing.** Positions written from inside a
+  `layoutstop` handler are overwritten by the layout that just emitted it: the
+  packed arrangement was computed and applied, and the canvas still rendered
+  fcose's. The initial paint therefore packs from a React effect (after the
+  commit) and drill/wholesale relayouts from a macrotask. This is the same
+  lesson as the entering-view fit, which had to move for the same reason —
+  `layoutstop` is not "the layout has finished writing".
+- **Phase 8, AMENDMENT (2026-09-08) — remaining residuals, filed not fixed.**
+  (a) The viewport label budget (`GRAPH_VIEWPORT_LABEL_BUDGET = 25`) ranks by
+  importance but does no collision detection, so two equally low-ranked
+  root-file labels can still overlap. (b) The graph does not re-fit when the
+  panel is resized; only the entering view and packed relayouts are fitted.
+  (c) INSIDE an expanded directory, sibling collapsed sub-directory boxes can
+  still slightly overlap each other — the packer deliberately does not touch a
+  compound's interior, so fcose's arrangement stands there. Visible on
+  CacttusEdu's `backend` (`prisma` and `src` touch). Less serious than the
+  cross-compound case it replaced: it is untidy, not a false relationship.
+- **Phase 9 — noted, not decided: `ModuleMap` and the graph's entering view
+  may now be converging.** With the graph opening on a directory tree rather
+  than a file cloud, the first thing the graph tab shows and the thing the
+  Module map tab shows are both "the repo's top-level areas, one box/card
+  each". They are not identical — modules are derived (Section 8.6's
+  clustering), directories are structural, and CacttusEdu has 17 modules
+  against 6 top-level directories — but the overlap in what a newcomer
+  actually *does* with them is real. Worth answering deliberately (are these
+  two views of one thing, or two different things?) before either grows
+  further.

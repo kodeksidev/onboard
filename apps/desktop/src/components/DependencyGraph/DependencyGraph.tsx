@@ -121,11 +121,14 @@ function useGraphSideEffects(
     // in-graph keyboard move or click — cross-component focus changes are
     // not a second-class experience for screen reader users.
     registerGraphFocusHandler((path) => {
-      graph.focusNodeById(fileNodeId(path));
+      // `focusPath`, not `focusNodeById`: the target may be inside a
+      // collapsed directory and not on the canvas at all, so revealing it is
+      // part of focusing it (`useCytoscape.ts`'s `revealAndFocusPath`).
+      graph.focusPath(path);
       announce(describeFocusedFile(result, path));
     });
     return () => registerGraphFocusHandler(null);
-  }, [graph.focusNodeById, result, announce]);
+  }, [graph.focusPath, result, announce]);
 
   useEffect(() => {
     if (searchFocusToken > 0) {
@@ -164,7 +167,7 @@ function useRecenterOnReadyEffect(graph: UseCytoscapeApi): void {
     }
     const existingFocusedPath = useGraphStore.getState().focusedPath;
     if (existingFocusedPath !== null) {
-      graph.focusNodeById(fileNodeId(existingFocusedPath));
+      graph.focusPath(existingFocusedPath);
     }
     // Deliberately depends only on `graph.isReady`: this reads the current
     // store value once per "graph became ready" transition, not as a

@@ -142,7 +142,20 @@ describe('buildLazyGraphElements', () => {
     const dirNode = lazy.nodes.find((node) => node.data.id === directoryNodeId('src/config'));
     expect(dirNode).toBeDefined();
     expect(dirNode?.classes).toContain('lazy-collapsed');
-    expect(dirNode?.data.label).toContain('+');
+    // Two lines — "config\n1 file" — since a collapsed directory is now the
+    // primary thing being read in the entering view, not a footnote on a
+    // file-level graph (docs/DECISIONS.md, 2026-09-08).
+    expect(dirNode?.data.label).toBe('config\n1 file');
+  });
+
+  test('a collapsed directory is sized by what it contains, so identical grey blobs stop being identical', () => {
+    const large = buildLargeSyntheticResult(30, 21);
+    const lazy = buildLazyGraphElements(large, new Set(['src', 'src/mod0']));
+
+    const root = lazy.nodes.find((node) => node.data.id === directoryNodeId('src'));
+    const child = lazy.nodes.find((node) => node.data.id === directoryNodeId('src/mod0'));
+
+    expect(Number(root?.data.size)).toBeGreaterThan(Number(child?.data.size));
   });
 
   test('at a large scale, node/edge count scales with the collapsed set, not with the total file count', () => {

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type cytoscape from 'cytoscape';
 import { AnalysisEnvelope } from '@onboard/contract';
 import rawSampleAnalysis from '@onboard/contract/fixtures/sample-analysis.json';
 import { DependencyGraph } from './DependencyGraph';
 import { useGraphStore } from '@/state/graphStore';
+import { fileNodeId } from './graph-model';
 import { buildLargeSyntheticResult } from './graph-lazy-fixtures';
 import { SLOW_MOUNT_TIMEOUT_MS } from '@/test/timeouts';
 
@@ -92,26 +94,53 @@ describe('DependencyGraph', { timeout: SLOW_MOUNT_TIMEOUT_MS }, () => {
   });
 
   /**
-   * Section 9 Phase 8 follow-up: the node SET keyboard nav traverses is now
-   * dynamic (`keyboard-nav.ts`'s reducer, unaffected — it's pure over the
-   * FULL `AnalysisResult`, never over whatever happens to be materialized
-   * into Cytoscape). This exceeds `GRAPH_AUTO_COLLAPSE_THRESHOLD`, so its
-   * highest-importance file lives inside a lazily-collapsed directory and
-   * is never added to the Cytoscape core at all — proving focus/announce
-   * still works correctly even when the focused node doesn't exist there.
+   * `keyboard-nav.ts`'s reducer is pure over the FULL `AnalysisResult`, never
+   * over whatever happens to be materialized into Cytoscape, so its
+   * highest-importance file starts inside a collapsed directory that the
+   * entering view has not built.
    */
-  test('keyboard navigation still reaches a file that lazy materialization never added to the Cytoscape core', async () => {
+  test('keyboard navigation reaches a file the entering view had collapsed away', async () => {
     const user = userEvent.setup();
-    const large = buildLargeSyntheticResult(30, 21); // 630 files, well past the 600 auto-collapse threshold
+    const large = buildLargeSyntheticResult(30, 21); // 630 files across 61 directories
     render(<DependencyGraph result={large} />);
 
     await user.click(getCanvasRegion());
     await user.keyboard('{ArrowDown}');
 
     await waitFor(() => {
-      expect(useGraphStore.getState().focusedPath).toBe('src/mod0/index.ts'); // importanceRank 1, hidden by auto-collapse
+      expect(useGraphStore.getState().focusedPath).toBe('src/mod0/index.ts'); // importanceRank 1
     });
     expect(screen.getByText(/src\/mod0\/index\.ts, rank 1 of 630/)).toBeInTheDocument();
+  });
+
+  /**
+   * Condition 2 of the 2026-09-08 amendment, and the reason `focusPath`
+   * exists at all: the keyboard model and the canvas must not diverge. A
+   * keyboard move onto a file inside a collapsed directory used to announce
+   * that file to screen readers while the canvas showed nothing — criterion
+   * 20 satisfied, the experience not. The focused node must now actually be
+   * on the canvas: materialized AND not hidden by collapse.
+   */
+  test('a keyboard move onto a collapsed file reveals it on the canvas, not just in the announcement', async () => {
+    const user = userEvent.setup();
+    const large = buildLargeSyntheticResult(30, 21);
+    let core: cytoscape.Core | null = null;
+    render(<DependencyGraph result={large} onCytoscapeReady={(cy) => (core = cy)} />);
+    await waitFor(() => {
+      expect(core).not.toBeNull();
+    });
+    const cy = core as unknown as cytoscape.Core;
+    // Precondition: the entering view genuinely does not contain this file.
+    expect(cy.getElementById(fileNodeId('src/mod0/index.ts')).empty()).toBe(true);
+
+    await user.click(getCanvasRegion());
+    await user.keyboard('{ArrowDown}');
+
+    await waitFor(() => {
+      const focused = cy.getElementById(fileNodeId('src/mod0/index.ts'));
+      expect(focused.empty()).toBe(false);
+      expect(focused.hasClass('hidden-by-collapse')).toBe(false);
+    });
   });
 
   /** "Analysed fine, nothing qualified" — defensive: `E_NO_SUPPORTED_FILES` already gates this above `DependencyGraph` in practice, but the component itself does not assume that invariant. */

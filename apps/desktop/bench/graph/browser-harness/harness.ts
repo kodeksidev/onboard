@@ -3,14 +3,14 @@ import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { buildLazyGraphElements } from '../../../src/components/DependencyGraph/graph-model';
 import { createCore, buildLayoutOptions } from '../../../src/components/DependencyGraph/useCytoscape';
-import { computeAutoCollapsedDirectoryPaths } from '../../../src/components/DependencyGraph/collapse';
+import { computeEnteringCollapsedDirectoryPaths } from '../../../src/components/DependencyGraph/collapse';
 import { generateSyntheticResult } from '../generate-synthetic-graph';
 
 /**
  * Runs INSIDE a real (headless) browser, driven over CDP by
  * `run-bench-graph.ts` — this is the genuine-measurement half of Section 9
  * Phase 8's `bench:graph`. It reuses the exact production entry points
- * (`createCore`, `buildLayoutOptions`, `computeAutoCollapsedDirectoryPaths`,
+ * (`createCore`, `buildLayoutOptions`, `computeEnteringCollapsedDirectoryPaths`,
  * `buildLazyGraphElements`) rather than a parallel reimplementation, so a
  * real-browser number here is a number about the shipped code path, not a
  * lookalike.
@@ -63,8 +63,7 @@ async function buildAndLayout(
   container: HTMLElement,
 ): Promise<{ cy: cytoscape.Core; visibleNodeCount: number }> {
   const result = generateSyntheticResult(nodeCount);
-  const totalElementCount = result.files.length + result.directories.length;
-  const collapsedDirs = computeAutoCollapsedDirectoryPaths(result.directories, totalElementCount);
+  const collapsedDirs = computeEnteringCollapsedDirectoryPaths(result.directories, result.files);
   const elements = buildLazyGraphElements(result, collapsedDirs);
 
   const cy = createCore(elements, container as HTMLDivElement, true);
@@ -72,7 +71,7 @@ async function buildAndLayout(
 
   await new Promise<void>((resolve) => {
     cy.one('layoutstop', () => resolve());
-    cy.layout(buildLayoutOptions(true, true, visibleNodeCount)).run();
+    cy.layout(buildLayoutOptions({ canRender: true, visibleNodeCount })).run();
   });
 
   return { cy, visibleNodeCount };
