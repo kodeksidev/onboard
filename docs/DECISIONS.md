@@ -4532,3 +4532,54 @@ decided; it only records choices the spec left open.
   actually *does* with them is real. Worth answering deliberately (are these
   two views of one thing, or two different things?) before either grows
   further.
+- **Phase 8, BUG FIX (2026-09-08) — the fit was conditional on the packer, so
+  every repository whose top-level directories import each other never fitted
+  at all except on first paint.** Reported from the shipped installer, then
+  diagnosed against the release binary over CDP rather than a dev server —
+  the two previous verifications used a dev server and missed it twice.
+  - **The defect.** `settleAfterLayout` read
+    `if (packTopLevelIfUnforced(cy)) fitToVisible(cy)`. The packer declines,
+    correctly, whenever a visible edge crosses two top-level nodes. So on any
+    such repo the drill path and the wholesale path (Expand all, Collapse all,
+    every tap, every keyboard reveal) ran a layout and then never corrected
+    the viewport. Derived audit of the three layout paths: initial paint fitted
+    unconditionally; drill and wholesale were both gated. Two of three.
+  - **Why testing never caught it.** Not fixture bias — audited, and two of
+    four fixtures (`sample-analysis.json`, `buildRepoShapedResult`) already
+    exercise the declining branch. The reason is that **no unit test can
+    observe a fit at all**: jsdom has no canvas, `supportsCanvasRendering()` is
+    false, the core runs headless, and `fitToVisible` bails on a 0x0
+    container. The branch ran; its consequence was invisible. The invariant —
+    *after any layout on any path, the content bounding box lies inside the
+    viewport* — is therefore asserted in `bench/graph`'s browser harness,
+    which has a real canvas, and `bench:graph` now FAILS when it does not
+    hold. It is blind to which branch ran, which is the point.
+  - **The aspect problem, fixed at its source.** fcose produced a roughly
+    SQUARE layout that was then fitted into a ~2.35:1 panel. The fit is limited
+    by the short axis, so two thirds of the width went unused and the zoom fell
+    to 0.409 — where a 13px directory label renders at 5px: drawn, and
+    unreadable. `layoutBoundingBox` now constrains the layout to a box with the
+    PANEL's aspect, scaled to the node count, so the mismatch never arises.
+  - **The readability floor, derived rather than picked.**
+    `GRAPH_MIN_READABLE_ZOOM = 0.75` — directory labels are 13px, 10px is the
+    conventional floor for legible UI text, 10/13 = 0.77, rounded down so the
+    boundary does not thrash. `readableNodeBudget` inverts the fit arithmetic
+    to answer "how many nodes can this panel show and still be read", and the
+    entering view takes the smaller of that and the 60-node ceiling. On a
+    1521x648 panel that is ~48. The collapsed view exists so it can be READ, so
+    a panel that cannot show the ceiling legibly shows fewer nodes rather than
+    smaller ones.
+  - **`fit: false` on the layout is not "no fit".** Every layout is now
+    followed by an unconditional `fitToVisible`. The layout's own `fit` uses
+    the container as measured when it STARTED — the stale value that put boxes
+    off the panel edge — so the settle step owns fitting. This supersedes the
+    earlier choice to preserve the viewport across a drill for spatial memory:
+    a viewport the user cannot read is worth nothing.
+  - **Verified on the reported repository, in the shipped binary.** CacttusEdu,
+    driven through the real UI (a raw `analyze_repo` invoke cannot retarget the
+    app — it bypasses the store that owns repo state): entering view 11 nodes,
+    6 directories labelled `backend / 138 files`, `cacttus-edu-front / 239
+    files`, `dashboard / 104 files`, `docs / 9 files`, `deploy / 4 files`,
+    `.claude / 1 file`; zoom 1.41, so those labels render at 18px; content
+    inside the viewport. Collapse all holds the same. Residual: the canvas is
+    still ~50% empty, which is legible but not yet well-composed.

@@ -27,6 +27,67 @@ export const PACK_GAP_PX = 36;
 /** Fallback when the container has no measurable aspect (headless tests). */
 const DEFAULT_ASPECT_RATIO = 16 / 9;
 
+/**
+ * Model-space footprint assumed per node: a collapsed directory box tops out
+ * at 170px (`graph-model.ts`) and carries a two-line label, so ~190px square
+ * reliably holds one node plus its text clear of its neighbour.
+ */
+export const LAYOUT_CELL_PX = 190;
+
+/**
+ * The zoom below which the entering view stops being readable.
+ *
+ * Directory labels are 13px (`graph-style.ts`) and are the entering view's
+ * entire content. 10px is the conventional floor for legible UI text at 100%
+ * scale, so the label survives down to 10/13 = 0.77 zoom; 0.75 is that,
+ * rounded down so the boundary does not thrash. This is not theoretical: the
+ * shipped binary was measured fitting at zoom 0.409, which renders those
+ * labels at 5px — drawn, and unreadable. "Legible in principle, unreadable in
+ * fact" is broken.
+ */
+export const GRAPH_MIN_READABLE_ZOOM = 0.75;
+
+/** A layout box with the panel's aspect, big enough for `nodeCount` cells. */
+export function layoutBoundingBox(
+  nodeCount: number,
+  containerWidth: number,
+  containerHeight: number,
+): { x1: number; y1: number; w: number; h: number } {
+  const aspect =
+    containerWidth > 0 && containerHeight > 0 ? containerWidth / containerHeight : DEFAULT_ASPECT_RATIO;
+  const area = Math.max(nodeCount, 1) * LAYOUT_CELL_PX * LAYOUT_CELL_PX;
+  const width = Math.sqrt(area * aspect);
+  return { x1: 0, y1: 0, w: width, h: width / aspect };
+}
+
+/**
+ * How many nodes the entering view can show and still be READ, in this panel.
+ *
+ * Derived, not picked. `layoutBoundingBox` gives the content the panel's
+ * aspect, so a fit is limited equally by both axes and lands at
+ * `containerWidth / boxWidth`. Requiring that to stay at or above
+ * `GRAPH_MIN_READABLE_ZOOM` and solving for the node count gives:
+ *
+ *   n <= (containerWidth / (LAYOUT_CELL_PX * minZoom))^2 / aspect
+ *
+ * On a 1521x648 panel that is ~48 nodes — fewer than the flat 60-node budget,
+ * which is the point: the collapsed view exists so it can be read, so when
+ * the panel cannot show 60 nodes legibly it shows fewer rather than shrinking
+ * them. Never returns less than 1.
+ */
+export function readableNodeBudget(
+  containerWidth: number,
+  containerHeight: number,
+  minZoom: number = GRAPH_MIN_READABLE_ZOOM,
+): number {
+  if (containerWidth <= 0 || containerHeight <= 0 || minZoom <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const aspect = containerWidth / containerHeight;
+  const budget = Math.floor((containerWidth / (LAYOUT_CELL_PX * minZoom)) ** 2 / aspect);
+  return Math.max(budget, 1);
+}
+
 export interface PackItem {
   readonly id: string;
   readonly width: number;

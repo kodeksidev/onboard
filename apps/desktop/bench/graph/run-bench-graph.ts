@@ -104,7 +104,7 @@ function runHeadlessConstructAndLayout(nodeCount: number): Promise<{ visibleNode
       cy.destroy();
       resolve({ visibleNodeCount, elapsedMs });
     });
-    cy.layout(buildLayoutOptions({ canRender: true, visibleNodeCount })).run();
+    cy.layout(buildLayoutOptions({ canRender: true, visibleNodeCount, containerWidth: cy.width(), containerHeight: cy.height() })).run();
   });
 }
 // #endregion
@@ -285,10 +285,12 @@ function printBrowserResult(result: GraphBenchResult): void {
   const panBudget = result.nodeCount >= 5000 ? GRAPH_PAN_P95_BUDGET_5K_MS : GRAPH_PAN_P95_BUDGET_1K_MS;
   const paintVerdict = result.firstPaintMs <= paintBudget ? 'PASS' : 'FAIL';
   const panVerdict = result.panP95Ms <= panBudget ? 'PASS' : 'FAIL';
+  const fitVerdict = result.fitsViewport ? 'PASS' : 'FAIL';
   console.log(
     `nodes=${result.nodeCount} (visible in entering view=${result.visibleNodeCount})  ` +
       `constructLayout=${result.constructLayoutMs.toFixed(1)}ms  firstPaint=${result.firstPaintMs.toFixed(1)}ms [budget ${paintBudget}ms: ${paintVerdict}]  ` +
-      `panP95=${result.panP95Ms.toFixed(1)}ms [budget ${panBudget}ms: ${panVerdict}]`,
+      `panP95=${result.panP95Ms.toFixed(1)}ms [budget ${panBudget}ms: ${panVerdict}]  ` +
+      `contentFitsViewport=${String(result.fitsViewport)} @ zoom ${result.settledZoom.toFixed(2)} [${fitVerdict}]`,
   );
 }
 
@@ -346,6 +348,13 @@ async function main(): Promise<void> {
   } else {
     results.forEach(printBrowserResult);
     printBrowserCaveat();
+    // The viewport invariant is a GATE, not a report. A layout whose content
+    // ends up outside the viewport is the defect diagnosed on 2026-09-08, and
+    // it is invisible to `bun run test` (no canvas in jsdom).
+    if (results.some((entry) => !entry.fitsViewport)) {
+      console.error('\nFAILED — content did not fit the viewport after the layout settled.');
+      process.exitCode = 1;
+    }
   }
 
   await printHeadlessBaseline();

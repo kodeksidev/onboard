@@ -8,6 +8,7 @@ import { buildGraphStylesheet } from './graph-style';
 import { buildLazyGraphElements, fileNodeId } from './graph-model';
 import type { GraphElements } from './graph-model';
 import {
+  GRAPH_ENTERING_VIEW_MAX_NODES,
   collapseLazyDirectory,
   computeEnteringCollapsedDirectoryPaths,
   createNoopExpandCollapseApi,
@@ -18,7 +19,7 @@ import {
 } from './collapse';
 import type { ExpandCollapseApi } from './collapse';
 import { applyDetailLevel } from './detail-level';
-import { packTopLevelIfUnforced } from './pack-layout';
+import { layoutBoundingBox, packTopLevelIfUnforced, readableNodeBudget } from './pack-layout';
 
 /** A11's pixel-ratio performance rule (Phase 8's paragraph). */
 const GRAPH_PIXEL_RATIO_NODE_THRESHOLD = 2000;
@@ -41,6 +42,22 @@ const NEW_NODE_SEED_RADIUS_PX = 45;
 
 /** Breathing room around the entering view so its outermost boxes aren't flush against the panel edge. */
 const ENTERING_VIEW_FIT_PADDING_PX = 40;
+
+/**
+ * How many nodes the entering view may show: the spec-level ceiling, or what
+ * this panel can render legibly, whichever is smaller.
+ *
+ * The ceiling alone was not enough. It assumed a roughly square canvas; a
+ * letterbox panel fits the same node count at a much lower zoom, and below
+ * `GRAPH_MIN_READABLE_ZOOM` the labels are drawn but cannot be read. The
+ * collapsed view exists so it can be READ, so when the panel cannot show the
+ * ceiling legibly it shows fewer nodes rather than smaller ones. A container
+ * of zero (the graph is built before the panel is laid out) yields the
+ * ceiling, and the settle step re-fits once the real size is known.
+ */
+function enteringViewBudget(containerWidth: number, containerHeight: number): number {
+  return Math.min(GRAPH_ENTERING_VIEW_MAX_NODES, readableNodeBudget(containerWidth, containerHeight));
+}
 
 let isExtensionsRegistered = false;
 
@@ -125,21 +142,43 @@ export function createCore(
  * reaches for, and it is wrong; "will fcose converge" is not answerable
  * without running the layout. See docs/DECISIONS.md, 2026-09-08.
  *
- * **`randomize`/`fit`.** A drill step is incremental: it seeds from the
- * positions already on screen and leaves the viewport alone, so opening a
- * directory adds detail in place. Re-randomizing and re-fitting on every
- * expand — what this did before — threw away the spatial memory the user had
- * just built, which is the entire point of a map.
+ * **`randomize`.** A drill step is incremental: it seeds from the positions
+ * already on screen, so opening a directory adds detail in place instead of
+ * re-scrambling the map the user has just learned.
+ *
+ * **`fit` is `false` here on purpose, and that is NOT the same as not
+ * fitting.** Every layout is followed by an unconditional `fitToVisible`
+ * (`settleAfterLayout`). The layout's own `fit` runs against the container as
+ * measured when the layout STARTED, which is exactly the stale value that put
+ * boxes off the panel edge; the settle step fits against the container as it
+ * actually is. An earlier version tried to preserve the viewport across a
+ * drill for spatial memory. That lost: a viewport the user cannot read is
+ * worth nothing, and the aspect-targeted `boundingBox` below keeps the map
+ * roughly stable across a drill anyway.
+ *
+ * **`boundingBox`.** fcose is otherwise free to produce a roughly SQUARE
+ * layout, which is then fitted into a panel that is about 2.35:1. The fit is
+ * limited by the short axis, so a square graph in a letterbox panel wastes
+ * two thirds of the width and drags the zoom down — measured on the shipped
+ * binary at zoom 0.409, where a 13px directory label renders at 5px: drawn,
+ * and unreadable. Constraining the layout to a box with the PANEL's aspect,
+ * scaled to the number of nodes, removes the mismatch at its source instead
+ * of asking the fit to paper over it.
  */
 export interface GraphLayoutInputs {
   readonly canRender: boolean;
   readonly visibleNodeCount: number;
+  /** Panel size in px. Drives the layout's aspect ratio — see `boundingBox` above. */
+  readonly containerWidth: number;
+  readonly containerHeight: number;
   /** A drill step, as opposed to a first paint or a wholesale expand/reset. */
   readonly isIncremental?: boolean;
 }
 
+
+
 export function buildLayoutOptions(inputs: GraphLayoutInputs): cytoscape.LayoutOptions {
-  const { canRender, visibleNodeCount, isIncremental = false } = inputs;
+  const { canRender, visibleNodeCount, containerWidth, containerHeight, isIncremental = false } = inputs;
   if (!canRender) {
     // fcose/cose-base's spring-embedder grid-repulsion pass indexes by
     // `container.width()/height()`, which are 0 with no real container
@@ -169,6 +208,7 @@ export function buildLayoutOptions(inputs: GraphLayoutInputs): cytoscape.LayoutO
     tile: false,
     packComponents: false,
     quality: isLargeVisibleGraph ? 'draft' : 'default',
+    boundingBox: layoutBoundingBox(visibleNodeCount, containerWidth, containerHeight),
   } as cytoscape.LayoutOptions;
 }
 
@@ -181,7 +221,12 @@ function runInitialLayout(
 ): void {
   cy.one('layoutstop', onStop);
   cy.layout(
-    buildLayoutOptions({ canRender, visibleNodeCount }),
+    buildLayoutOptions({
+      canRender,
+      visibleNodeCount,
+      containerWidth: cy.width(),
+      containerHeight: cy.height(),
+    }),
   ).run();
 }
 
@@ -265,7 +310,13 @@ function runDrillLayout(context: DrillContext, onStop?: () => void): void {
   });
   context.cy
     .layout(
-      buildLayoutOptions({ canRender: context.canRender, visibleNodeCount, isIncremental: true }),
+      buildLayoutOptions({
+        canRender: context.canRender,
+        visibleNodeCount,
+        containerWidth: context.cy.width(),
+        containerHeight: context.cy.height(),
+        isIncremental: true,
+      }),
     )
     .run();
 }
@@ -342,7 +393,11 @@ function initializeGraph(
 ): InitializedGraph {
   registerCytoscapeExtensions();
   const canRender = supportsCanvasRendering();
-  collapsedDirsBox.current = computeEnteringCollapsedDirectoryPaths(result.directories, result.files);
+  collapsedDirsBox.current = computeEnteringCollapsedDirectoryPaths(
+    result.directories,
+    result.files,
+    enteringViewBudget(container?.clientWidth ?? 0, container?.clientHeight ?? 0),
+  );
 
   const elements = buildLazyGraphElements(result, collapsedDirsBox.current);
   const cy = createCore(elements, container, canRender);
@@ -523,9 +578,16 @@ function settleAfterLayout(context: DrillContext, onSettled?: () => void): void 
     if (context.cy.destroyed()) {
       return;
     }
-    if (packTopLevelIfUnforced(context.cy)) {
-      fitToVisible(context.cy);
-    }
+    // These two are INDEPENDENT and were wrongly coupled. The packer arranges
+    // top-level nodes and correctly declines when edges already constrain
+    // them; the fit corrects the viewport and is needed either way. Writing
+    // `if (pack) fit` meant that every repository whose top-level directories
+    // import each other — the normal case — never fitted at all on any path
+    // except first paint. CacttusEdu, the only repo this was tested against,
+    // has zero top-level edges, so the packer always ran and the coupling
+    // never showed. Diagnosed on the shipped binary (docs/DECISIONS.md).
+    packTopLevelIfUnforced(context.cy);
+    fitToVisible(context.cy);
     onSettled?.();
   }, 0);
 }
@@ -540,7 +602,12 @@ function runWholesaleLayout(context: DrillContext): void {
   });
   context.cy
     .layout(
-      buildLayoutOptions({ canRender: context.canRender, visibleNodeCount }),
+      buildLayoutOptions({
+        canRender: context.canRender,
+        visibleNodeCount,
+        containerWidth: context.cy.width(),
+        containerHeight: context.cy.height(),
+      }),
     )
     .run();
 }
@@ -572,6 +639,7 @@ function resetToEnteringView(context: DrillContext): void {
   context.collapsedDirsBox.current = computeEnteringCollapsedDirectoryPaths(
     context.result.directories,
     context.result.files,
+    enteringViewBudget(context.cy.width(), context.cy.height()),
   );
   reconcileLazyElements(context.cy, buildLazyGraphElements(context.result, context.collapsedDirsBox.current));
   runWholesaleLayout(context);
@@ -594,7 +662,7 @@ function useFitOnReadyEffect(cyRef: CoreRef, isReady: boolean): void {
     // `layoutstop` are overwritten by the layout's own tail — the packed
     // arrangement was computed and applied, and the graph still rendered
     // fcose's. A React effect runs after the commit, when nothing else is
-    // still writing.
+    // still writing. Unconditional, like every other settle.
     packTopLevelIfUnforced(cyRef.current);
     fitToVisible(cyRef.current);
   }, [isReady, cyRef]);

@@ -2,7 +2,8 @@ import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { buildLazyGraphElements } from '../../../src/components/DependencyGraph/graph-model';
-import { createCore, buildLayoutOptions } from '../../../src/components/DependencyGraph/useCytoscape';
+import { createCore, buildLayoutOptions, fitToVisible } from '../../../src/components/DependencyGraph/useCytoscape';
+import { packTopLevelIfUnforced } from '../../../src/components/DependencyGraph/pack-layout';
 import { computeEnteringCollapsedDirectoryPaths } from '../../../src/components/DependencyGraph/collapse';
 import { generateSyntheticResult } from '../generate-synthetic-graph';
 
@@ -26,6 +27,18 @@ export interface GraphBenchResult {
   readonly firstPaintMs: number;
   readonly panP95Ms: number;
   readonly panFrameDeltasMs: readonly number[];
+  /**
+   * THE VIEWPORT INVARIANT: after a layout settles, is the content inside the
+   * viewport? Asserted here rather than in the unit suite because jsdom has no
+   * canvas — `supportsCanvasRendering()` is false there, the core runs
+   * headless, and `fitToVisible` bails on a 0x0 container. The whole fit
+   * surface is therefore unobservable in `bun run test`, which is why a fit
+   * that was conditional on the packer having run produced no failing test
+   * for a repository whose top-level directories import each other. This
+   * check is blind to which branch ran, which is the point.
+   */
+  readonly fitsViewport: boolean;
+  readonly settledZoom: number;
 }
 
 let isRegistered = false;
@@ -71,8 +84,13 @@ async function buildAndLayout(
 
   await new Promise<void>((resolve) => {
     cy.one('layoutstop', () => resolve());
-    cy.layout(buildLayoutOptions({ canRender: true, visibleNodeCount })).run();
+    cy.layout(buildLayoutOptions({ canRender: true, visibleNodeCount, containerWidth: cy.width(), containerHeight: cy.height() })).run();
   });
+
+  // The production settle, in production order and unconditionally — the same
+  // two calls `useCytoscape.ts` makes after every layout.
+  packTopLevelIfUnforced(cy);
+  fitToVisible(cy);
 
   return { cy, visibleNodeCount };
 }
@@ -103,11 +121,21 @@ async function runGraphBench(nodeCount: number): Promise<GraphBenchResult> {
   await waitForAnimationFrame(); // one more real frame: the layout's own paint
   const firstPaintMs = performance.now() - start;
 
+  // Measured BEFORE the scripted pan deliberately moves the viewport away.
+  const box = cy.elements(':visible').boundingBox();
+  const view = cy.extent();
+  const fitsViewport =
+    box.x1 >= view.x1 && box.x2 <= view.x2 && box.y1 >= view.y1 && box.y2 <= view.y2;
+  const settledZoom = cy.zoom();
+
   const panFrameDeltasMs = await measurePan(cy);
   const panP95Ms = percentile95(panFrameDeltasMs);
   cy.destroy();
 
-  return { nodeCount, visibleNodeCount, constructLayoutMs, firstPaintMs, panP95Ms, panFrameDeltasMs };
+  return {
+    nodeCount, visibleNodeCount, constructLayoutMs, firstPaintMs, panP95Ms, panFrameDeltasMs,
+    fitsViewport, settledZoom,
+  };
 }
 
 declare global {

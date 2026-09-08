@@ -1,6 +1,68 @@
 import { describe, expect, test } from 'vitest';
 import cytoscape from 'cytoscape';
-import { hasTopLevelEdges, packTopLevelIfUnforced, shelfPack, topLevelVisibleNodes } from './pack-layout';
+import {
+  GRAPH_MIN_READABLE_ZOOM,
+  hasTopLevelEdges,
+  layoutBoundingBox,
+  packTopLevelIfUnforced,
+  readableNodeBudget,
+  shelfPack,
+  topLevelVisibleNodes,
+} from './pack-layout';
+
+describe('layoutBoundingBox', () => {
+  test('matches the panel aspect, so a fit is limited equally by both axes', () => {
+    const box = layoutBoundingBox(24, 1521, 648);
+
+    expect(box.w / box.h).toBeCloseTo(1521 / 648, 5);
+  });
+
+  test('grows with the node count rather than staying a fixed frame', () => {
+    const small = layoutBoundingBox(10, 1600, 900);
+    const large = layoutBoundingBox(40, 1600, 900);
+
+    expect(large.w).toBeGreaterThan(small.w);
+  });
+
+  test('falls back to a sane aspect when the panel has not been measured yet', () => {
+    const box = layoutBoundingBox(10, 0, 0);
+
+    expect(Number.isFinite(box.w)).toBe(true);
+    expect(box.w).toBeGreaterThan(0);
+  });
+});
+
+describe('readableNodeBudget', () => {
+  /**
+   * The floor exists because the shipped binary was measured fitting at zoom
+   * 0.409, where a 13px directory label renders at 5px — drawn, unreadable.
+   */
+  test('a letterbox panel gets a smaller budget than the flat ceiling assumed', () => {
+    expect(readableNodeBudget(1521, 648)).toBeLessThan(60);
+  });
+
+  test('the budget it returns actually fits at or above the readable zoom', () => {
+    for (const [width, height] of [
+      [1521, 648],
+      [1920, 1080],
+      [1280, 500],
+    ] as const) {
+      const budget = readableNodeBudget(width, height);
+      const box = layoutBoundingBox(budget, width, height);
+      // What `fitToVisible` will land on: the limiting axis of the two.
+      const fittedZoom = Math.min(width / box.w, height / box.h);
+      expect(fittedZoom).toBeGreaterThanOrEqual(GRAPH_MIN_READABLE_ZOOM);
+    }
+  });
+
+  test('a taller panel affords more nodes than a letterbox of the same width', () => {
+    expect(readableNodeBudget(1521, 1200)).toBeGreaterThan(readableNodeBudget(1521, 648));
+  });
+
+  test('an unmeasured panel imposes no limit, leaving the ceiling in charge', () => {
+    expect(readableNodeBudget(0, 0)).toBe(Number.POSITIVE_INFINITY);
+  });
+});
 
 describe('shelfPack', () => {
   test('never overlaps two boxes, whatever their sizes', () => {
