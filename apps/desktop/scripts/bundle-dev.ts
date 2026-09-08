@@ -16,6 +16,9 @@
  * release artefact.
  */
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function git(...args: string[]): string {
   const result = spawnSync('git', args, { encoding: 'utf8' });
@@ -39,9 +42,20 @@ const bundles = process.argv.includes('--bundles')
   ? process.argv[process.argv.indexOf('--bundles') + 1]
   : 'nsis';
 
-const build = spawnSync(
-  'bun',
-  ['run', 'tauri', 'build', '--bundles', bundles ?? 'nsis', '--config', JSON.stringify({ version })],
-  { stdio: 'inherit', shell: true },
-);
-process.exit(build.status ?? 1);
+// `--config` is given a FILE, never an inline JSON string: through a Windows
+// shell the quotes are stripped and tauri receives `{version:0.1.4-dev.abc}`,
+// which is not JSON. A file has no quoting to lose.
+const configDir = mkdtempSync(join(tmpdir(), 'onboard-bundle-dev-'));
+const configPath = join(configDir, 'version.json');
+writeFileSync(configPath, JSON.stringify({ version }), 'utf8');
+
+try {
+  const build = spawnSync(
+    'bun',
+    ['run', 'tauri', 'build', '--bundles', bundles ?? 'nsis', '--config', configPath],
+    { stdio: 'inherit', shell: true },
+  );
+  process.exit(build.status ?? 1);
+} finally {
+  rmSync(configDir, { recursive: true, force: true });
+}
