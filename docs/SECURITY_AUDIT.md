@@ -425,6 +425,57 @@ with mode `0700`.
 
 ## 4. Dependencies
 
+### UPDATE 2026-09-08 — four HIGH advisories in `bun audit`, none of them shipped
+
+`bun audit` reports **4 high-severity advisories** and has done for at least
+two `main` runs. Criterion 26 turns on this document, so the question is not
+whether the advisories exist but whether any of them reaches a user. **None
+does**, and the evidence for that is two independent lines that agree.
+
+| advisory | package | installed | fixed in |
+|---|---|---|---|
+| GHSA-2v37-7h3g-55p8 — infinite loop when `size` is zero | nanoid | 3.3.16 | **3.3.18** |
+| GHSA-5p4m-2wfm-xmqj — quadratic CPU in `!!omap` | js-yaml | 4.3.0 | **4.3.1** |
+| GHSA-ggr8-5vv4-36mx — stack exhaustion on recursive graphs | deepmerge-ts | 7.1.5 | — |
+| GHSA-jmr9-qjv8-65gv — unvalidated symlink path traversal | extract-zip | 2.0.1 | — |
+
+**Line 1 — dependency path.** Every one terminates at a `dev` dependency of
+`@onboard/desktop`, traced with `bun why`:
+
+- `nanoid` <- `postcss` <- `vite` <- `vite-node` <- `vitest` (test runner)
+- `js-yaml` <- `mocha` <- `@wdio/mocha-framework` (e2e)
+- `deepmerge-ts` <- `@wdio/config` <- `@wdio/cli` (e2e)
+- `extract-zip` <- `@puppeteer/browsers` <- `@wdio/utils` (e2e driver download)
+
+**Line 2 — signature scan of the artefacts themselves**, which is the claim
+that actually matters, because "dev dependency" is a statement about intent and
+a bundler can still inline something. All nine shipped artefacts were scanned
+for library-specific byte signatures (`useandom-26T198340PX75px…` and
+`urlAlphabet` for nanoid; `YAMLException`; `deepmergeCustom`; `ZipFile`) — the
+four frontend chunks in `apps/desktop/dist/assets`, the four compiled engine
+sidecars, and `onboard.exe`. **Zero matches.**
+
+**A false positive worth recording, because it nearly became the conclusion.**
+A plain `grep nanoid` over the frontend bundle DOES match, twice, and was
+initially reported as "nanoid ships". It does not: both hits are **zod's
+string-format validator name** — `z.string().nanoid()` — the word appearing as
+a format identifier in zod's own code, with no nanoid library present. Grepping
+for a package NAME finds the name; only a signature finds the package.
+
+**Assessment.** No open CRITICAL or HIGH finding reaches a shipped artefact, so
+criterion 26 holds. The advisories are real and remain open in the dev
+toolchain, where the exposure is a developer running the test suite or the e2e
+driver download — not a user running Onboard.
+
+**Remedy, and it is cheap for the two that name a fix.** `nanoid` 3.3.18
+satisfies `postcss`'s `^3.3.16`, and `js-yaml` 4.3.1 satisfies `mocha`'s
+`^4.1.0` — both are lockfile-only bumps with no API change and no major move.
+`deepmerge-ts` and `extract-zip` name no fixed version in the advisory data as
+read here and need checking separately. Filed as its own change rather than
+folded into v0.1.5, which was already tagged when this was found.
+
+---
+
 Re-verified at HEAD `28b96f4`.
 
 - **`bun audit`** (bun 1.3.14, repo root): **No vulnerabilities found.** The `overrides` block in

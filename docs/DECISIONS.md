@@ -4707,3 +4707,31 @@ decided; it only records choices the spec left open.
   containing uncommitted changes would be a more convincing lie than saying
   nothing. `bun run bundle` is untouched and still produces the release
   artefact.
+- **Process (2026-09-08) — the dependency-audit gate was RED on `main` for at
+  least two runs and nobody read it. A red gate nothing surfaces is worth the
+  same as a green one.** `bun audit` had been failing on four high-severity
+  advisories since before this session's work began, and it was found only
+  because a release run was being inspected job by job for an unrelated reason.
+  The gate did its job perfectly: it detected the condition, failed the run, and
+  said exactly what was wrong. Every part of the mechanism worked except the
+  part where a human looks.
+  - **Why nobody looked.** Nothing carries a failing `main` run to a person.
+    Work happens on branches and is judged by the branch's own CI; `main`'s
+    status is a page you have to decide to visit. The two prior failures were
+    also *two* jobs — `dependency audit` and `commit messages` — so even the
+    aggregate "CI failed on main" signal had been true for long enough to stop
+    being informative, which is how a permanent red becomes wallpaper.
+  - **This is the same family as the rest of this document, one level up.** The
+    other instances were controls that never reached their effect; this is a
+    control that reached its effect perfectly and never reached a READER. The
+    failure is not in the check, the wiring, or the report — it is that the
+    report has no audience by default. `docs:check`, `commit:check` and the
+    viewport invariant all now fail loudly *in CI*; that is necessary and, as
+    this shows, not sufficient.
+  - **What would actually fix it** — none of it done here, because each is a
+    process decision rather than a code one: making a red `main` visible where
+    the work happens (a required status check, a notification, or a startup
+    line in the session), or treating "is `main` green?" as a step in the
+    release checklist rather than an assumption. The narrower lesson, and the
+    one that cost nothing to learn: **when cutting a release, read `main`'s last
+    CI run before tagging.** That would have surfaced this a day earlier.
