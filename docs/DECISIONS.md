@@ -3243,9 +3243,10 @@ decided; it only records choices the spec left open.
   up; whoever does must fix the key first.
 
 - **v0.1.1 — a named failure mode: A CONTROL THAT EXISTS, IS CORRECT, AND
-  NEVER REACHES THE THING IT GOVERNS.** THREE instances now, in three
-  unrelated subsystems, which is what makes it worth naming rather than filing
-  three times:
+  NEVER REACHES THE THING IT GOVERNS.** FOUR instances now, in four unrelated
+  subsystems — one of them in the tooling used to build this project rather
+  than in the project — which is what makes it worth naming rather than filing
+  four times:
   - `graphHasFail` was computed correctly and then dropped before it reached
     `process.exitCode`, so a failing gate reported success.
   - `CREATE_NO_WINDOW` was set correctly by `tauri-plugin-shell` on a command
@@ -3268,8 +3269,35 @@ decided; it only records choices the spec left open.
     two instances were "the control never reaches its effect", this is "the
     control is reachable only along the path the test happens to take", which
     no amount of reviewing the handler in isolation would reveal.
-  In all three, reviewing the control in isolation finds nothing wrong: the flag
-  IS set, the variable IS computed, the key IS bound. The defect is entirely in the wiring between
+  - **(2026-09-08, fourth instance — in the tooling, not the product.)** Build
+    and test commands were run as `<command> 2>&1 | tail -N`. A shell pipeline
+    reports the exit status of its LAST element, so the status belonged to
+    `tail`, which always succeeds. Twice this hid a real failure: a rebuild
+    that failed on a locked `onboard.exe` was reported as exit 0, and a
+    `bundle:dev` run whose `tauri --config` was rejected as invalid JSON was
+    also reported as exit 0. Both were caught only by reading the output, which
+    is exactly the manual step the exit code exists to make unnecessary.
+    **What distinguishes this one: the control was never wired wrong.** The
+    other three were mis-wired at the point of use — a value dropped before
+    it was read, a flag set on an object never spawned, a handler bound where
+    focus never lands. Here the command's exit status was computed correctly
+    and then DISCARDED BY THE SHELL ONE LAYER UP, by a construct added for
+    readability that has nothing to do with the command. A reviewer inspecting
+    either side — the build script, or the exit-code check — finds both
+    correct; the defect exists only in the composition. **A build command whose
+    exit code reports `tail`'s status is a gate that cannot fail**, which is
+    the precise family this project has spent its effort removing.
+    The fix is structural, not vigilance: capture output to a file and read it
+    afterwards, or `set -o pipefail`, never `| tail` on a command whose success
+    matters. Noted for CI as well: the Linux workflow steps run under `bash -e`
+    WITHOUT `pipefail` (only the `pwsh` steps name a shell), and three steps
+    use pipelines inside command substitutions. Not currently masking anything
+    — the assertions downstream still fail on the empty value — but it is the
+    same latent shape, and enabling `pipefail` there is a CI behaviour change
+    that deserves its own decision rather than being folded into this one.
+  In all four, reviewing the control in isolation finds nothing wrong: the flag
+  IS set, the variable IS computed, the key IS bound, the exit code IS
+  returned. The defect is entirely in the wiring between
   the control and its effect, which is exactly the part a reader's eye skips
   because the interesting logic is elsewhere. **The check is not "is this
   configured correctly" but "does this configuration reach the thing it
