@@ -16,7 +16,7 @@
  * release artefact.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,7 +34,12 @@ if (sha === '') {
 const isDirty = git('status', '--porcelain') !== '';
 // A dirty tree is not a commit. Saying `-dev.<sha>` when the build contains
 // uncommitted changes would be a more convincing lie than saying nothing.
-const version = `0.1.4-dev.${sha}${isDirty ? '.dirty' : ''}`;
+// Read from tauri.conf.json rather than hardcoding: a dev build claiming the
+// wrong base version would defeat the point of stamping it at all.
+const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8')) as {
+  version: string;
+};
+const version = `${config.version}-dev.${sha}${isDirty ? '.dirty' : ''}`;
 
 console.log(`bundle:dev — version ${version}${isDirty ? '  (WORKING TREE IS DIRTY)' : ''}`);
 
