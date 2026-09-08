@@ -1987,7 +1987,7 @@ decided; it only records choices the spec left open.
   different "AI is on" checks in the same crate — exactly the kind of
   asymmetry a bypass hides in).
 - **[OBSOLETE — the module this describes no longer exists; deleted in
-  `fa1fe5c` as an A4 / §3 non-goal 2 scope violation. Retained because a
+  `35b2d73` as an A4 / §3 non-goal 2 scope violation. Retained because a
   deleted entry teaches nothing.]** **Phase 12 step 3B —
   `openai-compatible`'s REST path is
   `{base_url}/chat/completions`, matching OpenAI/DeepSeek/Groq/OpenRouter/
@@ -2780,7 +2780,7 @@ decided; it only records choices the spec left open.
   Two changes, recorded together because the second is what makes the first
   load-bearing.
 
-  **The scope.** `commit:check` now examines every commit after `d67b30e` — the
+  **The scope.** `commit:check` now examines every commit after `a203731` — the
   commit that ADDED `scripts/commit-message-check.py` — with no exceptions list.
 
   The justification is not "some commits fail". It is that **a commit-message
@@ -2794,11 +2794,14 @@ decided; it only records choices the spec left open.
   Two facts show the boundary was not reverse-engineered from the current
   failure, which is the trap this kind of change usually falls into:
 
-  1. **It does not clear today's red.** `209c740` (a 103-character subject)
-     POSTDATES the boundary, is in scope, and still fails. A boundary chosen to
+  1. **It did not clear the red at the time.** A commit with a 103-character
+     subject POSTDATED the boundary, was in scope, and still failed. (It was
+     cited here by hash until 2026-09-08, when a history rewrite removed that
+     commit from this repository; the hash resolves in no surviving map, so it
+     is described rather than left dead.) A boundary chosen to
      make the job green would have been placed after it.
   2. **The other candidate boundary changes nothing.** The gate could have been
-     dated from where CI began running it (`32ad079`, two commits later)
+     dated from where CI began running it (`8c0b1b2`, two commits later)
      instead. The earlier is correct — the obligation begins when an author can
      run the check, not when someone else starts enforcing it — but either
      choice yields the same result today.
@@ -3406,7 +3409,7 @@ decided; it only records choices the spec left open.
   Investigating the dependency-graph layout defect above required real
   analysis of real repositories through the real app, and both the full
   monorepo and `packages/engine` alone crashed with the exact v0.1.0 symptom
-  the v0.1.1 arity fix (`2d4f6b3`) was supposed to have closed.
+  the v0.1.1 arity fix (`98a0ba9`) was supposed to have closed.
   - **Reproduced and dumped, not assumed.** A standalone script called
     `analyze()` directly against current engine source (no Tauri, no
     compiled sidecar), computing `symbol.id` exactly as documented
@@ -4233,3 +4236,69 @@ decided; it only records choices the spec left open.
     (including whether any changes `EntryPointValue`'s shape or evidence
     strings, which are part of the frozen contract) is a v0.1.5
     conversation with its own options, not a rendering-fix side effect.
+- **Tooling (2026-09-08) — `docs:check` had gone red on `main`, `commit:check`
+  had gone inert, and the repair script reported success while fixing neither.**
+  Found while running the gates for unrelated feature work. Recorded in full
+  because the failure is not the stale hashes; it is that three separate
+  safeguards each degraded quietly.
+  - **What broke it.** `git filter-repo` has now rewritten this repository
+    TWICE. The second run re-hashed all 62 commits from the Phase 0 scaffold
+    forward — established from `.git/filter-repo/commit-map`, whose NEW column
+    contains the current tip (`edc36a6`), so the rewrite necessarily postdates
+    the newest commit (2026-09-07 23:39). Its `ref-map` also carries branches
+    created on 2026-08-03, so it is not the 2026-07-28 run. Every SHA cited in
+    `docs/` dated from the era between the two rewrites and stopped resolving.
+  - **Why `rewrite-doc-shas.py` did not catch it.** The tool built for exactly
+    this expanded each short SHA by asking `../onboard-prerewrite-backup.git`
+    to resolve it, then looked the result up in the commit map. That backup
+    predates the FIRST rewrite, so it has never contained the hashes the second
+    rewrite invalidated. `resolve_in_backup` returned `None`, the replacement
+    function returned the token untouched, and the script printed success —
+    its only refusal condition was "zero references rewritten", and it was
+    rewriting other things. A repair tool whose failure mode is silence is not
+    a repair tool. It now expands short SHAs against the commit map's own keys
+    by prefix (the map always covers the era being repaired, with no external
+    repository involved), imports `docs-check.py`'s classifier so the repair
+    covers exactly what the gate examines, and EXITS NON-ZERO when a
+    gate-checked reference is still unresolvable.
+  - **The gate was green over six wrong citations.** `docs:check` only examines
+    a hash when a citing phrase appears within 220 characters. Six citations
+    used phrasings the list did not contain — a smoke run recorded as
+    "tag -> <sha>", a scope written as "from boundary <sha> forward", a fix
+    cited as "(<sha>, two commits later)" — so they were stale and unreported.
+    `tag ->`, `tag →`, `boundary` and `commits later` are now citing contexts.
+    This is the same defect as an inert exemption, one level up: the check
+    proving what it happens to look at rather than what matters.
+  - **`commit:check` was inert, and repairing it surfaced a real violation.**
+    `GATE_LANDED` was the full hash of the commit that added the script. After
+    the rewrite it resolved to nothing, and the script's own guard against a
+    non-resolving boundary (correctly refusing rather than silently widening
+    scope) meant criterion 28's CI job examined ZERO commits. Repointed to
+    `a203731`, it examines 62 — and reports `8d7df06` ("fix(graph,engine):
+    bound the sr-only table on both axes; …") with a 114-character subject
+    against a 100 maximum. That commit is contained in tag **v0.1.4**, so the
+    two ways out — amend the subject (another history rewrite, invalidating
+    the tag and every hash repaired here) or record a documented exception —
+    are both product decisions, not tooling ones. LEFT RED DELIBERATELY and
+    escalated rather than papered over; criterion 28 is not satisfied today.
+  - **Dead hashes were in code, not only prose.** Besides the eight prose
+    citations: `GATE_LANDED` in `commit-message-check.py`; three strings in
+    `criteria-map.py`, which GENERATES `docs/CRITERIA_MAP.md` (fixing only the
+    generated file would have been reverted by the next `criteria:map` run, and
+    did in fact break `criteria:check-drift` until the generator was fixed too);
+    a scope comment in `.github/workflows/ci.yml`; and an illustrative example
+    in `docs-check.py`'s own docstring.
+  - **One citation could not be repaired honestly.** A commit cited for having
+    a 103-character subject resolves in no surviving map, and no commit in the
+    current history has a subject of that length. Rather than guess a mapping
+    or leave a hash that looks live, the fact is now stated in prose without a
+    hash, in both `DECISIONS.md` and `commit-message-check.py`'s scope comment.
+  - **`docs/COMMIT_MAP.md` was itself stale and is now composed, not
+    regenerated.** Its right-hand column held post-first-rewrite hashes, which
+    the second rewrite killed — the translation table for the audit trail no
+    longer translated to anything that exists. Regenerating it from the current
+    map would have lost the original pre-2026-07-28 hashes entirely, since no
+    surviving map contains them. Each published row is instead carried forward
+    through the second map (62/62 compose, verified), and a second table lists
+    the between-rewrites hashes, which is the era the broken citations came
+    from.

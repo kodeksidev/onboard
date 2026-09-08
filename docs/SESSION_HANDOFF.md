@@ -108,7 +108,7 @@ Option (A) was not taken, so no risk acceptance was recorded and none is owed.
 
 - Branch: **`phase13/gate-evidence`**, PR **#1** open against `main`.
 - `main` = pre-rewrite Phase 13 code. All this week's work is on the branch.
-- **Check for unpushed commits** — at handoff time `bd82742` was local-only.
+- **Check for unpushed commits** — at handoff time `74e9c38` was local-only.
 - Remote: `https://github.com/uruqierisi/onboard.git`
 
 **History was rewritten** with `git filter-repo` on 2026-07-28 to remove

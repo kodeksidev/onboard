@@ -160,7 +160,7 @@ EVIDENCE: dict[int, Evidence] = {
         "is absent from a release bundle (MODE === 'e2e') and the native "
         "picker is unreachable from WebDriver. Half (b) has no run id by "
         "construction. RE-OBSERVED ON WINDOWS AGAINST THE SHIPPING BUILD "
-        "(2026-08-03, product owner, tag -> 3178bea, browser download with "
+        "(2026-08-03, product owner, tag -> 5c7cdd2, browser download with "
         "Mark-of-the-Web): folder picked, analysis completed, roadmap and graph "
         "rendered, node click opened the file, search jumped to the hit line, "
         "and the installer's own welcome page carried the Onboard mark rather "
@@ -221,7 +221,7 @@ EVIDENCE: dict[int, Evidence] = {
         "commit-message-check",
         "ci",
         "CI-backed FROM THE BOUNDARY FORWARD, not unqualified: the gate checks "
-        "every commit after d67b30e, where it landed, with no exceptions list. "
+        "every commit after a203731, where it landed, with no exceptions list. "
         "A commit-message linter cannot retroactively govern history that "
         "predates it. Pre-boundary subjects remain visible via "
         "`commit:check --all-history`, which is INFORMATIONAL and wired to "
@@ -289,7 +289,7 @@ EXECUTED: dict[int, str] = {
     # remaining non-conforming subjects predate the boundary and are out of
     # scope by principle, not by exception — `commit:check --all-history` still
     # reports them, informationally.
-    28: f"{CI_RUN}, from boundary d67b30e forward",
+    28: f"{CI_RUN}, from boundary a203731 forward",
 }
 
 

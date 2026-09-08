@@ -65,6 +65,17 @@ CITING_CONTEXT = (
     "landed in",
     "fixed in",
     "at `main`",
+    # Added 2026-09-08. The 2026-09-08 history rewrite left SIX stale citations
+    # that this check reported as fine, because none of the phrases above
+    # appeared near them: a smoke run recorded as "tag -> <sha>", a gate scope
+    # written as "from boundary <sha> forward", and a fix cited as "(<sha>, two
+    # commits later)". The gate was green while the audit trail it exists to
+    # protect was wrong — the same failure mode as an inert exemption, one level
+    # up. Only phrasings that actually occur in these documents are listed.
+    "tag ->",
+    "tag →",
+    "boundary",
+    "commits later",
 )
 
 # How far back to look for the words above. Citations wrap across lines in
@@ -105,7 +116,7 @@ def classify(text: str, position: int) -> tuple[bool, str]:
 
     Returns (should_check, matched_context). The window spans newlines because
     citations in these documents wrap — `DECISIONS.md`'s "deleted in\\n
-    `fa1fe5c`" puts the verb on the previous line.
+    `35b2d73`" puts the verb on the previous line.
     """
     window = text[max(0, position - CONTEXT_WINDOW) : position].lower()
     for phrase in DISQUALIFYING_CONTEXT:

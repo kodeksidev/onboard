@@ -64,16 +64,19 @@ MAX_SUBJECT_LENGTH = 100
 # CHOOSE IT IF HISTORY WERE ALREADY CLEAN? Yes. A linter's authority starts when
 # the linter exists, regardless of whether anything before it happens to pass.
 # Nothing here is derived from which commits currently fail — and the proof is
-# that this boundary does NOT clear today's red: `209c740` postdates it and is
-# still in scope, still failing. A boundary chosen to make the job green would
-# have been placed after that commit.
+# that this boundary was NOT clearing the red at the time it was chosen: a
+# commit with a 103-character subject postdated it and was still in scope,
+# still failing. (That commit was cited here by hash until 2026-09-08, when a
+# history rewrite removed it from this repository entirely; it is in no
+# surviving commit map, so the hash has been dropped rather than left dead.)
+# A boundary chosen to make the job green would have been placed after it.
 #
-# `d67b30e` is where `scripts/commit-message-check.py` was ADDED, not where CI
-# began running it (`32ad079`, two commits later). The earlier of the two is
+# `a203731` is where `scripts/commit-message-check.py` was ADDED, not where CI
+# began running it (`8c0b1b2`, two commits later). The earlier of the two is
 # correct: the obligation begins when an author can run the check, not when
 # someone else starts enforcing it. Choosing the later one would not change any
 # current result, which is a second sign the choice is not outcome-driven.
-GATE_LANDED = "d67b30e1fc7f1b30902e196574ce6e15ffac8c1c"
+GATE_LANDED = "a2037318cf9033065c29a12c8415c159b5da7ae9"
 
 
 def git(*args: str, repo: Path | None = None) -> str:
