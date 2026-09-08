@@ -597,3 +597,57 @@ instance's symptom. Verified with the same 100-sample poll that found it
 own settle-detection because of this exact oscillation and now passes
 cleanly. Full mechanism and the argument for `overflow-hidden` over
 `scrollbar-gutter: stable`: `docs/DECISIONS.md`.
+
+### KI-12 — UI tests time out under a CONCURRENT NATIVE BUILD; do not re-scope timeouts to fix it
+
+| | |
+|---|---|
+| **Severity** | LOW — environmental. Does not reproduce with the machine otherwise idle, and has never been observed in CI. |
+| **Criterion** | none directly; it makes `bun run test` (criterion 10's coverage gate and the whole `verify:js` chain) intermittently red while a native build runs alongside it |
+| **Blocks** | nothing |
+| **Family** | the CPU-contention timeout family already analysed in `src/test/timeouts.ts` — NOT a race, NOT an assertion failure |
+| **Disposition** | **OPEN, deliberately unfixed.** Recorded so the next person finds the existing analysis instead of repeating it, and so the obvious "fix" is refused on the record. |
+
+**What happens.** `bun run test` intermittently fails with
+`Error: Test timed out in 5000ms` — never an assertion. Observed 2026-09-08
+across two files in a single run (`ModuleMap > renders all 5 fixture module
+cards` and `OverviewPanel > renders the repo identity and detected type from
+the fixture`, 4 failing tests in that run). It is the FIRST test in a file that
+fails, which is where module-load cost lands: both files parse
+`sample-analysis.json` through zod at module scope.
+
+**Measured, both directions.**
+
+| condition | runs | failures |
+|---|---|---|
+| concurrent native build (`build:sidecar`, then `cargo` release compiling `src-tauri`) | 8 | 2 |
+| machine verified idle | 5 | 0 |
+
+The idle runs were gated on two conditions, not on assuming the build had
+finished: the build wrapper's exit marker, and a Windows process-table poll
+reporting zero `rustc|cargo|tauri|link|onboard` processes, both timestamped
+before the first run began. All five passed with 419/419.
+
+**Why it is not fixed by giving those files headroom.** `src/test/timeouts.ts`
+already contains this analysis in full, including the specific observation that
+"a real parallel `rustc` build ... is heavier than 12 busy-spin processes, and
+pushed two files past even the 15s headroom." Both reproductions here happened
+during exactly that. The same file states the rule for who gets
+`SLOW_MOUNT_TIMEOUT_MS`, and why:
+
+> Selecting by symptom finds the tests that already lost the race, not the ones
+> about to.
+
+Headroom is granted on a PRINCIPLE — a file that mounts CodeMirror, Cytoscape
+or axe-core is expensive whether or not one sampling caught it being expensive
+— and `ModuleMap.test.tsx` and `OverviewPanel.test.tsx` mount none of the
+three. `ModuleMap.test.tsx` measures ~335 ms in isolation. Adding them to the
+list because they lost one race under a load nothing in CI produces is the
+precise mistake that file was written to prevent, and it would spend the
+liveness backstop for every test those files contain to buy nothing.
+
+**So the disposition is: do not run the suite against a concurrent release
+build, and do not re-scope timeouts by symptom.** If this is ever seen with the
+machine idle, or in CI, that is a different and more serious finding — the
+numbers above are the baseline to compare against. The analysis to read first
+is `src/test/timeouts.ts`, not this entry.
