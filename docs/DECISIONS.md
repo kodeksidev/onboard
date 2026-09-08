@@ -3289,12 +3289,29 @@ decided; it only records choices the spec left open.
     the precise family this project has spent its effort removing.
     The fix is structural, not vigilance: capture output to a file and read it
     afterwards, or `set -o pipefail`, never `| tail` on a command whose success
-    matters. Noted for CI as well: the Linux workflow steps run under `bash -e`
-    WITHOUT `pipefail` (only the `pwsh` steps name a shell), and three steps
-    use pipelines inside command substitutions. Not currently masking anything
-    — the assertions downstream still fail on the empty value — but it is the
-    same latent shape, and enabling `pipefail` there is a CI behaviour change
-    that deserves its own decision rather than being folded into this one.
+    matters.
+
+    **CORRECTION (same day), and the distinction is the point:
+    `pipefail` is right where a pipeline's failure is genuinely a failure, and
+    WRONG where a component exits non-zero as part of normal operation.** The
+    first draft of this entry recommended `pipefail` generally and proposed it
+    for CI, on the reasoning that "a step that goes red under pipefail was
+    already broken and reporting success". That reasoning was tested against
+    `release.yml`'s three pipelines and does not hold for any of them:
+      * `DEB=$(find … | head -n 1)` (twice) fails 3 runs out of 3 under
+        `pipefail`, because `head` exits early and `find` takes SIGPIPE. The
+        failure is an artefact of `head`, not a fault in `find`.
+      * `actual=$(dpkg -s … | grep '^Maintainer:' | cut …)` fails whenever the
+        field is ABSENT — which is precisely the condition that check exists to
+        detect. `grep` returning 1 is the check working, not a masked failure.
+    Blanket `pipefail` would therefore have turned three correct steps red and
+    taught the next reader to distrust the gate. Applied without the
+    distinction above, the rule manufactures exactly the false reds it is meant
+    to prevent. The correct remedy for those three is to remove the pipelines —
+    `find -print -quit` needs no pipe at all, and the `grep` miss should be
+    handled explicitly rather than incidentally — which eliminates the masking
+    without inventing failures. Filed as its own change, after v0.1.5, because
+    it touches the release workflow.
   In all four, reviewing the control in isolation finds nothing wrong: the flag
   IS set, the variable IS computed, the key IS bound, the exit code IS
   returned. The defect is entirely in the wiring between
