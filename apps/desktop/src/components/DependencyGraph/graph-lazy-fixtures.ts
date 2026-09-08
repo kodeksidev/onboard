@@ -101,6 +101,92 @@ function buildSequentialEdges(files: AnalysisResult['files']): AnalysisResult['e
   return edges;
 }
 
+// #region repo-shaped fixture (entering-view legibility guard)
+//
+// `buildLargeSyntheticResult` above is a uniform tree — every directory the
+// same size at the same depth — which is exactly the shape a depth-based
+// collapse rule handles best, and so exactly the wrong thing to prove the
+// entering view on. `buildRepoShapedResult` instead takes a real repository's
+// measured shape: how many directories sit at each depth, and how many files
+// hang off directories at each depth. A lopsided tree (most files three and
+// four levels down, a handful at the root) is what real repos look like and
+// what the budget has to survive.
+
+export interface RepoShape {
+  /** `directoriesPerDepth[i]` = number of directories at depth i+1. */
+  readonly directoriesPerDepth: readonly number[];
+  /** `filesPerContainingDepth[i]` = number of files whose containing directory is at depth i (index 0 = repo root). */
+  readonly filesPerContainingDepth: readonly number[];
+}
+
+/** Directory paths for `shape`, shallowest first, children distributed round-robin over the previous depth's directories. */
+function buildShapedDirectoryPaths(shape: RepoShape): readonly string[] {
+  const all: string[] = [];
+  let previousDepth: string[] = [];
+  shape.directoriesPerDepth.forEach((count, depthIndex) => {
+    const atThisDepth: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const name = `d${String(depthIndex + 1)}_${String(index)}`;
+      const parent = previousDepth[index % Math.max(previousDepth.length, 1)];
+      atThisDepth.push(depthIndex === 0 || parent === undefined ? name : `${parent}/${name}`);
+    }
+    all.push(...atThisDepth);
+    previousDepth = atThisDepth;
+  });
+  return all;
+}
+
+/** File paths for `shape`, distributed round-robin over the directories at each containing depth. */
+function buildShapedFilePaths(shape: RepoShape, directoryPaths: readonly string[]): readonly string[] {
+  const paths: string[] = [];
+  shape.filesPerContainingDepth.forEach((count, depth) => {
+    const hosts = depth === 0 ? [''] : directoryPaths.filter((path) => path.split('/').length === depth);
+    for (let index = 0; index < count; index += 1) {
+      const host = hosts[index % Math.max(hosts.length, 1)];
+      const name = `f${String(depth)}_${String(index)}.ts`;
+      paths.push(host === undefined || host === '' ? name : `${host}/${name}`);
+    }
+  });
+  return paths;
+}
+
+function countDescendantFiles(directoryPath: string, filePaths: readonly string[]): number {
+  return filePaths.filter((filePath) => filePath.startsWith(`${directoryPath}/`)).length;
+}
+
+/**
+ * An `AnalysisResult` with a real repository's directory/file distribution.
+ * Every file gets the module of its depth-1 area, so collapsed-directory
+ * module coloring (`graph-model.ts`'s `computeDominantModuleByDirectory`) is
+ * exercised too.
+ */
+export function buildRepoShapedResult(shape: RepoShape): AnalysisResult {
+  const directoryPaths = buildShapedDirectoryPaths(shape);
+  const filePaths = buildShapedFilePaths(shape, directoryPaths);
+  const directories = directoryPaths.map((path) => ({
+    path,
+    parentPath: path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null,
+    fileCount: filePaths.filter((filePath) => filePath.slice(0, filePath.lastIndexOf('/')) === path).length,
+    descendantFileCount: countDescendantFiles(path, filePaths),
+    dominantClassification: 'service',
+  })) as AnalysisResult['directories'];
+  const files = filePaths.map((path, index) => ({
+    ...buildFile(path, index),
+    moduleId: path.includes('/') ? `mod:${path.slice(0, path.indexOf('/'))}` : null,
+  })) as AnalysisResult['files'];
+
+  return {
+    ...buildLargeSyntheticResult(1, 1),
+    files,
+    directories,
+    edges: buildSequentialEdges(files),
+    modules: [...new Set(files.map((file) => file.moduleId))]
+      .filter((moduleId): moduleId is string => moduleId !== null)
+      .map((moduleId) => ({ id: moduleId, name: moduleId, filePaths: [], keyFilePaths: [], summary: '' })),
+  } as unknown as AnalysisResult;
+}
+// #endregion
+
 export function buildLargeSyntheticResult(moduleCount: number, filesPerModule: number): AnalysisResult {
   const { directories, files } = buildDirectoriesAndFiles(moduleCount, filesPerModule);
   const edges = buildSequentialEdges(files);

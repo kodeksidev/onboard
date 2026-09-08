@@ -81,6 +81,10 @@ interface KeyDownContext extends FocusMoveContext {
   readonly selectPath: (path: string | null) => void;
   readonly requestSearchFocus: () => void;
   readonly onOpenFile: (path: string, line?: number) => void;
+  /** Whether anything is currently highlighted — decides what the first Escape does. */
+  readonly hasSelection: boolean;
+  /** Leaves the graph's keyboard context: Section 8's "Escape exits". */
+  readonly blurGraph: () => void;
 }
 
 /** Section 9 Phase 8's keyboard scheme, dispatched from `DependencyGraph`'s `onKeyDown`. */
@@ -94,8 +98,18 @@ function createKeyDownHandler(context: KeyDownContext): (event: ReactKeyboardEve
     if (command.type === 'search') {
       context.requestSearchFocus();
     } else if (command.type === 'exit') {
-      context.graph.clearHighlight();
-      context.selectPath(null);
+      // PROGRESSIVE ESCAPE (amendment, 2026-09-08 — docs/DECISIONS.md).
+      // Section 8 specifies Escape as "exit the graph". With a selection
+      // active that contract would strand the user in the dimmed state, since
+      // one key cannot mean two things at once. So the first Escape clears the
+      // selection and the second exits — Section 8's contract survives as the
+      // TERMINAL step rather than being contradicted.
+      if (context.hasSelection) {
+        context.graph.clearHighlight();
+        context.selectPath(null);
+      } else {
+        context.blurGraph();
+      }
     } else if (command.type === 'open') {
       if (context.focusedPath !== null) {
         context.onOpenFile(context.focusedPath);
@@ -121,11 +135,14 @@ function useGraphSideEffects(
     // in-graph keyboard move or click — cross-component focus changes are
     // not a second-class experience for screen reader users.
     registerGraphFocusHandler((path) => {
-      graph.focusNodeById(fileNodeId(path));
+      // `focusPath`, not `focusNodeById`: the target may be inside a
+      // collapsed directory and not on the canvas at all, so revealing it is
+      // part of focusing it (`useCytoscape.ts`'s `revealAndFocusPath`).
+      graph.focusPath(path);
       announce(describeFocusedFile(result, path));
     });
     return () => registerGraphFocusHandler(null);
-  }, [graph.focusNodeById, result, announce]);
+  }, [graph.focusPath, result, announce]);
 
   useEffect(() => {
     if (searchFocusToken > 0) {
@@ -164,7 +181,7 @@ function useRecenterOnReadyEffect(graph: UseCytoscapeApi): void {
     }
     const existingFocusedPath = useGraphStore.getState().focusedPath;
     if (existingFocusedPath !== null) {
-      graph.focusNodeById(fileNodeId(existingFocusedPath));
+      graph.focusPath(existingFocusedPath);
     }
     // Deliberately depends only on `graph.isReady`: this reads the current
     // store value once per "graph became ready" transition, not as a
@@ -181,6 +198,8 @@ interface DependencyGraphController {
   readonly announcement: string;
   readonly graph: UseCytoscapeApi;
   readonly handleKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+  readonly hasSelection: boolean;
+  readonly clearSelection: () => void;
 }
 
 function useCytoscapeReadyEffect(graph: UseCytoscapeApi, onCytoscapeReady: ((cy: cytoscape.Core) => void) | undefined): void {
@@ -193,6 +212,40 @@ function useCytoscapeReadyEffect(graph: UseCytoscapeApi, onCytoscapeReady: ((cy:
       onCytoscapeReady(core);
     }
   }, [graph.isReady, graph.getCore, onCytoscapeReady]);
+}
+
+/** The graph's slice of `graphStore`, read once so the controller does not open with seven selector lines. */
+function useGraphStoreSlice() {
+  return {
+    focusedPath: useGraphStore((state) => state.focusedPath),
+    selectedPath: useGraphStore((state) => state.selectedPath),
+    focusPath: useGraphStore((state) => state.focusPath),
+    selectPath: useGraphStore((state) => state.selectPath),
+    requestSearchFocus: useGraphStore((state) => state.requestSearchFocus),
+    searchFocusToken: useGraphStore((state) => state.searchFocusToken),
+    routePaths: useGraphStore((state) => state.routePaths),
+  };
+}
+
+interface AllGraphEffects {
+  readonly graph: UseCytoscapeApi;
+  readonly searchInputRef: RefObject<HTMLInputElement | null>;
+  readonly searchQuery: string;
+  readonly searchFocusToken: number;
+  readonly result: AnalysisResult;
+  readonly setAnnouncement: (text: string) => void;
+  readonly routePaths: readonly string[];
+  readonly onCytoscapeReady: ((cy: cytoscape.Core) => void) | undefined;
+}
+
+/** Every effect this panel owns, in one call, so the controller stays readable. */
+function useAllGraphEffects(deps: AllGraphEffects): void {
+  useGraphSideEffects(
+    deps.graph, deps.searchInputRef, deps.searchQuery, deps.searchFocusToken, deps.result, deps.setAnnouncement,
+  );
+  useRouteOverlayEffect(deps.graph, deps.routePaths);
+  useCytoscapeReadyEffect(deps.graph, deps.onCytoscapeReady);
+  useRecenterOnReadyEffect(deps.graph);
 }
 
 /** Everything `DependencyGraph`'s JSX needs, assembled in one hook so the component itself stays render-only. */
@@ -209,38 +262,62 @@ function useDependencyGraphController(
 
   const keyboardModel = useMemo(() => buildKeyboardModel(result), [result]);
 
-  const focusedPath = useGraphStore((state) => state.focusedPath);
-  const focusPath = useGraphStore((state) => state.focusPath);
-  const selectPath = useGraphStore((state) => state.selectPath);
-  const requestSearchFocus = useGraphStore((state) => state.requestSearchFocus);
-  const searchFocusToken = useGraphStore((state) => state.searchFocusToken);
-  const routePaths = useGraphStore((state) => state.routePaths);
+  const store = useGraphStoreSlice();
+  const { focusedPath, selectedPath, focusPath, selectPath, requestSearchFocus, searchFocusToken, routePaths } = store;
+
+  // Clearing changes EMPHASIS only and never moves the camera: a user who
+  // clicked one node to inspect it should not lose their zoom as a side effect
+  // of dismissing the highlight. Restoring the view is "Reset view", a
+  // separate and explicit action.
+  const clearSelection = (): void => {
+    graph.clearHighlight();
+    selectPath(null);
+  };
 
   const graph = useCytoscape({
     containerRef,
     result,
     isReducedMotion,
     onNodeTap: (id) => handleNodeTap({ result, selectPath, graph, announce: setAnnouncement }, id),
+    onBackgroundTap: () => clearSelection(),
   });
 
-  useGraphSideEffects(graph, searchInputRef, searchQuery, searchFocusToken, result, setAnnouncement);
-  useRouteOverlayEffect(graph, routePaths);
-  useCytoscapeReadyEffect(graph, onCytoscapeReady);
-  useRecenterOnReadyEffect(graph);
+  useAllGraphEffects({ graph, searchInputRef, searchQuery, searchFocusToken, result, setAnnouncement, routePaths, onCytoscapeReady });
 
-  const handleKeyDown = createKeyDownHandler({
-    result,
-    keyboardModel,
-    graph,
-    focusPath,
-    selectPath,
-    requestSearchFocus,
-    onOpenFile,
-    focusedPath,
-    announce: setAnnouncement,
-  });
+  return {
+    containerRef, searchInputRef, searchQuery, setSearchQuery, announcement, graph,
+    handleKeyDown: createKeyDownHandler({
+      result, keyboardModel, graph, focusPath, selectPath, requestSearchFocus, onOpenFile, focusedPath,
+      announce: setAnnouncement,
+      hasSelection: selectedPath !== null,
+      blurGraph: () => containerRef.current?.blur(),
+    }),
+    hasSelection: selectedPath !== null,
+    clearSelection,
+  };
+}
 
-  return { containerRef, searchInputRef, searchQuery, setSearchQuery, announcement, graph, handleKeyDown };
+interface ToolbarProps {
+  readonly searchInputRef: RefObject<HTMLInputElement | null>;
+  readonly searchQuery: string;
+  readonly setSearchQuery: (value: string) => void;
+  readonly graph: UseCytoscapeApi;
+  readonly clearSelection: () => void;
+  readonly hasSelection: boolean;
+}
+
+function renderToolbar(props: ToolbarProps): JSX.Element {
+  return (
+    <GraphToolbar
+      searchInputRef={props.searchInputRef}
+      searchQuery={props.searchQuery}
+      onSearchQueryChange={props.setSearchQuery}
+      onExpandAll={props.graph.expandAll}
+      onResetView={props.graph.collapseAll}
+      onClearSelection={props.clearSelection}
+      hasSelection={props.hasSelection}
+    />
+  );
 }
 
 /**
@@ -289,8 +366,10 @@ export function DependencyGraph({
   onOpenFile = NOOP_OPEN_FILE,
   onCytoscapeReady,
 }: DependencyGraphProps): JSX.Element {
-  const { containerRef, searchInputRef, searchQuery, setSearchQuery, announcement, graph, handleKeyDown } =
-    useDependencyGraphController(result, onOpenFile, onCytoscapeReady);
+  const {
+    containerRef, searchInputRef, searchQuery, setSearchQuery, announcement, graph, handleKeyDown,
+    hasSelection, clearSelection,
+  } = useDependencyGraphController(result, onOpenFile, onCytoscapeReady);
 
   if (result.files.length === 0) {
     return (
@@ -309,13 +388,7 @@ export function DependencyGraph({
       <h2 id="dependency-graph-title" className="sr-only">
         Dependency graph
       </h2>
-      <GraphToolbar
-        searchInputRef={searchInputRef}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        onExpandAll={graph.expandAll}
-        onCollapseAll={graph.collapseAll}
-      />
+      {renderToolbar({ searchInputRef, searchQuery, setSearchQuery, graph, clearSelection, hasSelection })}
       {/* min-w-0 (not min-h-0 — see this component's doc comment above): the Cytoscape mount div, load-bearing. */}
       <div
         ref={containerRef}

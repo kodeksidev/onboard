@@ -7,7 +7,7 @@ import fcose from 'cytoscape-fcose';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { buildLazyGraphElements } from '../../src/components/DependencyGraph/graph-model';
 import { buildLayoutOptions } from '../../src/components/DependencyGraph/useCytoscape';
-import { computeAutoCollapsedDirectoryPaths } from '../../src/components/DependencyGraph/collapse';
+import { computeEnteringCollapsedDirectoryPaths } from '../../src/components/DependencyGraph/collapse';
 import { generateSyntheticResult } from './generate-synthetic-graph';
 import type { GraphBenchResult } from './browser-harness/harness';
 
@@ -46,7 +46,7 @@ import type { GraphBenchResult } from './browser-harness/harness';
  *
  * **What the real numbers say (see docs/DECISIONS.md for the full story):**
  * `useCytoscape.ts` decides the collapsed-directory set BEFORE building any
- * Cytoscape element (`collapse.ts`'s `computeAutoCollapsedDirectoryPaths`)
+ * Cytoscape element (`collapse.ts`'s `computeEnteringCollapsedDirectoryPaths`)
  * and then materializes ONLY the elements that will actually be visible
  * (`graph-model.ts`'s `buildLazyGraphElements`) — a directory's descendants
  * are added to the live core on demand, when that directory is expanded
@@ -93,8 +93,7 @@ function registerHeadlessExtensionsOnce(): void {
 function runHeadlessConstructAndLayout(nodeCount: number): Promise<{ visibleNodeCount: number; elapsedMs: number }> {
   registerHeadlessExtensionsOnce();
   const result = generateSyntheticResult(nodeCount);
-  const totalElementCount = result.files.length + result.directories.length;
-  const collapsedDirs = computeAutoCollapsedDirectoryPaths(result.directories, totalElementCount);
+  const collapsedDirs = computeEnteringCollapsedDirectoryPaths(result.directories, result.files);
   const elements = buildLazyGraphElements(result, collapsedDirs);
   const start = performance.now();
   const cy = cytoscape({ headless: true, styleEnabled: true, elements: [...elements.nodes, ...elements.edges] });
@@ -105,7 +104,7 @@ function runHeadlessConstructAndLayout(nodeCount: number): Promise<{ visibleNode
       cy.destroy();
       resolve({ visibleNodeCount, elapsedMs });
     });
-    cy.layout(buildLayoutOptions(true, true, visibleNodeCount)).run();
+    cy.layout(buildLayoutOptions({ canRender: true, visibleNodeCount, containerWidth: cy.width(), containerHeight: cy.height() })).run();
   });
 }
 // #endregion
@@ -286,10 +285,12 @@ function printBrowserResult(result: GraphBenchResult): void {
   const panBudget = result.nodeCount >= 5000 ? GRAPH_PAN_P95_BUDGET_5K_MS : GRAPH_PAN_P95_BUDGET_1K_MS;
   const paintVerdict = result.firstPaintMs <= paintBudget ? 'PASS' : 'FAIL';
   const panVerdict = result.panP95Ms <= panBudget ? 'PASS' : 'FAIL';
+  const fitVerdict = result.fitsViewport ? 'PASS' : 'FAIL';
   console.log(
-    `nodes=${result.nodeCount} (visible after auto-collapse=${result.visibleNodeCount})  ` +
+    `nodes=${result.nodeCount} (visible in entering view=${result.visibleNodeCount})  ` +
       `constructLayout=${result.constructLayoutMs.toFixed(1)}ms  firstPaint=${result.firstPaintMs.toFixed(1)}ms [budget ${paintBudget}ms: ${paintVerdict}]  ` +
-      `panP95=${result.panP95Ms.toFixed(1)}ms [budget ${panBudget}ms: ${panVerdict}]`,
+      `panP95=${result.panP95Ms.toFixed(1)}ms [budget ${panBudget}ms: ${panVerdict}]  ` +
+      `contentFitsViewport=${String(result.fitsViewport)} @ zoom ${result.settledZoom.toFixed(2)} [${fitVerdict}]`,
   );
 }
 
@@ -331,7 +332,7 @@ async function printHeadlessBaseline(): Promise<void> {
   for (const nodeCount of BENCH_NODE_COUNTS) {
     const { visibleNodeCount, elapsedMs } = await runHeadlessConstructAndLayout(nodeCount);
     console.log(
-      `nodes=${nodeCount} (visible after auto-collapse=${visibleNodeCount})  construct+layout=${elapsedMs.toFixed(1)}ms`,
+      `nodes=${nodeCount} (visible in entering view=${visibleNodeCount})  construct+layout=${elapsedMs.toFixed(1)}ms`,
     );
   }
 }
@@ -347,6 +348,13 @@ async function main(): Promise<void> {
   } else {
     results.forEach(printBrowserResult);
     printBrowserCaveat();
+    // The viewport invariant is a GATE, not a report. A layout whose content
+    // ends up outside the viewport is the defect diagnosed on 2026-09-08, and
+    // it is invisible to `bun run test` (no canvas in jsdom).
+    if (results.some((entry) => !entry.fitsViewport)) {
+      console.error('\nFAILED — content did not fit the viewport after the layout settled.');
+      process.exitCode = 1;
+    }
   }
 
   await printHeadlessBaseline();

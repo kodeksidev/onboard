@@ -65,7 +65,7 @@ failure gets classified before any of them gets discussed.
 
 # Resolution — 2026-07-29
 
-Run `30431985271`, commit `47060c6`. Written after the results, and marked as
+Run `30431985271`, commit `28297b6`. Written after the results, and marked as
 such; everything above this line pre-dates them.
 
 ## The prediction was wrong

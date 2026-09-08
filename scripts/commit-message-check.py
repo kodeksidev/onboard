@@ -64,16 +64,53 @@ MAX_SUBJECT_LENGTH = 100
 # CHOOSE IT IF HISTORY WERE ALREADY CLEAN? Yes. A linter's authority starts when
 # the linter exists, regardless of whether anything before it happens to pass.
 # Nothing here is derived from which commits currently fail — and the proof is
-# that this boundary does NOT clear today's red: `209c740` postdates it and is
-# still in scope, still failing. A boundary chosen to make the job green would
-# have been placed after that commit.
+# that this boundary was NOT clearing the red at the time it was chosen: a
+# commit with a 103-character subject postdated it and was still in scope,
+# still failing. (That commit was cited here by hash until 2026-09-08, when a
+# history rewrite removed it from this repository entirely; it is in no
+# surviving commit map, so the hash has been dropped rather than left dead.)
+# A boundary chosen to make the job green would have been placed after it.
 #
-# `d67b30e` is where `scripts/commit-message-check.py` was ADDED, not where CI
-# began running it (`32ad079`, two commits later). The earlier of the two is
+# `a203731` is where `scripts/commit-message-check.py` was ADDED, not where CI
+# began running it (`8c0b1b2`, two commits later). The earlier of the two is
 # correct: the obligation begins when an author can run the check, not when
 # someone else starts enforcing it. Choosing the later one would not change any
 # current result, which is a second sign the choice is not outcome-driven.
-GATE_LANDED = "d67b30e1fc7f1b30902e196574ce6e15ffac8c1c"
+GATE_LANDED = "a2037318cf9033065c29a12c8415c159b5da7ae9"
+
+# ---------------------------------------------------------------------------
+# Exemptions: by HASH, never by rule
+# ---------------------------------------------------------------------------
+#
+# This file used to say "with NO exceptions list", on the grounds that an
+# allowlist lets a violation be argued away one entry at a time. That reasoning
+# still holds for RULES, and boundary-forward enforcement is unchanged. It does
+# not survive contact with one specific case: a commit that is already inside a
+# published tag. Amending `8d7df06` means a third `git filter-repo` run, which
+# invalidates v0.1.4's tag, every SHA repaired on 2026-09-08, and
+# `docs/COMMIT_MAP.md` — trading a working audit trail for a formatting fix
+# with no user impact. That is the wrong side of the trade, so the commit is
+# exempted by hash, with the reason recorded, and criterion 28 goes green.
+#
+# Three guards keep this from becoming the allowlist the original note feared;
+# every one of them FAILS THE GATE rather than being ignored:
+#
+#   1. An exempted hash that no longer resolves is an error, not a skip. This
+#      is the specific defect the 2026-09-08 rewrite left everywhere else in
+#      this repository: a stale reference that degrades silently. An exemption
+#      carried forward past the commit it excuses would be exactly that.
+#   2. An exempted hash outside the enforced range excuses nothing.
+#   3. An exempted commit whose subject now CONFORMS excuses nothing either —
+#      the same inert-exemption check `docs-check.py` applies to its own
+#      context phrases.
+EXEMPT_COMMITS: dict[str, str] = {
+    "8d7df063436c85e69e52bf923e1f8138b14aa806": (
+        "114-character subject (max 100). Contained in tag v0.1.4, so amending it "
+        "would require rewriting published history and invalidating every SHA "
+        "reference repaired on 2026-09-08. Formatting only, no user impact. "
+        "See docs/DECISIONS.md."
+    ),
+}
 
 
 def git(*args: str, repo: Path | None = None) -> str:
@@ -90,34 +127,36 @@ def default_branch() -> str:
     return ""
 
 
-def parse_log(raw: str) -> list[tuple[str, str]]:
-    entries: list[tuple[str, str]] = []
+def parse_log(raw: str) -> list[tuple[str, str, str]]:
+    """(full sha, short sha, subject) — the full sha so an exemption can name a
+    commit unambiguously rather than by a prefix that could later collide."""
+    entries: list[tuple[str, str, str]] = []
     for line in raw.splitlines():
-        if "\x1f" in line:
-            sha, subject = line.split("\x1f", 1)
-            entries.append((sha, subject))
+        parts = line.split("\x1f")
+        if len(parts) == 3:
+            entries.append((parts[0], parts[1], parts[2]))
     return entries
 
 
-def subjects(boundary: str | None = GATE_LANDED, repo: Path | None = None) -> list[tuple[str, str]]:
-    """(short sha, subject) for every commit in scope.
+def subjects(boundary: str | None = GATE_LANDED, repo: Path | None = None) -> list[tuple[str, str, str]]:
+    """(full sha, short sha, subject) for every commit in scope.
 
-    Scope is `boundary..HEAD` — every commit after the gate landed, with NO
-    exceptions list. An allowlist would let a violation be argued away one
-    entry at a time; there is nothing to argue with here. A future
-    non-conforming commit turns this red and keeps it red.
+    Scope is `boundary..HEAD` — every commit after the gate landed. The only
+    departures are the individually-named, individually-guarded hashes in
+    `EXEMPT_COMMITS`; a future non-conforming commit turns this red and keeps
+    it red.
 
     `boundary=None` scans all history — the informational mode, not wired to
     CI. See `--all-history`.
     """
     if boundary is None:
-        return parse_log(git("log", "--no-merges", "--format=%h%x1f%s", repo=repo))
+        return parse_log(git("log", "--no-merges", "--format=%H%x1f%h%x1f%s", repo=repo))
     if not git("rev-parse", "--verify", "--quiet", f"{boundary}^{{commit}}", repo=repo):
         # A boundary that does not resolve would silently widen or empty the
         # scope depending on how git failed. Refuse instead.
         return []
     return parse_log(
-        git("log", "--no-merges", "--format=%h%x1f%s", f"{boundary}..HEAD", repo=repo)
+        git("log", "--no-merges", "--format=%H%x1f%h%x1f%s", f"{boundary}..HEAD", repo=repo)
     )
 
 
@@ -129,6 +168,32 @@ def violation(subject: str) -> str | None:
     if len(subject) > MAX_SUBJECT_LENGTH:
         return f"subject is {len(subject)} characters (max {MAX_SUBJECT_LENGTH})"
     return None
+
+
+def exemption_failures(
+    entries: list[tuple[str, str, str]],
+    exemptions: dict[str, str] | None = None,
+) -> list[str]:
+    """Why each exemption is invalid, if it is. Empty means all are earning their place."""
+    in_scope = {full: subject for full, _short, subject in entries}
+    problems: list[str] = []
+    for sha, reason in (EXEMPT_COMMITS if exemptions is None else exemptions).items():
+        if not reason.strip():
+            problems.append(f"{sha[:7]}: exempted with no recorded reason")
+            continue
+        if not git("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"):
+            problems.append(
+                f"{sha[:7]}: does not resolve to a commit. History was rewritten and this "
+                "exemption was carried forward stale — re-point it at the surviving commit "
+                "(docs/COMMIT_MAP.md) or delete it. It is excusing nothing right now."
+            )
+            continue
+        if sha not in in_scope:
+            problems.append(f"{sha[:7]}: resolves, but is outside the enforced range — it excuses nothing")
+            continue
+        if violation(in_scope[sha]) is None:
+            problems.append(f"{sha[:7]}: subject now conforms — the exemption is inert and should be deleted")
+    return problems
 
 
 def self_test() -> str | None:
@@ -154,7 +219,37 @@ def self_test() -> str | None:
 
     if violation("Merge branch 'main' into topic") is not None:
         return "rejected a git-authored merge subject"
-    return scope_self_test()
+    return exemption_self_test() or scope_self_test()
+
+
+def exemption_self_test() -> str | None:
+    """Prove each exemption guard actually fires.
+
+    An exemption that is never validated is the failure mode this whole file
+    was just repaired for: something green that has quietly stopped meaning
+    anything. In particular, guard 1 is what makes a future history rewrite
+    BREAK this gate instead of silently carrying a dead hash forward.
+    """
+    entries = subjects()
+    if not entries:
+        return "exemption self-test found no commits in scope"
+    conforming = next((full for full, _short, subject in entries if violation(subject) is None), None)
+
+    cases = (
+        ("0" * 40, "does not resolve", "a non-existent hash was not rejected"),
+        (GATE_LANDED, "outside the enforced range", "an out-of-scope hash was not rejected"),
+        (conforming, "inert", "an exemption for a conforming subject was not rejected"),
+    )
+    for sha, expected, message in cases:
+        if sha is None:
+            continue
+        problems = exemption_failures(entries, {sha: "self-test"})
+        if not any(expected in problem for problem in problems):
+            return message
+
+    if exemption_failures(entries, {"0" * 40: "   "}) == []:
+        return "an exemption with a blank reason was accepted"
+    return None
 
 
 def scope_self_test() -> str | None:
@@ -193,13 +288,13 @@ def scope_self_test() -> str | None:
         in_scope = subjects(boundary=boundary, repo=repo)
         if not in_scope:
             return "scope test found no commits after the boundary — the range is broken"
-        subjects_after = [s for _, s in in_scope]
+        subjects_after = [s for _full, _short, s in in_scope]
         if not any(violation(s) for s in subjects_after):
             return "a non-conforming subject AFTER the boundary was not caught"
         if any("before the gate" in s for s in subjects_after):
             return "a pre-boundary commit was wrongly included in scope"
 
-        everything = [s for _, s in subjects(boundary=None, repo=repo)]
+        everything = [s for _full, _short, s in subjects(boundary=None, repo=repo)]
         if not any("before the gate" in s for s in everything):
             return "--all-history did not reach pre-boundary commits"
     return None
@@ -221,11 +316,15 @@ def main() -> int:
         print("REFUSING: no commits examined — the scan is broken", file=sys.stderr)
         return 1
 
-    bad = [(sha, subject, reason) for sha, subject in entries if (reason := violation(subject))]
+    bad = [
+        (full, short, subject, reason)
+        for full, short, subject in entries
+        if (reason := violation(subject))
+    ]
 
     if all_history:
         print(f"commit:check --all-history — {len(entries)} subject(s) examined (INFORMATIONAL)")
-        for sha, subject, reason in bad:
+        for _full, sha, subject, reason in bad:
             print(f"  {sha} {subject[:70]}\n         {reason}")
         print(
             f"\n{len(bad)} non-conforming subject(s) across all history. This mode is "
@@ -239,13 +338,27 @@ def main() -> int:
         f"(every commit after {GATE_LANDED[:7]}, where this gate landed)"
     )
 
-    if bad:
+    invalid = exemption_failures(entries)
+    if invalid:
+        print("\nFAILED — exemptions that are not valid:\n  " + "\n  ".join(invalid), file=sys.stderr)
+        return 1
+
+    # Exemptions are PRINTED, never silent: a gate that goes green by ignoring
+    # something should say what it ignored, every run.
+    for full, sha, subject, reason in bad:
+        if full in EXEMPT_COMMITS:
+            print(f"  EXEMPT {sha} {subject[:60]}")
+            print(f"         {reason}")
+            print(f"         why: {EXEMPT_COMMITS[full]}")
+
+    enforced = [item for item in bad if item[0] not in EXEMPT_COMMITS]
+    if enforced:
         print("\nFAILED — non-conforming commit messages:", file=sys.stderr)
-        for sha, subject, reason in bad:
+        for _full, sha, subject, reason in enforced:
             print(f"  {sha} {subject[:70]}\n         {reason}", file=sys.stderr)
         return 1
 
-    print("every commit follows `<type>: <description>`")
+    print("every commit follows `<type>: <description>`, or is exempted by hash above")
     return 0
 
 

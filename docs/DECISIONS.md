@@ -1987,7 +1987,7 @@ decided; it only records choices the spec left open.
   different "AI is on" checks in the same crate — exactly the kind of
   asymmetry a bypass hides in).
 - **[OBSOLETE — the module this describes no longer exists; deleted in
-  `fa1fe5c` as an A4 / §3 non-goal 2 scope violation. Retained because a
+  `35b2d73` as an A4 / §3 non-goal 2 scope violation. Retained because a
   deleted entry teaches nothing.]** **Phase 12 step 3B —
   `openai-compatible`'s REST path is
   `{base_url}/chat/completions`, matching OpenAI/DeepSeek/Groq/OpenRouter/
@@ -2780,7 +2780,7 @@ decided; it only records choices the spec left open.
   Two changes, recorded together because the second is what makes the first
   load-bearing.
 
-  **The scope.** `commit:check` now examines every commit after `d67b30e` — the
+  **The scope.** `commit:check` now examines every commit after `a203731` — the
   commit that ADDED `scripts/commit-message-check.py` — with no exceptions list.
 
   The justification is not "some commits fail". It is that **a commit-message
@@ -2794,11 +2794,14 @@ decided; it only records choices the spec left open.
   Two facts show the boundary was not reverse-engineered from the current
   failure, which is the trap this kind of change usually falls into:
 
-  1. **It does not clear today's red.** `209c740` (a 103-character subject)
-     POSTDATES the boundary, is in scope, and still fails. A boundary chosen to
+  1. **It did not clear the red at the time.** A commit with a 103-character
+     subject POSTDATED the boundary, was in scope, and still failed. (It was
+     cited here by hash until 2026-09-08, when a history rewrite removed that
+     commit from this repository; the hash resolves in no surviving map, so it
+     is described rather than left dead.) A boundary chosen to
      make the job green would have been placed after it.
   2. **The other candidate boundary changes nothing.** The gate could have been
-     dated from where CI began running it (`32ad079`, two commits later)
+     dated from where CI began running it (`8c0b1b2`, two commits later)
      instead. The earlier is correct — the obligation begins when an author can
      run the check, not when someone else starts enforcing it — but either
      choice yields the same result today.
@@ -3240,19 +3243,83 @@ decided; it only records choices the spec left open.
   up; whoever does must fix the key first.
 
 - **v0.1.1 — a named failure mode: A CONTROL THAT EXISTS, IS CORRECT, AND
-  NEVER REACHES THE THING IT GOVERNS.** Two instances now, in unrelated
-  subsystems, which is what makes it worth naming rather than filing twice:
+  NEVER REACHES THE THING IT GOVERNS.** FOUR instances now, in four unrelated
+  subsystems — one of them in the tooling used to build this project rather
+  than in the project — which is what makes it worth naming rather than filing
+  four times:
   - `graphHasFail` was computed correctly and then dropped before it reached
     `process.exitCode`, so a failing gate reported success.
   - `CREATE_NO_WINDOW` was set correctly by `tauri-plugin-shell` on a command
     object that is never spawned — `lib.rs` takes only `.get_program()` from
     it — so the console it was meant to suppress appeared anyway.
-  In both, reviewing the control in isolation finds nothing wrong: the flag IS
-  set, the variable IS computed. The defect is entirely in the wiring between
+  - **(2026-09-08, third instance.)** The dependency graph's `Escape` handler
+    was written, correct, and unreachable. It hangs off the container div's
+    `onKeyDown`; Cytoscape's canvas consumes the mousedown, so focus never
+    moved to the container — measured on the shipped binary as
+    `activeElement: BODY`, `containerHasFocus: false`. A user who clicked a
+    node and then pressed Escape got nothing, and since background tap had
+    never been wired either, the only exit was to leave the panel and come
+    back.
+    **What distinguishes this one, and why it is the most instructive: a
+    keyboard-only test PASSES.** Arriving by Tab is the single path where the
+    container does hold focus, so the automated keyboard coverage and the
+    criterion-20 traversal both exercised the working path and reported green.
+    The test was correct and the affordance was correct — for different users.
+    The wiring between them existed for one and not the other. Where the first
+    two instances were "the control never reaches its effect", this is "the
+    control is reachable only along the path the test happens to take", which
+    no amount of reviewing the handler in isolation would reveal.
+  - **(2026-09-08, fourth instance — in the tooling, not the product.)** Build
+    and test commands were run as `<command> 2>&1 | tail -N`. A shell pipeline
+    reports the exit status of its LAST element, so the status belonged to
+    `tail`, which always succeeds. Twice this hid a real failure: a rebuild
+    that failed on a locked `onboard.exe` was reported as exit 0, and a
+    `bundle:dev` run whose `tauri --config` was rejected as invalid JSON was
+    also reported as exit 0. Both were caught only by reading the output, which
+    is exactly the manual step the exit code exists to make unnecessary.
+    **What distinguishes this one: the control was never wired wrong.** The
+    other three were mis-wired at the point of use — a value dropped before
+    it was read, a flag set on an object never spawned, a handler bound where
+    focus never lands. Here the command's exit status was computed correctly
+    and then DISCARDED BY THE SHELL ONE LAYER UP, by a construct added for
+    readability that has nothing to do with the command. A reviewer inspecting
+    either side — the build script, or the exit-code check — finds both
+    correct; the defect exists only in the composition. **A build command whose
+    exit code reports `tail`'s status is a gate that cannot fail**, which is
+    the precise family this project has spent its effort removing.
+    The fix is structural, not vigilance: capture output to a file and read it
+    afterwards, or `set -o pipefail`, never `| tail` on a command whose success
+    matters.
+
+    **CORRECTION (same day), and the distinction is the point:
+    `pipefail` is right where a pipeline's failure is genuinely a failure, and
+    WRONG where a component exits non-zero as part of normal operation.** The
+    first draft of this entry recommended `pipefail` generally and proposed it
+    for CI, on the reasoning that "a step that goes red under pipefail was
+    already broken and reporting success". That reasoning was tested against
+    `release.yml`'s three pipelines and does not hold for any of them:
+      * `DEB=$(find … | head -n 1)` (twice) fails 3 runs out of 3 under
+        `pipefail`, because `head` exits early and `find` takes SIGPIPE. The
+        failure is an artefact of `head`, not a fault in `find`.
+      * `actual=$(dpkg -s … | grep '^Maintainer:' | cut …)` fails whenever the
+        field is ABSENT — which is precisely the condition that check exists to
+        detect. `grep` returning 1 is the check working, not a masked failure.
+    Blanket `pipefail` would therefore have turned three correct steps red and
+    taught the next reader to distrust the gate. Applied without the
+    distinction above, the rule manufactures exactly the false reds it is meant
+    to prevent. The correct remedy for those three is to remove the pipelines —
+    `find -print -quit` needs no pipe at all, and the `grep` miss should be
+    handled explicitly rather than incidentally — which eliminates the masking
+    without inventing failures. Filed as its own change, after v0.1.5, because
+    it touches the release workflow.
+  In all four, reviewing the control in isolation finds nothing wrong: the flag
+  IS set, the variable IS computed, the key IS bound, the exit code IS
+  returned. The defect is entirely in the wiring between
   the control and its effect, which is exactly the part a reader's eye skips
   because the interesting logic is elsewhere. **The check is not "is this
   configured correctly" but "does this configuration reach the thing it
-  governs" — trace it forward to the effect, or assert the effect.** Where the
+  governs, ALONG EVERY PATH A USER CAN ARRIVE BY" — trace it forward to the
+  effect, or assert the effect.** Where the
   effect is observable only by a human (a window on screen), that assertion
   belongs in `docs/SMOKE_CHECKLIST.md`, not in a unit test that can only
   re-confirm the control was set.
@@ -3406,7 +3473,7 @@ decided; it only records choices the spec left open.
   Investigating the dependency-graph layout defect above required real
   analysis of real repositories through the real app, and both the full
   monorepo and `packages/engine` alone crashed with the exact v0.1.0 symptom
-  the v0.1.1 arity fix (`2d4f6b3`) was supposed to have closed.
+  the v0.1.1 arity fix (`98a0ba9`) was supposed to have closed.
   - **Reproduced and dumped, not assumed.** A standalone script called
     `analyze()` directly against current engine source (no Tauri, no
     compiled sidecar), computing `symbol.id` exactly as documented
@@ -4233,3 +4300,410 @@ decided; it only records choices the spec left open.
     (including whether any changes `EntryPointValue`'s shape or evidence
     strings, which are part of the frozen contract) is a v0.1.5
     conversation with its own options, not a rendering-fix side effect.
+- **Tooling (2026-09-08) — `docs:check` had gone red on `main`, `commit:check`
+  had gone inert, and the repair script reported success while fixing neither.**
+  Found while running the gates for unrelated feature work. Recorded in full
+  because the failure is not the stale hashes; it is that three separate
+  safeguards each degraded quietly.
+  - **What broke it.** `git filter-repo` has now rewritten this repository
+    TWICE. The second run re-hashed all 62 commits from the Phase 0 scaffold
+    forward — established from `.git/filter-repo/commit-map`, whose NEW column
+    contains the current tip (`edc36a6`), so the rewrite necessarily postdates
+    the newest commit (2026-09-07 23:39). Its `ref-map` also carries branches
+    created on 2026-08-03, so it is not the 2026-07-28 run. Every SHA cited in
+    `docs/` dated from the era between the two rewrites and stopped resolving.
+  - **Why `rewrite-doc-shas.py` did not catch it.** The tool built for exactly
+    this expanded each short SHA by asking `../onboard-prerewrite-backup.git`
+    to resolve it, then looked the result up in the commit map. That backup
+    predates the FIRST rewrite, so it has never contained the hashes the second
+    rewrite invalidated. `resolve_in_backup` returned `None`, the replacement
+    function returned the token untouched, and the script printed success —
+    its only refusal condition was "zero references rewritten", and it was
+    rewriting other things. A repair tool whose failure mode is silence is not
+    a repair tool. It now expands short SHAs against the commit map's own keys
+    by prefix (the map always covers the era being repaired, with no external
+    repository involved), imports `docs-check.py`'s classifier so the repair
+    covers exactly what the gate examines, and EXITS NON-ZERO when a
+    gate-checked reference is still unresolvable.
+  - **The gate was green over six wrong citations.** `docs:check` only examines
+    a hash when a citing phrase appears within 220 characters. Six citations
+    used phrasings the list did not contain — a smoke run recorded as
+    "tag -> <sha>", a scope written as "from boundary <sha> forward", a fix
+    cited as "(<sha>, two commits later)" — so they were stale and unreported.
+    `tag ->`, `tag →`, `boundary` and `commits later` are now citing contexts.
+    This is the same defect as an inert exemption, one level up: the check
+    proving what it happens to look at rather than what matters.
+  - **`commit:check` was inert, and repairing it surfaced a real violation.**
+    `GATE_LANDED` was the full hash of the commit that added the script. After
+    the rewrite it resolved to nothing, and the script's own guard against a
+    non-resolving boundary (correctly refusing rather than silently widening
+    scope) meant criterion 28's CI job examined ZERO commits. Repointed to
+    `a203731`, it examines 62 — and reports `8d7df06` ("fix(graph,engine):
+    bound the sr-only table on both axes; …") with a 114-character subject
+    against a 100 maximum. That commit is contained in tag **v0.1.4**, so the
+    two ways out — amend the subject (another history rewrite, invalidating
+    the tag and every hash repaired here) or record a documented exception —
+    are both product decisions, not tooling ones. LEFT RED DELIBERATELY and
+    escalated rather than papered over; criterion 28 is not satisfied today.
+  - **Dead hashes were in code, not only prose.** Besides the eight prose
+    citations: `GATE_LANDED` in `commit-message-check.py`; three strings in
+    `criteria-map.py`, which GENERATES `docs/CRITERIA_MAP.md` (fixing only the
+    generated file would have been reverted by the next `criteria:map` run, and
+    did in fact break `criteria:check-drift` until the generator was fixed too);
+    a scope comment in `.github/workflows/ci.yml`; and an illustrative example
+    in `docs-check.py`'s own docstring.
+  - **One citation could not be repaired honestly.** A commit cited for having
+    a 103-character subject resolves in no surviving map, and no commit in the
+    current history has a subject of that length. Rather than guess a mapping
+    or leave a hash that looks live, the fact is now stated in prose without a
+    hash, in both `DECISIONS.md` and `commit-message-check.py`'s scope comment.
+  - **`docs/COMMIT_MAP.md` was itself stale and is now composed, not
+    regenerated.** Its right-hand column held post-first-rewrite hashes, which
+    the second rewrite killed — the translation table for the audit trail no
+    longer translated to anything that exists. Regenerating it from the current
+    map would have lost the original pre-2026-07-28 hashes entirely, since no
+    surviving map contains them. Each published row is instead carried forward
+    through the second map (62/62 compose, verified), and a second table lists
+    the between-rewrites hashes, which is the era the broken citations came
+    from.
+- **Criterion 28 (2026-09-08) — `8d7df06` is exempted from `commit:check` by
+  hash, and the criterion goes green with the exemption named in
+  `docs/CRITERIA_MAP.md`.** Repairing the inert gate (see the tooling entry
+  above) surfaced one real violation: a 114-character subject against a
+  100-character maximum, in a commit contained in tag **v0.1.4**.
+  - **Why exempt rather than amend.** Amending means a third `git filter-repo`
+    run. That invalidates v0.1.4's tag, every SHA reference repaired earlier
+    the same day, and `docs/COMMIT_MAP.md` — trading a working audit trail for
+    a formatting fix with no user impact. The violation is real but cosmetic;
+    the cost of "fixing" it is not.
+  - **It is a hash, not a rule.** Boundary-forward enforcement is unchanged and
+    no rule was relaxed: `MAX_SUBJECT_LENGTH` still applies to every commit in
+    scope. `EXEMPT_COMMITS` names one commit, with its reason stored beside it,
+    and `commit:check` PRINTS the exemption and its justification on every run
+    — a gate that goes green by ignoring something should say what it ignored.
+  - **The exemption breaks rather than rots.** This file spent the same day
+    repairing references that had degraded silently, so an exemption that could
+    outlive its commit would be the same defect wearing a different hat. Three
+    guards each FAIL the gate: (1) an exempted hash that no longer resolves —
+    which is precisely what a future history rewrite would produce — with an
+    error naming `docs/COMMIT_MAP.md` as the way to re-point it; (2) a hash
+    outside the enforced range; (3) a hash whose subject now conforms, i.e. an
+    inert exemption, the same check `docs-check.py` applies to its own context
+    phrases. `exemption_self_test()` proves all three fire, and guard 1 was
+    additionally verified by hand: substituting a dead hash turns the gate red
+    with the intended message.
+  - **The original note said "with NO exceptions list."** That reasoning was
+    about RULES and still holds — an allowlist that grows one argued-away
+    violation at a time is worthless. It did not survive contact with a commit
+    inside a published tag, where the remedy costs more than the defect. The
+    note has been rewritten rather than quietly contradicted.
+- **Phase 8, AMENDMENT (2026-09-08) — the dependency graph opens on a bounded
+  "entering view" instead of on the whole repo. This changes what
+  `GRAPH_AUTO_COLLAPSE_THRESHOLD = 600` means and what Section 11's graph
+  budgets measure.** This is an amendment against Section 9 Phase 8 and
+  Section 11, not a config tweak, and it is recorded here because the spec's
+  own numbers no longer describe the shipped behaviour.
+  - **The finding it comes from.** Phase 8's rule was "auto-collapse
+    directories at depth >= 2 WHEN node count > 600" — show every file by
+    default, collapse only once the graph got expensive. That rule optimises
+    render cost, and it left the default view of any repo under 600 nodes as
+    one fitted force-directed layout of every file at once. Such a view is
+    not readable at any zoom, and no amount of tuning the label-hiding
+    threshold (0.35) or the collapse threshold (600) makes it readable: a
+    node-link diagram's legibility collapses well below 500 nodes at real
+    edge density. The problem was never those constants; it was that
+    "everything at once" was the default state at all.
+  - **The rule now.** `computeEnteringCollapsedDirectoryPaths`
+    (`collapse.ts`) always collapses, whatever the repo's size, choosing the
+    DEEPEST level of detail whose visible node count still fits
+    `GRAPH_ENTERING_VIEW_MAX_NODES = 60`. A repo small enough to fit whole
+    still shows every file (the set comes back empty — strictly the old
+    behaviour for small repos). Expanding is deliberate: tapping a directory
+    (`toggleDirectory`), a keyboard move revealing a file (`revealPath`), or
+    the toolbar's "Expand all". "Collapse all" now means "back to the
+    entering view", recomputed from the `AnalysisResult` rather than
+    remembered, so it is the same view however deep the user drilled.
+  - **`GRAPH_ENTERING_VIEW_MAX_NODES = 60` is a judgment call, not a derived
+    number.** fcose fits its result to the viewport, so on a maximised
+    ~1600x900 canvas 60 nodes leaves each roughly a 180x150px cell — enough
+    for the node plus its label without neighbours colliding. It was
+    validated by screenshot against CacttusEdu and is guarded against
+    regression by `collapse.test.ts`, which asserts that the entering view of
+    a real 500-file repo shape never exceeds it. On CacttusEdu (500 files, 90
+    directories, engine-measured 2026-09-08) the rule resolves to depth 1:
+    **11 visible nodes** — 6 top-level directories and 5 repo-root files.
+  - **What `GRAPH_AUTO_COLLAPSE_THRESHOLD = 600` means now.** It no longer
+    gates collapse; nothing does, because collapse is unconditional. The
+    constant survives under the name `GRAPH_DRAFT_LAYOUT_NODE_THRESHOLD` in
+    `useCytoscape.ts`, with the one job it still does: the visible-node count
+    past which fcose drops to `quality: 'draft'`. A graph only reaches that
+    size now by the user explicitly pressing "Expand all". The old name is
+    gone from the codebase; Phase 8's paragraph still carries it, which is
+    why this entry exists.
+  - **What the Section 11 budgets should measure.** `graphFirstPaint1kMs`,
+    `graphPanP95_1kMs` and `graphPanP95_5kMs` were written when 1,000/5,000
+    nodes on screen was the default state. That is now a state users reach
+    only on purpose, so those budgets were measuring something almost nobody
+    sees. They are renamed in `bench/budgets.json` to
+    `graphEnteringViewFirstPaint1kFilesMs` /
+    `graphEnteringViewPanP95_1kFilesMs` / `graphEnteringViewPanP95_5kFilesMs`
+    — same numbers, now honestly labelled as measuring the entering view of a
+    1k/5k-FILE repo. Measured after this change (`bun run bench:graph`,
+    headless Edge, 2026-09-08): first paint **140.2 ms** at 1,000 files and
+    **81.7 ms** at 5,000 files against a 1,500 ms budget, pan p95 16.9 ms at
+    both — roughly a tenth of the allowance, which is the point: what the
+    budget measures got cheap because the entering view is bounded (13
+    visible nodes for both synthetic repos). Two new entries,
+    `graphExpandAllFirstPaint1kMs` and `graphExpandAllPanP95_5kMs`, name the
+    deliberate all-nodes state and are marked not-yet-measured (the same
+    convention `webviewHeap5kMb` already uses): that state is what the
+    original numbers were really about, and it now needs its own bench
+    scenario rather than inheriting the default one's.
+- **Phase 8, AMENDMENT (2026-09-08) — the keyboard model and the canvas were
+  diverging, and criterion 20 could not see it.** `keyboard-nav.ts` traverses
+  the FULL `AnalysisResult` (every file, by importance rank); the canvas shows
+  only what is currently expanded. Before this change `focusNodeById` did
+  `cy.getElementById(id)`, found nothing for a file inside a collapsed
+  directory, and returned silently — so `ArrowDown`/`[`/`]` announced a file
+  through `aria-live` that no sighted user could see, and moved no camera.
+  That was already true above 600 nodes; collapsed-by-default would have made
+  it the normal case. `UseCytoscapeApi.focusNodeById` is therefore replaced by
+  `focusPath(path)`, which expands whatever hides the target first
+  (`collapse.ts`'s `revealPath` — the whole collapsed-ancestor chain, not just
+  the shallowest one `resolveVisibleNodeId` reports) and centres only once the
+  reveal layout has settled. `DependencyGraph.test.tsx` now asserts the
+  focused node is really on the canvas (materialised AND not
+  `hidden-by-collapse`) after a keyboard move — the assertion criterion 20's
+  axe and keyboard checks structurally cannot make, since both can pass while
+  the canvas shows nothing. `GraphListFallback` is unaffected: it renders from
+  the `AnalysisResult`, never from the Cytoscape core, and never did.
+- **Phase 8, BUG FIX (2026-09-08) — an animated fcose run does not reliably
+  emit `layoutstop`, which silently hung first paint and every drill step.
+  THE FIX: `animate: false` for the graph layout, unconditionally.** This is a
+  shipped-code defect, not an observation: any repository whose top-level areas
+  do not import each other lands on it, which is most monorepos.
+
+  **THE FINDING IS THAT THE OBVIOUS PREDICATE IS WRONG — read this before
+  narrowing the flag again.** An unconditional `animate: false` looks
+  over-broad, and the natural instinct is to re-scope it to "only the case that
+  actually hangs". That instinct was followed once already, and shipped: the
+  first fix animated only when `visibleEdgeCount > 0`, on the reasoning that a
+  layout with edges has forces and will converge. It was WRONG. A drill step
+  into `backend` — which HAD visible edges — hung exactly the same way, so
+  `layoutstop` never fired, and the packing pass silently never ran. The
+  property the hanging graphs actually share is a top level with no edges
+  ACROSS it, which is not the same as having no edges, and there is no cheap
+  runtime predicate for "will fcose converge on this graph". Nothing short of
+  running the layout answers it. Re-narrowing therefore needs a reproducible
+  characterisation of the hang, not a plausible-sounding condition; without
+  one, the flag stays unconditional. The cost is a brief motion on drill; the
+  purchase is an event that always fires, which four separate mechanisms
+  depend on.
+  Measured
+  live in the webview against CacttusEdu's entering view (11 visible nodes, 0
+  visible edges): `layoutstart` and `layoutready` fire, `layoutstop` never
+  does, still nothing after 9 seconds; the identical graph with
+  `animate: false` completes and fires all three. No forces, no convergence.
+  Everything downstream waits on that event — `isReady`, the entering-view
+  fit, and reveal-then-centre — so all three hung. An edgeless view is not a
+  corner case: a monorepo of independent workspaces has no cross-directory
+  imports at all (all 1,227 of CacttusEdu's edges live inside a single
+  top-level directory, so its entering view has exactly zero).
+
+  **Why it was never seen before.** Phase 8's own rule sets `animate: false`
+  whenever `prefers-reduced-motion` is set, so anyone testing with that
+  preference on — which is the configuration criterion 21 is checked under —
+  took the working path every time. The bug was invisible to exactly the
+  people most likely to be exercising the graph deliberately, and visible only
+  to a default-settings user opening a repo whose workspaces are independent.
+  A gate that tests the accessible path can hide a defect on the default one.
+- **Phase 8, AMENDMENT (2026-09-08) — the entering-view fit runs from a React
+  effect, not from `layoutstop`.** At `layoutstop` Cytoscape is still working
+  from the container size it captured when the layout began, which during a
+  tab switch is not the final one: fitting there computed zoom 0.96 where the
+  settled container needs 0.68, leaving the largest directory boxes hanging
+  off the bottom edge of the panel. `fitToVisible` is called from an effect
+  keyed on `isReady`, which React runs after the DOM commit, when the panel
+  has its real height. (A `requestAnimationFrame` deferral inside the
+  `layoutstop` handler was tried first; its callback never ran at all.)
+- **Phase 8, AMENDMENT (2026-09-08) — the Cytoscape stylesheet is now
+  theme-aware.** A canvas gets no CSS, so every colour in `graph-style.ts` is
+  a literal and none of the app's `dark:` Tailwind variants reach it. That was
+  survivable while the graph was a field of coloured file dots whose labels
+  were incidental. It is not survivable now that collapsed DIRECTORY boxes and
+  their labels are the entering view's entire content: rendered against the
+  app's dark theme (which is `prefers-color-scheme`-driven — this app sets no
+  `dark` class), the old fixed palette drew near-black labels on dark boxes,
+  i.e. the entering view was "legible" only in a light theme nobody was
+  running. `resolveGraphPalette()` picks a light or dark `GraphPalette`, and
+  `useCytoscape` rebuilds the stylesheet on a `prefers-color-scheme` change.
+- **Phase 8, AMENDMENT (2026-09-08) — collapsed directories are sized and
+  coloured, and `cytoscape-expand-collapse`'s cue layer is off.** A
+  lazily-collapsed directory has no children in the core, so Cytoscape gave it
+  the default node size: in an entering view that is mostly collapsed
+  directories, every directory rendered as the same small grey blob whatever
+  it contained. Their box area is now proportional to `descendantFileCount`
+  and tinted by the module owning most of their files
+  (`computeDominantModuleByDirectory`), so "this box holds half the repo" is
+  legible before reading a single label. Separately, the extension's
+  `cueEnabled` is now `false`: its cues collapse a node by hiding children it
+  can see, which would be a SECOND source of truth for collapse state
+  alongside `collapsedDirsBox` — and it already could not expand a
+  lazily-collapsed directory, whose children it has never seen. A11 keeps the
+  extension registered; `toggleDirectory` owns the interaction, in both
+  directions, so drilling is reversible. The cost is that the +/- cue is gone,
+  leaving the label ("backend / 138 files") and the border style to signal
+  "clickable" — worth a designer's eye.
+- **Phase 8, FIX (2026-09-08) — top-level boxes are packed deterministically
+  when the top level has no edges (`pack-layout.ts`).** This closes the two
+  residuals this change originally filed, which had one root cause: fcose
+  positions nodes by forces, and when no edge joins two top-level nodes there
+  are no forces at that level. The visible results were an arbitrary scatter
+  with large empty regions, and — worse, because it is WRONG rather than untidy
+  — unrelated root files coming to rest INSIDE an expanded directory's compound
+  box, drawing containment that does not exist. Measured on CacttusEdu after
+  expanding `backend`: four root-level nodes inside its box; zero after.
+  `shelfPack` places the boxes tallest-first in rows, ties broken by id so the
+  same repo always packs the same way. It runs only when no visible edge
+  crosses two top-level nodes, so an arrangement that does carry force
+  information (after "Expand all", say) is left alone, and it never touches
+  what is INSIDE a compound — fcose keeps the job it is good at.
+
+  **Where it runs is load-bearing.** Positions written from inside a
+  `layoutstop` handler are overwritten by the layout that just emitted it: the
+  packed arrangement was computed and applied, and the canvas still rendered
+  fcose's. The initial paint therefore packs from a React effect (after the
+  commit) and drill/wholesale relayouts from a macrotask. This is the same
+  lesson as the entering-view fit, which had to move for the same reason —
+  `layoutstop` is not "the layout has finished writing".
+- **Phase 8, AMENDMENT (2026-09-08) — remaining residuals, filed not fixed.**
+  (a) The viewport label budget (`GRAPH_VIEWPORT_LABEL_BUDGET = 25`) ranks by
+  importance but does no collision detection, so two equally low-ranked
+  root-file labels can still overlap. (b) The graph does not re-fit when the
+  panel is resized; only the entering view and packed relayouts are fitted.
+  (c) INSIDE an expanded directory, sibling collapsed sub-directory boxes can
+  still slightly overlap each other — the packer deliberately does not touch a
+  compound's interior, so fcose's arrangement stands there. Visible on
+  CacttusEdu's `backend` (`prisma` and `src` touch). Less serious than the
+  cross-compound case it replaced: it is untidy, not a false relationship.
+- **Phase 9 — noted, not decided: `ModuleMap` and the graph's entering view
+  may now be converging.** With the graph opening on a directory tree rather
+  than a file cloud, the first thing the graph tab shows and the thing the
+  Module map tab shows are both "the repo's top-level areas, one box/card
+  each". They are not identical — modules are derived (Section 8.6's
+  clustering), directories are structural, and CacttusEdu has 17 modules
+  against 6 top-level directories — but the overlap in what a newcomer
+  actually *does* with them is real. Worth answering deliberately (are these
+  two views of one thing, or two different things?) before either grows
+  further.
+- **Phase 8, BUG FIX (2026-09-08) — the fit was conditional on the packer, so
+  every repository whose top-level directories import each other never fitted
+  at all except on first paint.** Reported from the shipped installer, then
+  diagnosed against the release binary over CDP rather than a dev server —
+  the two previous verifications used a dev server and missed it twice.
+  - **The defect.** `settleAfterLayout` read
+    `if (packTopLevelIfUnforced(cy)) fitToVisible(cy)`. The packer declines,
+    correctly, whenever a visible edge crosses two top-level nodes. So on any
+    such repo the drill path and the wholesale path (Expand all, Collapse all,
+    every tap, every keyboard reveal) ran a layout and then never corrected
+    the viewport. Derived audit of the three layout paths: initial paint fitted
+    unconditionally; drill and wholesale were both gated. Two of three.
+  - **Why testing never caught it.** Not fixture bias — audited, and two of
+    four fixtures (`sample-analysis.json`, `buildRepoShapedResult`) already
+    exercise the declining branch. The reason is that **no unit test can
+    observe a fit at all**: jsdom has no canvas, `supportsCanvasRendering()` is
+    false, the core runs headless, and `fitToVisible` bails on a 0x0
+    container. The branch ran; its consequence was invisible. The invariant —
+    *after any layout on any path, the content bounding box lies inside the
+    viewport* — is therefore asserted in `bench/graph`'s browser harness,
+    which has a real canvas, and `bench:graph` now FAILS when it does not
+    hold. It is blind to which branch ran, which is the point.
+  - **The aspect problem, fixed at its source.** fcose produced a roughly
+    SQUARE layout that was then fitted into a ~2.35:1 panel. The fit is limited
+    by the short axis, so two thirds of the width went unused and the zoom fell
+    to 0.409 — where a 13px directory label renders at 5px: drawn, and
+    unreadable. `layoutBoundingBox` now constrains the layout to a box with the
+    PANEL's aspect, scaled to the node count, so the mismatch never arises.
+  - **The readability floor, derived rather than picked.**
+    `GRAPH_MIN_READABLE_ZOOM = 0.75` — directory labels are 13px, 10px is the
+    conventional floor for legible UI text, 10/13 = 0.77, rounded down so the
+    boundary does not thrash. `readableNodeBudget` inverts the fit arithmetic
+    to answer "how many nodes can this panel show and still be read", and the
+    entering view takes the smaller of that and the 60-node ceiling. On a
+    1521x648 panel that is ~48. The collapsed view exists so it can be READ, so
+    a panel that cannot show the ceiling legibly shows fewer nodes rather than
+    smaller ones.
+  - **`fit: false` on the layout is not "no fit".** Every layout is now
+    followed by an unconditional `fitToVisible`. The layout's own `fit` uses
+    the container as measured when it STARTED — the stale value that put boxes
+    off the panel edge — so the settle step owns fitting. This supersedes the
+    earlier choice to preserve the viewport across a drill for spatial memory:
+    a viewport the user cannot read is worth nothing.
+  - **Verified on the reported repository, in the shipped binary.** CacttusEdu,
+    driven through the real UI (a raw `analyze_repo` invoke cannot retarget the
+    app — it bypasses the store that owns repo state): entering view 11 nodes,
+    6 directories labelled `backend / 138 files`, `cacttus-edu-front / 239
+    files`, `dashboard / 104 files`, `docs / 9 files`, `deploy / 4 files`,
+    `.claude / 1 file`; zoom 1.41, so those labels render at 18px; content
+    inside the viewport. Collapse all holds the same. Residual: the canvas is
+    still ~50% empty, which is legible but not yet well-composed.
+- **Phase 8, AMENDMENT (2026-09-08) — Escape is PROGRESSIVE: the first clears
+  the selection, the second exits the graph. This changes what Section 8
+  specifies, and Section 8's contract survives as the terminal step.** Section
+  8's keyboard paragraph assigns Escape one meaning, "exit the graph". That was
+  written for a graph with no destructive selection state. Clicking a node now
+  dims everything unrelated, and with a selection active a single-meaning
+  Escape leaves the user no way to say "just undo that" — one key cannot mean
+  two things at once, so the question is only which order they come in.
+  Clearing first is the right order because it is the reversible, lower-stakes
+  action, and because a user who wants to leave can press Escape twice. Section
+  8 is therefore honoured rather than contradicted: Escape still exits the
+  graph, as the LAST step of the sequence rather than the only one. Asserted in
+  both directions in `DependencyGraph.test.tsx` — first Escape clears and keeps
+  focus, second Escape blurs.
+- **Phase 8, AMENDMENT (2026-09-08) — the graph toolbar is named for outcomes,
+  and its strings move into `messages.ts` under Section 10.** The toolbar's
+  labels were hardcoded in `GraphToolbar.tsx`, which put the only controls this
+  panel offers outside the byte-exact copy assertions that cover every other
+  user-facing string in the app. They are now in `GRAPH_COPY.toolbar`.
+  - "Collapse all" described the mechanism; **"Reset view"** describes what the
+    user wants — the view they landed on, restored.
+  - **"Clear selection" is new**, and it is the point of the change: clicking a
+    node dimmed the whole graph with no way back, and it is the only escape
+    route a first-time user can SEE. It is disabled when nothing is selected
+    rather than being a control that silently does nothing.
+  - **"Overview" was rejected as a name.** It is the label of a TAB one row
+    above; two adjacent controls meaning different things under the same word
+    is worse than a mechanical name.
+  - **Clearing never moves the camera.** Emphasis and viewport are separate
+    concerns: a user who clicked one node to inspect it should not lose their
+    zoom as a side effect of dismissing a highlight. Restoring the view is
+    "Reset view", explicit and separate.
+- **Phase 8, FIX (2026-09-08) — dimming recedes instead of erasing, and does
+  not happen at all when there is nothing to highlight.** `.dimmed` was
+  `opacity: 0.15`, tuned in the original Phase 8 view where the graph was 500
+  dense nodes and 0.15 read as "pushed back". The entering view is about a
+  dozen boxes, where the same value reads as "deleted" — labels vanish and the
+  user loses all sense of where the highlighted node sits. Now `0.4`.
+  Separately, `highlightNeighborhood` used to dim EVERYTHING and then re-light
+  the node's neighbours, so a node with no visible connected edges destroyed
+  the whole view and lit nothing: measured on the shipped binary as 94 of 95
+  elements dimmed, 0 highlighted. That is not a rare case — a root file with no
+  imports, or the common case of a file whose dependencies all lead into
+  collapsed directories, where the aggregate edge attaches to the DIRECTORY and
+  not to the file. It now marks the selection and dims nothing.
+- **Tooling (2026-09-08) — local test installers are versioned
+  `0.1.4-dev.<sha>` (`bun run bundle:dev`), because three review rounds have
+  now been lost to a stale artefact.** The July sidecar, the v0.1.3-vs-v0.1.4
+  confusion, and — this round — a local build of `0.1.4` tested against the
+  published `0.1.4` from the release page, which produced a full round of
+  analysis of a binary that contained none of the work. The version string was
+  identical in both, so there was nothing to check AFTER installing: the
+  mistake was invisible by construction, and the Settings engine-version line
+  cannot distinguish two builds of the same version. `scripts/bundle-dev.ts`
+  stamps the short SHA into the version, which changes the installer FILENAME
+  and what the app reports, so "which build is this?" is answerable at a
+  glance. A dirty tree appends `.dirty`, because claiming a commit for a build
+  containing uncommitted changes would be a more convincing lie than saying
+  nothing. `bun run bundle` is untouched and still produces the release
+  artefact.

@@ -20,6 +20,18 @@ const DIRECTORY_NODE_ID_PREFIX = 'dir:';
 const NODE_MIN_SIZE = 18;
 const NODE_MAX_SIZE = 60;
 
+/**
+ * Size range in px for a COLLAPSED directory box (amendment, 2026-09-08 —
+ * docs/DECISIONS.md). A lazily-collapsed directory has no children in the
+ * core, so Cytoscape gives it the default node size: in the entering view,
+ * which is now mostly collapsed directories, that rendered every directory as
+ * the same small grey blob whatever it contained. Area (not diameter) is made
+ * proportional to `descendantFileCount` — hence the `sqrt` — so "this box
+ * holds most of the repo" is legible before reading a single label.
+ */
+const DIRECTORY_MIN_SIZE = 44;
+const DIRECTORY_MAX_SIZE = 170;
+
 /** Golden-angle hue step gives well-distributed, deterministic distinct hues per module. */
 const MODULE_COLOR_HUE_STEP = 137.508;
 const MODULE_COLOR_SATURATION = 55;
@@ -41,6 +53,15 @@ export function pathFromNodeId(id: string): string | null {
 
 export function computeNodeSize(importance: number): number {
   return NODE_MIN_SIZE + importance * (NODE_MAX_SIZE - NODE_MIN_SIZE);
+}
+
+/** Collapsed-directory box size: area proportional to `descendantFileCount`, relative to the biggest directory in the repo. */
+export function computeDirectorySize(descendantFileCount: number, largestDescendantFileCount: number): number {
+  if (largestDescendantFileCount <= 0) {
+    return DIRECTORY_MIN_SIZE;
+  }
+  const ratio = Math.sqrt(Math.max(descendantFileCount, 0)) / Math.sqrt(largestDescendantFileCount);
+  return DIRECTORY_MIN_SIZE + ratio * (DIRECTORY_MAX_SIZE - DIRECTORY_MIN_SIZE);
 }
 
 /**
@@ -200,13 +221,13 @@ export function buildGraphElements(result: AnalysisResult): GraphElements {
 // repo.
 
 /** The directory path a file or directory lives directly under, or `null` at repo root. */
-function directoryContaining(path: string): string | null {
+export function directoryContaining(path: string): string | null {
   const lastSlash = path.lastIndexOf('/');
   return lastSlash === -1 ? null : path.slice(0, lastSlash);
 }
 
 /** `dirPath`'s ancestor chain, shallowest first, including `dirPath` itself as the last entry. */
-function directoryAncestorChain(dirPath: string): readonly string[] {
+export function directoryAncestorChain(dirPath: string): readonly string[] {
   const segments = dirPath.split('/');
   return segments.map((_segment, index) => segments.slice(0, index + 1).join('/'));
 }
@@ -248,27 +269,95 @@ function directoryLabel(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
 }
 
+/**
+ * The module owning the most descendant files of each directory, by count,
+ * ties broken by module id so the result is deterministic. A collapsed
+ * directory stands in for everything beneath it, so it should carry the same
+ * module color its contents would have shown — otherwise the entering view,
+ * which is mostly collapsed directories, loses the module signal entirely.
+ * Files with no module, and directories whose descendants all lack one, are
+ * simply absent from the result.
+ */
+export function computeDominantModuleByDirectory(files: readonly FileNode[]): ReadonlyMap<string, string> {
+  const countsByDirectory = new Map<string, Map<string, number>>();
+  files.forEach((file) => {
+    const moduleId = file.moduleId;
+    const containing = directoryContaining(file.path);
+    if (moduleId === null || containing === null) {
+      return;
+    }
+    directoryAncestorChain(containing).forEach((ancestor) => {
+      const counts = countsByDirectory.get(ancestor) ?? new Map<string, number>();
+      counts.set(moduleId, (counts.get(moduleId) ?? 0) + 1);
+      countsByDirectory.set(ancestor, counts);
+    });
+  });
+
+  const dominant = new Map<string, string>();
+  countsByDirectory.forEach((counts, directoryPath) => {
+    const winner = [...counts.entries()].sort(
+      (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+    )[0];
+    if (winner !== undefined) {
+      dominant.set(directoryPath, winner[0]);
+    }
+  });
+  return dominant;
+}
+
+function formatFileCount(count: number): string {
+  return `${String(count)} file${count === 1 ? '' : 's'}`;
+}
+
+interface DirectoryVisuals {
+  readonly moduleColors: ReadonlyMap<string, string>;
+  readonly dominantModuleByDirectory: ReadonlyMap<string, string>;
+  readonly largestDescendantFileCount: number;
+}
+
+function buildLazyDirectoryNode(
+  directory: DirectoryNode,
+  collapsedDirs: ReadonlySet<string>,
+  visuals: DirectoryVisuals,
+): cytoscape.NodeDefinition {
+  const isLazyCollapsed = collapsedDirs.has(directory.path);
+  const isHidden = isDirectoryHiddenByCollapse(directory, collapsedDirs);
+  const classes = ['directory-node', isLazyCollapsed ? 'lazy-collapsed' : null, isHidden ? 'hidden-by-collapse' : null]
+    .filter((value): value is string => value !== null)
+    .join(' ');
+  const baseLabel = directoryLabel(directory.path);
+  const dominantModule = visuals.dominantModuleByDirectory.get(directory.path);
+  return {
+    data: {
+      id: directoryNodeId(directory.path),
+      // Two lines, not "name (+239)": in a directory-first entering view this
+      // label is the primary thing being read (`graph-style.ts` wraps it).
+      label: isLazyCollapsed ? `${baseLabel}\n${formatFileCount(directory.descendantFileCount)}` : baseLabel,
+      path: directory.path,
+      ...parentIdField(directoryParentId(directory)),
+      descendantFileCount: directory.descendantFileCount,
+      size: computeDirectorySize(directory.descendantFileCount, visuals.largestDescendantFileCount),
+      color:
+        dominantModule === undefined ? NO_MODULE_COLOR : (visuals.moduleColors.get(dominantModule) ?? NO_MODULE_COLOR),
+    },
+    classes,
+  };
+}
+
 function buildLazyDirectoryNodes(
   result: AnalysisResult,
   collapsedDirs: ReadonlySet<string>,
+  moduleColors: ReadonlyMap<string, string>,
 ): cytoscape.NodeDefinition[] {
-  return result.directories.map((directory) => {
-    const isLazyCollapsed = collapsedDirs.has(directory.path);
-    const isHidden = isDirectoryHiddenByCollapse(directory, collapsedDirs);
-    const classes = ['directory-node', isLazyCollapsed ? 'lazy-collapsed' : null, isHidden ? 'hidden-by-collapse' : null]
-      .filter((value): value is string => value !== null)
-      .join(' ');
-    const baseLabel = directoryLabel(directory.path);
-    return {
-      data: {
-        id: directoryNodeId(directory.path),
-        label: isLazyCollapsed ? `${baseLabel} (+${directory.descendantFileCount})` : baseLabel,
-        path: directory.path,
-        ...parentIdField(directoryParentId(directory)),
-      },
-      classes,
-    };
-  });
+  const visuals: DirectoryVisuals = {
+    moduleColors,
+    dominantModuleByDirectory: computeDominantModuleByDirectory(result.files),
+    largestDescendantFileCount: result.directories.reduce(
+      (largest, directory) => Math.max(largest, directory.descendantFileCount),
+      0,
+    ),
+  };
+  return result.directories.map((directory) => buildLazyDirectoryNode(directory, collapsedDirs, visuals));
 }
 
 function buildLazyEdges(result: AnalysisResult, collapsedDirs: ReadonlySet<string>): cytoscape.EdgeDefinition[] {
@@ -320,7 +409,7 @@ export function buildLazyGraphElements(result: AnalysisResult, collapsedDirs: Re
   );
   return {
     nodes: [
-      ...buildLazyDirectoryNodes(result, collapsedDirs),
+      ...buildLazyDirectoryNodes(result, collapsedDirs, moduleColors),
       ...buildFileNodes(visibleFiles, directoryPaths, moduleColors),
     ],
     edges: buildLazyEdges(result, collapsedDirs),

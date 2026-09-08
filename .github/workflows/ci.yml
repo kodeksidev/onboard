@@ -364,7 +364,7 @@ jobs:
     # `fetch-depth: 0`. It compiles nothing and installs no toolchain beyond
     # Python, so it is the cheapest job in this file.
     #
-    # SCOPE: every commit AFTER the one where this gate landed (`d67b30e`),
+    # SCOPE: every commit AFTER the one where this gate landed (`a203731`),
     # with no exceptions list. A commit-message linter cannot retroactively
     # govern history that predates it — before that commit there was no check
     # to run, so no author could conform. The boundary is a recorded constant

@@ -349,6 +349,24 @@ export const GRAPH_COPY = {
     title: 'Nothing to graph',
     description: 'This repo has no parsed files to show a dependency graph for.',
   },
+  /**
+   * Toolbar labels (amendment, 2026-09-08 — docs/DECISIONS.md). These were
+   * hardcoded in `GraphToolbar.tsx`, which put them outside the byte-exact
+   * copy assertions every other user-facing string in this app is covered by.
+   *
+   * Named for the OUTCOME rather than the mechanism: "Collapse all" described
+   * what the code did, not what the user wanted. "Reset view" is deliberately
+   * not "Overview" — that is the name of a tab one row above, and two adjacent
+   * controls meaning different things under the same word is worse than a
+   * mechanical name.
+   */
+  toolbar: {
+    searchLabel: 'Search the dependency graph by file name',
+    searchPlaceholder: 'Search the graph…',
+    expandAll: 'Expand all',
+    resetView: 'Reset view',
+    clearSelection: 'Clear selection',
+  },
 } as const;
 
 /** Section 9 Phase 10: "the everyday feature" — make it fast and keyboard-first. */

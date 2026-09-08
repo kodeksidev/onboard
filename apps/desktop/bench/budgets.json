@@ -7,8 +7,11 @@
   "warmAnalysis10kMs": { "budget": 6000, "enforcedBy": "run-bench.ts" },
   "sidecarPeakRss10kMb": { "budget": 1536, "enforcedBy": "run-bench.ts" },
   "searchQueryLatency10kP95Ms": { "budget": 120, "enforcedBy": "run-bench.ts" },
-  "graphFirstPaint1kMs": { "budget": 1500, "enforcedBy": "bench:graph" },
-  "graphPanP95_1kMs": { "budget": 22, "enforcedBy": "bench:graph" },
-  "graphPanP95_5kMs": { "budget": 33, "enforcedBy": "bench:graph" },
+  "$comment_graph": "AMENDED 2026-09-08 (docs/DECISIONS.md): the panel now always opens on a bounded ENTERING VIEW, so these three measure the view a user actually lands on for a 1k/5k-FILE repo — not 1,000/5,000 nodes on screen, which is now only reachable by deliberately pressing \"Expand all\". The budgets are unchanged and are now met with enormous headroom, which is the point: what they measure got cheap. The expensive state moved to graphExpandAll* below.",
+  "graphEnteringViewFirstPaint1kFilesMs": { "budget": 1500, "enforcedBy": "bench:graph" },
+  "graphEnteringViewPanP95_1kFilesMs": { "budget": 22, "enforcedBy": "bench:graph" },
+  "graphEnteringViewPanP95_5kFilesMs": { "budget": 33, "enforcedBy": "bench:graph" },
+  "graphExpandAllFirstPaint1kMs": { "budget": 1500, "enforcedBy": "bench:graph (not yet measured — the deliberate all-nodes state, see docs/DECISIONS.md)" },
+  "graphExpandAllPanP95_5kMs": { "budget": 33, "enforcedBy": "bench:graph (not yet measured — the deliberate all-nodes state, see docs/DECISIONS.md)" },
   "webviewHeap5kMb": { "budget": 600, "enforcedBy": "bench:graph (not yet measured — see docs/DECISIONS.md)" }
 }
