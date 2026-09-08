@@ -4728,10 +4728,27 @@ decided; it only records choices the spec left open.
     report has no audience by default. `docs:check`, `commit:check` and the
     viewport invariant all now fail loudly *in CI*; that is necessary and, as
     this shows, not sufficient.
-  - **What would actually fix it** — none of it done here, because each is a
-    process decision rather than a code one: making a red `main` visible where
-    the work happens (a required status check, a notification, or a startup
-    line in the session), or treating "is `main` green?" as a step in the
-    release checklist rather than an assumption. The narrower lesson, and the
-    one that cost nothing to learn: **when cutting a release, read `main`'s last
-    CI run before tagging.** That would have surfaced this a day earlier.
+  - **The first version of this entry ended with a habit, which is the wrong
+    kind of fix.** It said: "when cutting a release, read `main`'s last CI run
+    before tagging." Remembering to look is exactly what had just failed, so
+    prescribing more of it was a fix in name only. It is now a check.
+    `release:plan` — the last automated thing that runs before a tag is cut, and
+    therefore the only place this can live without depending on anybody —
+    queries `main`'s latest CI conclusion and **REFUSES** when it is a
+    definitive failure. Cutting a tag from a red repository is now a deliberate
+    override (`--allow-red-ci`, which prints loudly) rather than an oversight.
+  - **Two distinctions the check makes, both learned from this document's own
+    earlier mistakes.** A run that is still *in progress* is NOT treated as a
+    failure — refusing there would block on timing rather than on a defect, and
+    an override people reach for by reflex is worth less than no check at all
+    (the same error as the `pipefail` correction above: a rule that fires on
+    normal operation trains people to ignore it). And when `gh` is absent or
+    unauthenticated the check prints a loud NOT VERIFIED banner and continues,
+    rather than turning a missing credential into a release blocker — but it
+    never passes quietly. All three paths are proven: refusal on a failed run,
+    the override, and the not-verified banner.
+  - **What is still a process decision, and is not done here:** making a red
+    `main` visible where the work actually happens — a required status check, a
+    notification, or a line at session start. The check above catches it at the
+    last possible moment; it does not shorten the day and a half this one sat
+    unread.
