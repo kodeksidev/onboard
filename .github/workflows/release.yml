@@ -307,7 +307,7 @@ jobs:
           # ABSOLUTE path. `apt-get install foo/bar.deb` treats the argument as a
           # PACKAGE NAME unless it starts with `./` or `/`, and fails with exit
           # 100 — which reads like an unmet dependency and is a path bug.
-          DEB=$(find "$PWD/installers" -name '*.deb' | head -n 1)
+          DEB=$(find "$PWD/installers" -name '*.deb' -print -quit)
           if [ -z "$DEB" ]; then
             echo "no .deb found in the downloaded artifact" >&2
             exit 1
@@ -333,7 +333,23 @@ jobs:
       # being written here.
       - name: Assert the installed .deb's Maintainer field
         run: |
-          actual=$(dpkg -s "${{ steps.install_deb.outputs.package }}" | grep '^Maintainer:' | cut -d' ' -f2-)
+          # Neither `dpkg -s` nor the field extraction is piped any more, so
+          # each failure stays distinguishable: a package absent under the
+          # name read out of the .deb, a Maintainer field that is missing,
+          # and a Maintainer field carrying the wrong value are three
+          # different faults. They used to collapse into a single `actual=''`
+          # and report as "expected '<publisher>', got ''" — a grep miss
+          # swallowed by the pipeline looked identical to a real mismatch.
+          if ! status=$(dpkg -s "${{ steps.install_deb.outputs.package }}"); then
+            echo "::error::dpkg -s '${{ steps.install_deb.outputs.package }}' failed — nothing is installed under the package name read from the .deb"
+            exit 1
+          fi
+          line=$(grep '^Maintainer:' <<< "$status") || true
+          if [ -z "$line" ]; then
+            echo "::error::the installed .deb carries no Maintainer: field at all — bundle.publisher never reached the package"
+            exit 1
+          fi
+          actual=${line#Maintainer: }
           expected="${{ needs.plan.outputs.publisher }}"
           echo "Maintainer='$actual' (expected '$expected')"
           if [ "$actual" != "$expected" ]; then
@@ -364,7 +380,7 @@ jobs:
       - name: Assert the .rpm's Packager field is unset (tauri-bundler 2.9.6 has no way to set it)
         run: |
           sudo apt-get install -y rpm
-          RPM=$(find "$PWD/installers" -name '*.rpm' | head -n 1)
+          RPM=$(find "$PWD/installers" -name '*.rpm' -print -quit)
           if [ -z "$RPM" ]; then
             echo "no .rpm found in the downloaded artifact" >&2
             exit 1

@@ -3312,6 +3312,24 @@ decided; it only records choices the spec left open.
     handled explicitly rather than incidentally — which eliminates the masking
     without inventing failures. Filed as its own change, after v0.1.5, because
     it touches the release workflow.
+
+    **DONE (2026-09-09).** All three pipelines are gone from
+    `.github/workflows/release.yml`. Both `find … | head -n 1` became
+    `find … -print -quit`; the `dpkg -s … | grep … | cut …` chain became an
+    unpiped `dpkg -s` into a variable, a `grep` on a here-string, and an
+    explicit empty-result branch — so a package that is not installed, a
+    `Maintainer:` field that is absent, and a `Maintainer:` field carrying the
+    wrong value now report as three different errors instead of collapsing
+    into one `expected '<publisher>', got ''`. The replacement was checked
+    against the thing it replaces rather than reasoned about:
+    `${line#Maintainer: }` returns byte-identical output to the old
+    `cut -d' ' -f2-` on a real `dpkg -s` block, `find -print -quit` returns
+    the first match and leaves the empty-result branch reachable on a miss,
+    and a block with no `Maintainer:` line takes the new error path. **Note
+    what did NOT change: not one of the three was made to fail more often.**
+    That was the test of whether the correction above was right — a remedy for
+    exit-code masking that also invents new red is the blanket-`pipefail`
+    mistake wearing a different hat.
   In all four, reviewing the control in isolation finds nothing wrong: the flag
   IS set, the variable IS computed, the key IS bound, the exit code IS
   returned. The defect is entirely in the wiring between
