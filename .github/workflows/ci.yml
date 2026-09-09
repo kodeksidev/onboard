@@ -535,9 +535,21 @@ jobs:
       # extract-zip publishes a fix, and this gate tightens by itself.
       - name: bun audit
         run: |
-          bun audit             --ignore=GHSA-jmr9-qjv8-65gv             --ignore=GHSA-7pqw-9j4j-h8q3
+          bun audit \
+            --ignore=GHSA-jmr9-qjv8-65gv \
+            --ignore=GHSA-7pqw-9j4j-h8q3
 
+      # `!cancelled()` on this step and the four below, for the reason
+      # `verify:report` exists: a job whose point is the full picture must not
+      # stop at its first failure. `bun audit` sits ahead of `cargo audit` in
+      # this job, so for the three `main` runs it was red, the ENTIRE Rust half
+      # never executed — and the moment `bun audit` was fixed, `cargo audit`
+      # went red on its first actual run (a yanked `chacha20 0.10.1`). That
+      # finding was available for three runs and no one could have seen it.
+      # A gate that hides its other half cannot be trusted to say when it is
+      # clean, which is exactly what `release:plan` now asks of it.
       - name: Set up Rust toolchain
+        if: ${{ !cancelled() }}
         uses: dtolnay/rust-toolchain@stable
 
       # cargo-audit is NOT preinstalled on GitHub runners and takes minutes to
@@ -546,19 +558,21 @@ jobs:
       # advisory database is still fetched fresh on every run below.
       - name: Cache the cargo-audit binary
         id: cache-cargo-audit
+        if: ${{ !cancelled() }}
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-${{ env.CARGO_AUDIT_VERSION }}
 
       - name: Install cargo-audit
-        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.cache-cargo-audit.outputs.cache-hit != 'true' }}
         run: cargo install cargo-audit --locked --version ${{ env.CARGO_AUDIT_VERSION }}
 
       # Incremental: `cargo audit` always `git fetch`es the advisory DB (there is
       # no `--no-fetch` here), so a restored cache can only ever be a starting
       # point, never a stale verdict.
       - name: Cache the RustSec advisory database
+        if: ${{ !cancelled() }}
         uses: actions/cache@v4
         with:
           path: ~/.cargo/advisory-db
@@ -581,6 +595,7 @@ jobs:
       # that file would live inside `apps/desktop/src-tauri/`, which this
       # workflow does not own; moving it there later is a pure refactor.
       - name: cargo audit
+        if: ${{ !cancelled() }}
         working-directory: apps/desktop/src-tauri
         run: |
           cargo audit --deny warnings \

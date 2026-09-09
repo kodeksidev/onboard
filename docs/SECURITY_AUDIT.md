@@ -539,6 +539,25 @@ installed, never what is installed** — the same distinction that made every
 pre-2026-07-28 green run in this repository unreproducible, arriving from the
 other direction.
 
+**And the finding that only became visible once the first one was fixed.**
+`bun audit` and `cargo audit` are two steps of ONE job, in that order. For the
+three `main` runs the job was red, `bun audit` failed and every step after it
+was skipped — so **the entire Rust half of the dependency audit did not run at
+all.** The first time `cargo audit` actually executed, it went red on its own
+finding: `chacha20 0.10.1` is **yanked**, denied by `--deny warnings`. Fixed by
+`cargo update -p chacha20` to the unyanked 0.10.2 (published 2026-08-27,
+semver-compatible; the yank is not an advisory, so there is no ID to ignore and
+nothing to accept).
+
+That finding sat available for three runs and nobody could have seen it. The
+structural half of the fix is on the job itself: the five Rust-side steps now
+carry `if: ${{ !cancelled() }}`, so both halves report every time. This is the
+same argument `verify:report` already won for `verify` — *"a single ESLint bug
+produced a run that reported NOTHING about typecheck, contract drift,
+determinism, coverage or the test suite"* — arriving a second time, in a job
+whose whole purpose is to be believed when it says "clean". **A red gate does
+not merely fail to inform; it conceals every check queued behind it.**
+
 ---
 
 Re-verified at HEAD `28b96f4`.
