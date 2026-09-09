@@ -474,6 +474,71 @@ satisfies `postcss`'s `^3.3.16`, and `js-yaml` 4.3.1 satisfies `mocha`'s
 read here and need checking separately. Filed as its own change rather than
 folded into v0.1.5, which was already tagged when this was found.
 
+### UPDATE 2026-09-09 — the sweep above was resolved, and three of its statements were wrong by the time it was read
+
+The remedy the entry above proposed was applied. Doing so found that **the
+advisory set had moved underneath the document in the 24 hours between writing
+it and acting on it**, in three separate ways — which is itself the finding, and
+the reason this correction is appended rather than the table above being
+quietly edited.
+
+**Correction 1 — it was never four; it is six.** Two advisories landed after
+that entry was written: a second `js-yaml` one (GHSA-2883-xcg3-v3hh) and a
+second `extract-zip` one (GHSA-7pqw-9j4j-h8q3). A third, against `vitest` /
+`@vitest/mocker` (GHSA-82fw-gwwq-j7x9, moderate, path traversal via the mocker
+redirect), was present and **not counted at all** — the entry above says "4
+high-severity advisories", which was true of the highs and silently dropped the
+moderate. `bun audit` reported 8 vulnerability records across 6 packages.
+
+**Correction 2 — `js-yaml` 4.3.1 is not enough.** The entry names 4.3.1 as the
+fix. That closes GHSA-5p4m-2wfm-xmqj only; the newer GHSA-2883-xcg3-v3hh is
+`>=4.0.0 <4.3.2`. The correct target is **4.3.2**, which still satisfies
+`mocha`'s `^4.1.0` — so the remedy is the same shape, one version further on.
+
+**Correction 3 — `deepmerge-ts` does have a fix.** The table above records "—"
+for it. `deepmerge-ts` 8.0.0 closes GHSA-ggr8-5vv4-36mx and 8.0.2 is published.
+It crosses a major from the installed 7.1.5, and the four `@wdio/*` consumers
+declare `^7.0.3`, so it needs an override rather than a resolution bump — but
+its export surface at v8 is a strict superset of v7's (checked directly against
+both `dist/index.mjs`), and `verify:js` is green on it.
+
+**What was applied.** Five of the six fixed, one accepted:
+
+| advisory | package | was | now | how |
+|---|---|---|---|---|
+| GHSA-2v37-7h3g-55p8 | nanoid | 3.3.16 | **3.3.18** | root `overrides` |
+| GHSA-5p4m-2wfm-xmqj, GHSA-2883-xcg3-v3hh | js-yaml | 4.3.0 | **4.3.2** | root `overrides` |
+| GHSA-ggr8-5vv4-36mx | deepmerge-ts | 7.1.5 | **8.0.2** | root `overrides` |
+| GHSA-82fw-gwwq-j7x9 | vitest, @vitest/mocker | 3.2.7 | **4.1.11** | direct dep bump in `apps/desktop` |
+| GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3 | extract-zip | 2.0.1 | 2.0.1 | **no fix exists** — see `docs/KNOWN_ISSUES.md` KI-13 |
+
+`bun audit` now exits 0 with the two extract-zip IDs named explicitly in
+`.github/workflows/ci.yml`, and exits 1 if either name is removed.
+
+**A trap in the remedy, recorded because the obvious spelling is the wrong
+one.** The first attempt wrote the overrides as `>=3.3.18` / `>=4.3.2`, matching
+the `>=` style of the three overrides already in `package.json`. Open-ended
+ranges do not stop at the fix: bun resolved **nanoid 6.0.1** and **js-yaml
+5.4.1** — two major versions past the advisory, into an ESM-only `nanoid` that
+`postcss` (CJS, `^3.3.16`) cannot load and a `js-yaml` 5 that `mocha`'s
+`^4.1.0` does not admit. A patch-level security bump had become an unrequested
+major upgrade of two transitive dependencies. The overrides are therefore
+written `^3.3.18` / `^4.3.2` / `^8.0.0` — bounded to the major that carries the
+fix. The pre-existing `>=` overrides are left alone deliberately: they resolve
+correctly today, and changing them is a separate question from this one.
+
+**And a trap in the verification, which is the more important half.**
+`bun audit` reads the **lockfile**. After an incremental `bun install`, the
+lockfile said `deepmerge-ts@8.0.2` and `bun audit` was clean — while
+`node_modules/.bun/@wdio+config@.../node_modules/deepmerge-ts` on disk was
+**still 7.1.5**, a stale directory the incremental install had not pruned. The
+gate was green and the installed tree was not fixed. Only `rm -rf node_modules
+&& bun install` collapsed it to one copy of each, which is the state the table
+above is verified against. **A lockfile-reading gate proves what would be
+installed, never what is installed** — the same distinction that made every
+pre-2026-07-28 green run in this repository unreproducible, arriving from the
+other direction.
+
 ---
 
 Re-verified at HEAD `28b96f4`.

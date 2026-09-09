@@ -515,8 +515,27 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Every currently accepted advisory is named explicitly, for the same
+      # reason the `cargo audit` step below names its 17. A bare `bun audit`
+      # left red teaches everyone to stop reading it — which is exactly what
+      # happened here for three `main` runs. An `--audit-level=high` floor
+      # would have been the other tempting fix and is worse: it silently
+      # absorbs every future moderate, including the next one that matters.
+      # Naming IDs keeps the gate at "zero unaccounted advisories" — anything
+      # not on this list, at any severity, fails the job.
+      #
+      # Both IDs are the SAME package, and it is the only one of the six found
+      # on 2026-09-08 with no version to move to: extract-zip's latest
+      # published release IS 2.0.1 and both advisories are `<=2.0.1`. It
+      # arrives via `@puppeteer/browsers` <- `@wdio/utils` (the e2e driver
+      # download) and terminates at a dev dependency of `@onboard/desktop` on
+      # every path. `docs/KNOWN_ISSUES.md` KI-13 carries the evidence,
+      # including the signature scan of the shipped artefacts. The other five
+      # were fixed rather than listed here. Delete these two lines the day
+      # extract-zip publishes a fix, and this gate tightens by itself.
       - name: bun audit
-        run: bun audit
+        run: |
+          bun audit             --ignore=GHSA-jmr9-qjv8-65gv             --ignore=GHSA-7pqw-9j4j-h8q3
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
