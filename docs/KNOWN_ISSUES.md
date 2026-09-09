@@ -651,3 +651,82 @@ build, and do not re-scope timeouts by symptom.** If this is ever seen with the
 machine idle, or in CI, that is a different and more serious finding — the
 numbers above are the baseline to compare against. The analysis to read first
 is `src/test/timeouts.ts`, not this entry.
+
+---
+
+### KI-13 — `extract-zip` carries two HIGH advisories and there is no version to move to
+
+| | |
+|---|---|
+| **Severity** | LOW as shipped — nothing reaches a user. HIGH in the dev toolchain, where it is real. |
+| **Criterion** | 26 (`SECURITY_AUDIT.md`), via the `dependency-audit` job that enforces it |
+| **Blocks** | nothing in the product. It held the `dependency-audit` job red for three consecutive `main` runs, which is how it surfaced. |
+| **Family** | an advisory with **no fix available** — the accept-or-remove case, not the upgrade case |
+| **Disposition** | **ACCEPTED, and named in the gate.** `.github/workflows/ci.yml` passes `--ignore` for exactly these two IDs, so the job is green on *"zero unaccounted advisories"* rather than green on a lowered severity floor. What makes the acceptance safe is below; what would end it is at the bottom. |
+
+**The two advisories, and why neither can be upgraded away.**
+
+| advisory | vulnerable range | latest published |
+|---|---|---|
+| [GHSA-jmr9-qjv8-65gv](https://github.com/advisories/GHSA-jmr9-qjv8-65gv) — unvalidated symlink path traversal | `<=2.0.1` | **2.0.1** |
+| [GHSA-7pqw-9j4j-h8q3](https://github.com/advisories/GHSA-7pqw-9j4j-h8q3) — arbitrary file writes through symlink archive entries | `<=2.0.1` | **2.0.1** |
+
+The vulnerable range **includes the newest release that exists**. An
+`overrides` entry — the manoeuvre that fixed the other five advisories found in
+the same sweep — has nothing to point at here. The package is not marked
+deprecated on the registry (checked, `bun info extract-zip`), so this is
+"unfixed", not "abandoned"; it may yet gain a 2.0.2.
+
+**Where it comes from.** One path, four times over, and every one of them
+terminates at a *dev* dependency (`bun why extract-zip`):
+
+```
+extract-zip@2.0.1
+  └─ @puppeteer/browsers@2.13.2   (requires ^2.0.1)
+     └─ @wdio/utils@9.20.1        (requires ^2.2.0)
+        └─ @wdio/{cli,config,local-runner} / webdriver / webdriverio
+           └─ dev @onboard/desktop@workspace
+```
+
+**What it is actually used for**, read rather than assumed:
+`@puppeteer/browsers/lib/cjs/fileUtil.js:61` imports it inside `unpackArchive`
+and calls `extractZip(archivePath, {dir: folderPath})`. That is the e2e **driver
+download** — unzipping a browser-driver archive fetched from the vendor CDN. So
+the exposure is: *a developer runs `bun run e2e`, and the driver archive that
+arrives is malicious.* Not a user of Onboard, and not CI — `bun run e2e` is
+deliberately not wired into any workflow (see the "Deliberately NOT wired here"
+block at the foot of `.github/workflows/ci.yml`).
+
+**Second line of evidence — the artefacts themselves**, because "dev
+dependency" is a statement about intent and a bundler can still inline
+something. All nine shipped artefacts were scanned for library-specific byte
+signatures (`yauzl`, `openReadStream`, `ZipFile`): the four frontend chunks in
+`apps/desktop/dist/assets`, the four compiled engine sidecars, and
+`onboard.exe`. **Zero matches.**
+
+**A second false positive, of the same family as the `nanoid`/zod one already
+recorded in `SECURITY_AUDIT.md`, and worth writing down because the first one
+did not stop it happening again.** The same scan run for the `vitest` advisory
+reported `mockReset` present in all four engine sidecars. It is not vitest. The
+sidecars are Bun single-file compiles, so each embeds the whole Bun runtime —
+and `mockReset`, `mockRestore`, `toHaveBeenCalledTimes` **and the literal
+string `vitest`** are all present in a bare `bun` binary, verified directly
+against the interpreter on PATH. The distinctive markers (`@vitest/mocker`,
+`redirectMock`, `__vitest__`) match nowhere. **In a Bun-compiled artefact even
+a framework's own name proves nothing** — only a signature no other runtime
+would carry does.
+
+**Why `--ignore` on two IDs rather than `--audit-level=high`.** The floor was
+the other available fix and it is the worse one: it would have taken this job
+green while silently absorbing every future *moderate*, and the sweep that
+produced this entry found a moderate that mattered (the vitest path-traversal,
+now fixed by moving to 4.1.11). Naming IDs keeps the gate's meaning exact —
+anything not on the list, at any severity, fails. Proven rather than assumed:
+removing either ID from the list takes the command back to exit 1.
+
+**What ends this disposition.** Any of three things, in order of likelihood:
+extract-zip publishes a fix (delete the two `--ignore` lines and the gate
+tightens by itself); `@puppeteer/browsers` moves off it; or the e2e stack is
+dropped, which removes the only path. Until one of those, the entry stands —
+and it stands as an accepted risk with a named blast radius, not as a red gate
+nobody reads, which is the failure mode that produced it.
