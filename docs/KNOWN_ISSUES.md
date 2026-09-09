@@ -730,3 +730,71 @@ tightens by itself); `@puppeteer/browsers` moves off it; or the e2e stack is
 dropped, which removes the only path. Until one of those, the entry stands —
 and it stands as an accepted risk with a named blast radius, not as a red gate
 nobody reads, which is the failure mode that produced it.
+
+---
+
+### KI-14 — every workflow's `checkout`/`cache` actions run on a forced Node 24; the pin is v4 and the deadline is GitHub's
+
+| | |
+|---|---|
+| **Severity** | LOW today — nothing fails. The severity is entirely in *when* it changes, which is not a date this project picks. |
+| **Criterion** | none directly; it threatens the CI that enforces most of them |
+| **Blocks** | nothing yet. When it does, it blocks every job at once, including `dependency-audit` and therefore `release:plan`. |
+| **Family** | a **deprecation with an unscheduled cutover** — the deferred-maintenance case, not the defect case |
+| **Disposition** | **DEFERRED DELIBERATELY, with the trigger named below.** Not fixed in the commit that filed it, because bundling an unrelated actions bump into a version-sync change is how a small green diff becomes an unreviewable one. |
+
+**What CI is currently reporting**, on every run, as an annotation nobody has to
+act on:
+
+```
+Node.js 20 is deprecated. The following actions target Node.js 20 but are
+being forced to run on Node.js 24: actions/cache@v4, actions/checkout@v4.
+```
+
+Both actions are pinned at `@v4` across **23 call sites** — 16 in
+`.github/workflows/ci.yml` (8 `checkout`, 8 `cache`) and 7 in
+`.github/workflows/release.yml` (6 `checkout`, 1 `cache`). GitHub is *already*
+running them on Node 24 — the forcing has happened. What has not happened is
+the removal of the compatibility path that makes the forcing work.
+
+**Only those two are flagged, and that is informative rather than incidental.**
+`actions/upload-artifact@v4`, `actions/download-artifact@v4` and
+`actions/setup-python@v5` are used here too and the annotation does *not* name
+them: a floating major tag can absorb a runtime bump without a major version,
+and for those actions it evidently has. So the scope of this item is exactly
+`checkout` and `cache`, and bumping the others because they also read `@v4`
+would be change without a reason — the annotation is the authority on which
+actions still need one.
+
+**Why this is filed rather than left to be discovered.** The work is a version
+bump — `@v4` → `@v5` across two workflow files — and it is small and boring
+**today**, while CI is green and nothing depends on it landing this week. It
+stops being small at the moment GitHub withdraws the Node 20 shim, because that
+moment is chosen by GitHub and lands on whatever this project happens to be
+doing: the observed shape of these cutovers is a repository whose CI was green
+on Friday and is red on Monday with no local change to blame. This project's
+own release path makes that worse rather than better by design — `release:plan`
+refuses to plan a release while `main`'s CI is red, so an actions deprecation
+firing mid-release does not merely annoy, it **blocks the tag**, and it does so
+at the exact moment the pressure to bypass the gate is highest.
+
+That is the whole argument for filing it: the cost of this task is flat and
+low, and the cost of *not* doing it is a spike whose timing is someone else's
+to choose. An item like that is picked up on a slow afternoon or it picks
+itself.
+
+**What doing it looks like**, so whoever takes it does not have to re-derive
+the scope: bump `actions/checkout@v4` → `@v5` and `actions/cache@v4` → `@v5` in
+both workflow files, push, and read the run. There is no known behavioural
+change for the way either action is used here — `checkout` with defaults, and
+`cache` with `path`/`key`/`restore-keys`. The one thing to actually verify
+rather than assume is that the Bun and cargo-audit caches still **hit** on the
+second run; a cache action that silently stops restoring turns a 4-minute job
+into a slow one without failing, which is the failure mode this repository has
+been removing everywhere else.
+
+**What ends this disposition.** The bump landing, or GitHub withdrawing the
+Node 20 compatibility path — whichever comes first, and the second one is not
+in this project's control. If the second arrives first, this entry is the
+explanation for why every job went red at once, which is the only value a
+filed-and-not-fixed item has.

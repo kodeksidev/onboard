@@ -42,6 +42,22 @@ DELIBERATELY OUT OF SCOPE, so the next person does not "fix" them into the list:
 
 Checked against the tag history, not assumed: each of the four above sat still
 across five releases while the five below moved together.
+
+THE LIMIT OF THIS DESIGN, stated because nothing else will state it. The list
+below is by EXACT PATH, so this check governs five files and only five. If a
+SIXTH versioned manifest is ever added — a new workspace package, a second
+crate that ships — it is outside this check and nothing here will notice: it
+will not be compared, and its absence cannot be detected, because a file that
+was never listed looks identical to one that does not exist. **Whoever adds a
+versioned manifest must add it to FOLLOWERS below, and nothing will remind
+them.**
+
+That is the accepted cost of allowance-by-exact-path, not an oversight. The
+alternative — globbing every `package.json` and `Cargo.toml` — would sweep in
+the four deliberately independent files above and fail on them, and a check
+that is wrong is worse than a check that is narrow: the first gets disabled,
+the second gets extended. The `missing` branch in `main()` does catch the
+adjacent case, a governed file renamed or deleted out from under the list.
 """
 
 from __future__ import annotations
